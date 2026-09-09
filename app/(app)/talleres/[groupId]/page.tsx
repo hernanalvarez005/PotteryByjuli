@@ -127,7 +127,7 @@ export default async function GroupDetailPage({
                 description="Deja de aparecer como grupo activo, pero conserva el historial de alumnos, asistencia y cuotas."
                 confirmLabel="Archivar"
                 variant="default"
-                onConfirm={() => archiveGroup(groupId)}
+                onConfirm={archiveGroup.bind(null, groupId)}
               >
                 Archivar
               </ConfirmAction>
@@ -136,7 +136,7 @@ export default async function GroupDetailPage({
                 title="¿Eliminar este grupo?"
                 description="Sólo se puede si no tiene ningún alumno inscripto. Esta acción no se puede deshacer."
                 confirmLabel="Eliminar"
-                onConfirm={() => deleteGroup(groupId)}
+                onConfirm={deleteGroup.bind(null, groupId)}
               >
                 Eliminar
               </ConfirmAction>
