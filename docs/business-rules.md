@@ -82,7 +82,23 @@ mayorista quedan registrados (quién, qué, cuándo, valor anterior/nuevo).
 ## Nunca borrado físico con historial relacionado
 
 `is_active` / `archived_at` en vez de `DELETE`, siempre que exista una
-venta, pedido o movimiento que referencie la fila.
+venta, pedido o movimiento que referencie la fila. Desde la Fase 9.5 esto
+se aplica en el código, no sólo en la intención: cada entidad borrable
+tiene una función RPC `delete_*_safe` que cuenta las relaciones antes de
+borrar, y sólo `owner` puede invocarlas.
+
+| Entidad | Hard delete permitido | Archivar/dar de baja | Condición para hard delete |
+|---|---|---|---|
+| `customers` | Sí (`delete_customer_safe`) | `is_active = false` | 0 pedidos, 0 inscripciones a taller, 0 inscripciones a evento |
+| `workshop_groups` | Sí (`delete_workshop_group_safe`) | `archived_at` | 0 alumnos inscriptos (en cualquier estado) |
+| `events` (workshops/ferias) | Sí (`delete_event_safe`) | `status = 'archived'` / `'cancelled'` | 0 inscripciones, 0 pedidos, 0 transferencias de stock asociadas |
+| `workshop_enrollments` | Sí (`delete_enrollment_safe`) | `status = 'cancelled'` (baja) | 0 registros de asistencia, 0 cuotas |
+| `event_registrations` | Sí (`delete_registration_safe`) | `status = 'cancelled'` | `payment_status = 'pending'` (nunca se registró un pago) |
+| `products`, `orders`, `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
+
+En todos los casos: eliminar una inscripción/enrollment **nunca** borra al
+`customer` — María puede dejar el taller y seguir existiendo en el CRM con
+sus compras.
 
 ## Seguridad del portal mayorista público
 
@@ -91,6 +107,51 @@ marcados como públicos, leer imágenes públicas, leer las condiciones
 necesarias para armar el pedido, y crear una solicitud válida. Nunca puede
 leer clientes, pedidos ajenos, stock interno, costos ni reportes. Esto se
 refuerza en RLS, no sólo ocultando UI.
+
+## Seguridad del portal público de workshops (Fase 9.5)
+
+Mismo criterio que el portal mayorista, pero sin RLS directa sobre
+`events`/`payment_accounts` — anon lee exclusivamente a través de vistas
+(`workshop_public_view`, `payment_account_public_view`,
+`location_public_view`) que exponen sólo columnas explícitamente públicas
+(nunca `cost_estimate`, `notes`, IDs internos, ni el resto de una cuenta
+de pago más allá de alias/titular/nombre). `event_registrations` no tiene
+ninguna vista ni policy pública: anon nunca lee inscriptos, ni para
+contarlos — el conteo que ve (`confirmed_count`) es un agregado calculado
+dentro de la vista misma, no una consulta que anon podría reproducir para
+extraer filas individuales.
+
+La única escritura posible para anon es `register_for_workshop()`, y el
+frontend público nunca decide `status`, `payment_status`, `price` ni
+`capacity` — todo eso lo resuelve el servidor dentro de la función.
+
+## Calendario: una vista, no una fuente nueva de verdad
+
+`/calendario` no tiene tabla propia para clases ni workshops — lee
+`workshop_groups` (clases recurrentes, vía `weekday`/`start_time`),
+`events` (workshops/ferias puntuales, vía `event_date`) y `special_dates`
+(lo único que sí es una entidad nueva, para lo que no encaja en ningún
+dominio existente). Nunca se genera una fila por cada ocurrencia futura de
+una clase — el calendario simplemente le pregunta a `workshop_groups` "qué
+grupos caen un martes" cada vez que se pide la semana.
+
+## Cupos y concurrencia
+
+Tanto para workshops (`event_registrations`) como para talleres
+(`workshop_enrollments`), la validación de cupo vive en Postgres — un
+trigger (`check_event_capacity` / `check_workshop_capacity`) que corre
+`before insert or update`, nunca en el frontend. Para el flujo público de
+workshops además se toma un lock de fila (`select ... for update` sobre
+`events`) antes de contar inscriptos, así que dos inscripciones casi
+simultáneas para el último lugar se resuelven en orden, nunca en paralelo:
+la segunda vuelve a contar recién después de que la primera terminó.
+
+## Inscripción a workshop ≠ pago
+
+Igual que "solicitud mayorista ≠ venta confirmada" (más abajo): registrarse
+a un workshop público asegura el lugar (`status = 'confirmed'`) pero nunca
+asume que ya se pagó (`payment_status` arranca en `'pending'`). La pantalla
+de confirmación se lo dice explícitamente a quien se inscribió.
 
 ## Argentina, moneda y horario
 

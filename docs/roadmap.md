@@ -184,6 +184,62 @@ la salvedad de arriba)
       asociar `orders.campaign_id` — se puede setear a mano por SQL
       mientras tanto.
 
+## Fase 9.5 — Calendario, workshops públicos y correcciones operativas ✅
+
+Intercalada antes de cerrar la Fase 10 definitiva, a pedido explícito.
+Extiende el modelo existente (talleres, eventos, clientes) — no crea
+ningún sistema paralelo.
+
+- [x] **`/calendario`**: vista semanal (grilla en desktop, agenda vertical
+      en mobile — mismo markup, responsive por CSS) con navegación
+      anterior/hoy/siguiente, filtro por tipo. Consume tres fuentes de
+      sólo lectura: `workshop_groups` (clases, ahora con
+      `weekday`/`start_time`/`end_time` estructurados), `events`
+      (workshops/ferias), y la tabla nueva `special_dates` (fechas que no
+      pertenecen a ningún otro dominio). Ninguna fila se duplica para
+      mostrarse en el calendario.
+- [x] **Workshops públicos**: `events` ganó `slug`, `description`,
+      horarios, `address`, `image_path`, `additional_info`,
+      `payment_account_id`, `is_registration_open`. Nuevo set de estados
+      (`draft`/`published`/`full`/`completed`/`cancelled`/`archived`,
+      reemplaza al de la Fase 8) con historial automático
+      (`event_status_history`). `/workshops/[slug]`: página pública
+      mobile-first, mismo design system Pottery, con formulario de
+      inscripción.
+- [x] **Cupos sin sobreventa**: `register_for_workshop()` (RPC,
+      `SECURITY DEFINER`) bloquea la fila de `events` con `FOR UPDATE`
+      antes de contar inscriptos — dos inscripciones casi simultáneas se
+      serializan, la segunda vuelve a contar después de que la primera
+      confirmó. Nunca depende del frontend.
+- [x] **Pago por transferencia**: `payment_accounts` ganó `alias` y
+      `holder_name`; el workshop se asocia a una cuenta existente
+      (nunca duplicada). La página pública y la pantalla de confirmación
+      muestran sólo esos dos campos + nombre, vía `payment_account_public_view`
+      — nunca la cuenta completa.
+- [x] **Inscripción vs. contacto**: `event_registrations.participant_name`
+      cubre el caso "mamá anota a su hijo" sin crear un segundo cliente.
+- [x] **Inscripción ≠ pago**: `status` (pending/confirmed/cancelled/
+      attended/no_show) y `payment_status` (pending/partial/paid) son ejes
+      independientes — mismo patrón que pedidos y pagos.
+- [x] **Fechas especiales**: tabla `special_dates` (título, fecha,
+      categoría, `recurs_yearly`), gestionada desde `/calendario`.
+- [x] **WhatsApp**: `lib/customers-shared.ts` (helpers puros, usables
+      desde componentes cliente) ganó un parámetro de mensaje opcional.
+      Agregado en el roster de talleres y la lista de inscriptos a
+      eventos — ya existía en clientes y pedidos.
+- [x] **Borrado seguro / archivo**: 5 funciones RPC
+      (`delete_customer_safe`, `delete_workshop_group_safe`,
+      `delete_event_safe`, `delete_enrollment_safe`,
+      `delete_registration_safe`), todas `owner`-only, todas rechazan el
+      borrado si existe historial real y explican por qué. Archivar
+      (`archived_at`) queda disponible para `operations` también. Ver
+      `docs/business-rules.md` para la tabla completa.
+- [x] **Tests**: 13 tests nuevos (37 en total) — `slugify`, schemas de
+      evento/inscripción pública, WhatsApp con mensaje. La lógica de
+      cupos/concurrencia vive en el RPC (Postgres), no en TypeScript —
+      sigue pendiente de tests de integración contra una base de test
+      real (ver `docs/testing.md`).
+
 ## Fase 10 — Optimización ⏳ (en progreso)
 
 - [x] **Auditoría de seguridad** — revisión completa de las políticas RLS

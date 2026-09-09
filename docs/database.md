@@ -221,6 +221,64 @@ lectura abierta a cualquier usuario autenticado.
   `orders`/`payments`/`production_orders`/`inventory_*`, calculadas en
   `lib/reports.ts` en el momento de pedir la página, no materializadas.
 
+## Fase 9.5 — implementado
+
+- **`workshop_groups`** gana `weekday` (1=lunes..7=domingo), `start_time`,
+  `end_time`, `archived_at` — un slot semanal estructurado, sin el cual
+  `/calendario` no podría ubicar una clase en un día de la semana. `schedule`
+  (texto libre) se conserva sólo para mostrar.
+- **`events`**: reemplaza el enum de estado de la Fase 8
+  (`planned/confirmed/completed/cancelled`) por
+  `workshop_status` (`draft/published/full/completed/cancelled/archived`),
+  re-tipando la columna en vez de `ALTER TYPE ... ADD VALUE` (evita la
+  restricción de Postgres de usar un valor de enum nuevo en la misma
+  transacción que lo crea). Gana `slug` (único, URL pública),
+  `description`, `start_time`/`end_time`, `address`, `image_path`,
+  `additional_info`, `payment_account_id`, `is_registration_open`,
+  `archived_at`.
+- **`event_status_history`** / **`event_registration_status_history`**:
+  mismo patrón de trigger automático que `order_status_history` (Fase 3).
+  Cambiar el estado de un evento o de una inscripción queda registrado
+  solo, sin que ninguna Server Action tenga que acordarse de hacerlo.
+- **`event_registrations`**: separa dos ejes antes mezclados en un booleano
+  (`is_paid`) — `status` (`pending/confirmed/cancelled/attended/no_show`,
+  reemplaza al enum `registered/cancelled` de la Fase 8) y `payment_status`
+  (`pending/partial/paid`, nuevo). Gana `participant_name` (contacto ≠
+  participante, workshops infantiles). El trigger de cupo
+  (`check_event_capacity`) ahora sólo cuenta `confirmed`/`attended`.
+- **`payment_accounts`** gana `alias` y `holder_name` — nada de duplicar
+  cuentas por evento; un workshop simplemente referencia una existente.
+- **`special_dates`**: título, fecha, categoría, `is_all_day`,
+  `recurs_yearly`. La recurrencia anual se resuelve en `lib/calendar.ts`
+  (compara mes/día, no el año) — no hay una tabla de "ocurrencias"
+  materializada.
+- **`register_for_workshop(...)`** (RPC, `security definer`, análoga a
+  `submit_wholesale_request` de la Fase 5): único punto de escritura para
+  `anon`. `select ... for update` sobre la fila de `events` serializa
+  inscripciones concurrentes al último cupo — la garantía de "nunca
+  sobrevender" vive en Postgres, no en el frontend. Busca o crea el
+  cliente por WhatsApp/email, snapshotea el precio, y pone el evento en
+  `full` automáticamente al ocupar el último lugar.
+- **`delete_customer_safe` / `delete_workshop_group_safe` /
+  `delete_event_safe` / `delete_enrollment_safe` /
+  `delete_registration_safe`** (RPCs, todas exigen `is_owner()` primero):
+  cuentan filas relacionadas (pedidos, inscripciones, asistencia, cuotas,
+  ventas, transferencias) y sólo borran si el conteo da cero; si no,
+  devuelven un mensaje explicando qué lo bloquea. Nunca dependen de que
+  el rol ya tuviera permiso de escritura general sobre la tabla — hard
+  delete es más estricto que el resto de las operaciones sobre esa misma
+  fila.
+- **Vistas públicas** (`workshop_public_view`, `payment_account_public_view`,
+  `location_public_view`): corren en el contexto del dueño de la vista
+  (bypassea RLS de la tabla base), así que el `where` de la vista —no una
+  policy de RLS— es lo único que limita qué ve `anon`. Sólo exponen
+  columnas explícitamente públicas; `event_registrations` no tiene vista
+  pública ni policy para `anon` bajo ningún concepto (sección 44 del
+  brief: ni nombres, ni cupos exactos por fila, sólo el agregado
+  `confirmed_count` calculado dentro de la vista misma).
+- **Storage**: bucket `event-images` (público, mismo patrón que
+  `product-images` de la Fase 2).
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

@@ -24,7 +24,16 @@
   los formularios de pedido y de solicitud mayorista (campos requeridos,
   UUIDs, al menos un ítem, email opcional pero bien formado si está).
 - `lib/customers.test.ts`: nombre para mostrar y normalización del link
-  de WhatsApp (agrega `54` cuando falta, no lo duplica cuando ya está).
+  de WhatsApp (agrega `54` cuando falta, no lo duplica cuando ya está,
+  agrega el mensaje prellenado URL-encoded cuando se pasa uno — Fase 9.5).
+- `lib/slug.test.ts` (Fase 9.5): `slugify` — minúsculas, tildes removidas
+  (`Cerámica` → `ceramica`), espacios y símbolos a guiones, sin guion al
+  principio/final.
+- `schemas/events.test.ts` (Fase 9.5): `slugSchema` (rechaza mayúsculas,
+  espacios, guion al borde), `eventSchema` (capacidad > 0, el checkbox de
+  inscripción abierta desmarcado = `false`, no `undefined`),
+  `publicRegistrationSchema` (WhatsApp es el único campo realmente
+  obligatorio del form público — es el único canal de seguimiento).
 
 ## Cobertura pendiente (necesita una base de test, no sólo Vitest)
 
@@ -46,6 +55,26 @@ son las pruebas de integración con más impacto, en orden:
    la merma queda registrada.
 5. **`check_workshop_capacity`/`check_event_capacity`**: no permiten
    sobrevender un cupo, ni con dos inscripciones concurrentes.
+6. **`register_for_workshop`** (Fase 9.5): dos llamadas concurrentes para
+   el último lugar de un workshop nunca terminan las dos en `confirmed`
+   (el lock `for update` sobre `events` serializa el conteo); intentar
+   inscribirse a un workshop `draft`, `cancelled` o con
+   `is_registration_open = false` es rechazado por la función, no por el
+   frontend; el precio que queda en la inscripción es el vigente al
+   momento de inscribirse, no una referencia al `events.price` actual
+   (snapshot histórico); un WhatsApp repetido reutiliza el `customer`
+   existente en vez de duplicarlo.
+7. **`delete_customer_safe` / `delete_workshop_group_safe` /
+   `delete_event_safe` / `delete_enrollment_safe` /
+   `delete_registration_safe`** (Fase 9.5): cada una debe rechazar el
+   borrado (con un mensaje explicando qué lo bloquea) apenas existe una
+   fila relacionada, y las cinco deben rechazar la llamada si quien la
+   invoca no es `owner` — ver la tabla de la sección "Nunca borrado
+   físico con historial relacionado" en `docs/business-rules.md`.
+8. **`special_dates` con `recurs_yearly`** (Fase 9.5): una fecha especial
+   cargada en un año anterior debe seguir apareciendo en el calendario de
+   los años siguientes en el mismo mes/día, sin duplicarse si el rango
+   consultado abarca más de un año.
 
 ## Checks obligatorios antes de cerrar cualquier fase
 
@@ -71,5 +100,16 @@ destrabar un commit.
    correctos, ninguno a mitad de camino si algo falla.
 5. **Producción**: crear orden → completarla → el stock sube exactamente
    lo declarado.
-6. **Workshop**: registrar persona → cobrar → ocupa un cupo (y no permite
-   pasarse del cupo total).
+6. **Workshop (interno)**: registrar persona → cobrar → ocupa un cupo (y
+   no permite pasarse del cupo total).
+7. **Workshop público, camino feliz** (Fase 9.5): publicar un workshop en
+   el backoffice → abrir `/workshops/[slug]` sin sesión → completar el
+   form → aparece la pantalla de confirmación (nombre, fecha, precio,
+   alias — nunca "pago confirmado") → la inscripción aparece en el panel
+   de inscriptos del backoffice con `payment_status = pending`.
+8. **Workshop público, cupo agotado**: con el último lugar ocupado, la
+   página pública muestra "Cupo completo" y bloquea el envío del form
+   (nunca lo esconde en silencio); dos pestañas inscribiéndose al mismo
+   tiempo para el último lugar — sólo una queda `confirmed`.
+9. **Workshop público, borrador**: un workshop en `draft` nunca debe ser
+   accesible en `/workshops/[slug]`, aunque se conozca el slug exacto.

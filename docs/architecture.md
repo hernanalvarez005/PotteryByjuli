@@ -169,7 +169,7 @@ Ninguno de estos bloquea seguir escribiendo código.
 | `operations`     | Pedidos, clientes, stock, producción | Pedidos, clientes, stock, producción       |
 | `workshop_staff` | Grupos, alumnos, asistencia       | Asistencia, inscripciones                     |
 | `viewer`         | Lectura general (sin finanzas)    | Ninguna                                       |
-| anónimo          | Catálogo mayorista público (Fase 5) | Crear una solicitud mayorista (Fase 5)      |
+| anónimo          | Catálogo mayorista público (Fase 5); workshop publicado + cupo + alias de pago (Fase 9.5) | Crear una solicitud mayorista (Fase 5); crear una inscripción a workshop (Fase 9.5) |
 
 La tabla completa de políticas RLS vive en las migrations mismas
 (comentadas); esta tabla es la intención de negocio, no el código fuente de
@@ -273,3 +273,97 @@ y no colores hardcodeados, este cambio de paleta se propagó a las ~25
 rutas existentes sin tocar página por página — confirmado por auditoría
 (`grep` de hex/colores Tailwind fuera de marca en `app/` y `components/`:
 cero resultados fuera de `components/ui/` y `app/icon.tsx`).
+
+## 10. Calendario y portal público de workshops (Fase 9.5)
+
+### Calendario: agregador, no fuente nueva
+
+`/calendario` (`app/(app)/calendario/`) no persiste eventos propios para
+clases ni workshops — es una vista de lectura que combina tres orígenes en
+`lib/calendar.ts`:
+
+- **Clases recurrentes**: `getWeeklyClasses()` lee `workshop_groups` donde
+  `weekday`/`start_time` están seteados (agregados en esta fase) y
+  `archived_at is null`. No se materializa una fila por cada semana futura
+  — el "martes 16hs" de un grupo es siempre el mismo dato, consultado con
+  el filtro de la semana pedida.
+- **Workshops/ferias puntuales**: `getWorkshopsInRange(start, end)` lee
+  `events` por `event_date` dentro del rango visible.
+- **Fechas especiales**: `getSpecialDatesInRange(start, end)` lee la
+  tabla nueva `special_dates`; si `recurs_yearly = true`, la ocurrencia se
+  calcula comparando mes/día contra cada año que el rango visible toca (no
+  se duplica una fila por año).
+
+`special_dates` es la única entidad realmente nueva de esta fase — se creó
+porque "Día de la Madre" no es una clase, ni un workshop, ni tiene cupo ni
+inscriptos; forzarla dentro de `events` habría ensuciado ese modelo con
+campos siempre nulos. Explícitamente **no** se usa para talleres/workshops.
+
+La semana es la vista por defecto (lunes a domingo, `lib/calendar.ts:
+startOfWeek`); se descartó una vista de mes por ahora (no aporta densidad
+de información extra sobre lo que Juli realmente necesita día a día — ver
+`docs/roadmap.md`). Cada entrada se distingue visualmente por tipo
+(clase/workshop/fecha especial) reusando los tokens de marca — sin colores
+nuevos — y se filtra en el cliente con querystring (`?filter=`), sin
+round-trip al servidor.
+
+### Workshops: de `events` interno a portal público
+
+`events` (ya existente desde una fase anterior para ferias) se extendió
+con lo necesario para un flujo público completo: `slug` (único, editable
+mientras el workshop no está publicado, generado automáticamente desde el
+nombre vía `lib/slug.ts` si no se especifica), `description`, `start_time`/
+`end_time`, `address`, `image_path`, `additional_info`,
+`payment_account_id` (FK a `payment_accounts` — nunca se duplican datos
+bancarios), `is_registration_open`.
+
+`status` pasó de un enum de dos valores a
+`draft | published | full | completed | cancelled | archived`. La regla de
+negocio central: **`draft` nunca es accesible públicamente**, sin importar
+que alguien adivine o comparta el slug — la única puerta de lectura pública
+es `workshop_public_view`, que filtra `where status = 'published'`. Publicar
+pasa por la Server Action `publishEvent()` en vez del setter genérico de
+estado, porque valida que el slug exista antes de permitir la transición
+(un workshop sin slug no puede tener link público).
+
+### Cómo llega un anónimo a datos sin exponer lo interno
+
+El patrón ya usado en el portal mayorista (Fase 5) se reutiliza acá: en vez
+de policies RLS directas sobre `events`/`payment_accounts` para el rol
+`anon`, se crearon vistas que corren en contexto del dueño
+(`with (security_invoker = false)`) y sólo seleccionan columnas
+explícitamente públicas:
+
+- `workshop_public_view`: datos comerciales del workshop + un
+  `confirmed_count` calculado con una subquery agregada dentro de la misma
+  vista — así el frontend puede mostrar "3 lugares disponibles" sin que
+  `anon` tenga jamás una policy de lectura sobre `event_registrations`
+  (ni agregada ni fila por fila).
+- `payment_account_public_view`: sólo `id`, `name`, `alias`, `holder_name`,
+  `account_type` — nunca saldo, notas ni el resto de la cuenta.
+- `location_public_view`: sólo `id`, `name`, `city`, `province`.
+
+La única escritura permitida para `anon` es la RPC `register_for_workshop`
+(`security definer`), documentada en detalle en `docs/business-rules.md`
+("Cupos y concurrencia"). El frontend público (`app/workshops/[slug]/`)
+nunca envía `status`, `payment_status`, `price` ni `capacity` — sólo datos
+de contacto; todo lo demás lo decide la función en el servidor.
+
+### Layout público separado
+
+`app/workshops/` es un árbol de rutas independiente de `app/(app)/`
+(backoffice) y de `app/mayorista/` (mismo patrón que Fase 5): su propio
+`layout.tsx` sin sidebar ni navegación interna, agregado a
+`PUBLIC_PATHS` en `lib/supabase/middleware.ts` para que el middleware de
+auth no lo intercepte. Visualmente reusa los mismos tokens de marca que el
+resto de la app pero con una composición más comercial (foto grande,
+menos densidad) — mismo criterio ya establecido para `app/mayorista/`.
+
+### WhatsApp: un único punto de verdad
+
+`lib/customers-shared.ts` expone `whatsappLink(rawPhone, message?)` —
+normaliza el número (agrega el código de país argentino si falta) y arma
+el link `wa.me`. Todo botón de WhatsApp agregado en esta fase (inscriptos
+de un evento, alumnos de un taller, ficha de cliente) llama a esta misma
+función sobre el `whatsapp` del `customer` relacionado — nunca se
+introduce un campo de teléfono duplicado en otra tabla.
