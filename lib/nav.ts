@@ -30,7 +30,7 @@ export type NavGroup = {
 };
 
 /** Currently implemented — safe to link to. */
-export const CURRENT_PHASE = 5;
+export const CURRENT_PHASE = 6;
 
 export const NAV_GROUPS: NavGroup[] = [
   {
