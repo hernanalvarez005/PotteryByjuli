@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 
+export { customerDisplayName, whatsappLink } from "./customers-shared";
+
 export type CustomerListRow = {
   id: string;
   first_name: string;
@@ -12,6 +14,7 @@ export type CustomerListRow = {
   customer_tag_links: { customer_tags: { id: string; code: string; name: string } }[];
 };
 
+/** Active customers only — archived ones are still reachable by direct link (an order, an enrollment) but stay out of the main list, per docs/business-rules.md § archivar. */
 export async function getCustomers(): Promise<CustomerListRow[]> {
   const supabase = await createClient();
   const { data } = await supabase
@@ -19,18 +22,8 @@ export async function getCustomers(): Promise<CustomerListRow[]> {
     .select(
       "id,first_name,last_name,whatsapp,email,company_name,city,is_active,customer_tag_links(customer_tags(id,code,name))"
     )
+    .eq("is_active", true)
     .order("first_name");
 
   return (data ?? []) as unknown as CustomerListRow[];
-}
-
-export function customerDisplayName(c: { first_name: string; last_name: string | null }) {
-  return [c.first_name, c.last_name].filter(Boolean).join(" ");
-}
-
-/** wa.me link with a best-effort normalized phone (digits only, AR country code assumed if missing). */
-export function whatsappLink(rawPhone: string): string {
-  const digits = rawPhone.replace(/\D/g, "");
-  const withCountryCode = digits.startsWith("54") ? digits : `54${digits}`;
-  return `https://wa.me/${withCountryCode}`;
 }

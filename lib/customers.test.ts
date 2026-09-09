@@ -27,4 +27,9 @@ describe("whatsappLink", () => {
     const link = whatsappLink("5491123456789");
     expect(link).toBe("https://wa.me/5491123456789");
   });
+
+  it("appends an URL-encoded prefilled message when given one", () => {
+    const link = whatsappLink("1123456789", "Hola Juli!");
+    expect(link).toBe("https://wa.me/541123456789?text=Hola%20Juli!");
+  });
 });

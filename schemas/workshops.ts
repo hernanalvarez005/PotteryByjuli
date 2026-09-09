@@ -11,6 +11,16 @@ export const programSchema = z.object({
     .transform((v) => (v ? v : null)),
 });
 
+export const WEEKDAY_LABELS: Record<number, string> = {
+  1: "Lunes",
+  2: "Martes",
+  3: "Miércoles",
+  4: "Jueves",
+  5: "Viernes",
+  6: "Sábado",
+  7: "Domingo",
+};
+
 export const groupSchema = z.object({
   program_id: z.string().trim().uuid(),
   name: z.string().trim().min(1, "Requerido").max(120),
@@ -18,6 +28,27 @@ export const groupSchema = z.object({
     .string()
     .trim()
     .max(120)
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+  weekday: z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? Number(v) : null))
+    .refine((v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 7), "Día inválido"),
+  start_time: z
+    .string()
+    .trim()
+    .max(8)
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+  end_time: z
+    .string()
+    .trim()
+    .max(8)
     .optional()
     .or(z.literal(""))
     .transform((v) => (v ? v : null)),

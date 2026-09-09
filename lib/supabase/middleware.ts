@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/mayorista"];
+const PUBLIC_PATHS = ["/login", "/auth", "/mayorista", "/workshops"];
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some(
@@ -11,8 +11,9 @@ function isPublicPath(pathname: string) {
 
 /**
  * Refreshes the Supabase auth session on every request and redirects
- * unauthenticated users away from the backoffice. The `/mayorista` portal
- * (Phase 5) is intentionally public — see docs/business-rules.md #53.
+ * unauthenticated users away from the backoffice. `/mayorista` (Phase 5)
+ * and `/workshops/[slug]` (Fase 9.5) are intentionally public — see
+ * docs/business-rules.md #53.
  */
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

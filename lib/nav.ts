@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Home,
+  Calendar,
   ShoppingCart,
   Users,
   Store,
@@ -31,12 +32,15 @@ export type NavGroup = {
 };
 
 /** Currently implemented — safe to link to. */
-export const CURRENT_PHASE = 9;
+export const CURRENT_PHASE = 9.5;
 
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "",
-    items: [{ label: "Inicio", href: "/dashboard", icon: Home, phase: 1 }],
+    items: [
+      { label: "Inicio", href: "/dashboard", icon: Home, phase: 1 },
+      { label: "Calendario", href: "/calendario", icon: Calendar, phase: 9.5 },
+    ],
   },
   {
     label: "Comercial",
