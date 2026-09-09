@@ -128,9 +128,20 @@ verificada (6 tablas + función RPC `create_order`).
 
 **Resultado**: Juli sabe qué hay que fabricar y por qué. ✅
 
-## Fase 7 — Talleres
+## Fase 7 — Talleres ✅
 
-Grupos, alumnos (= `customers`), inscripciones, cuotas, asistencia.
+- [x] `workshop_programs`/`workshop_groups`/`workshop_enrollments`
+      (alumnos = `customers`, nunca una tabla aparte) con cupo
+      verificado por trigger, no sólo en la UI.
+- [x] `attendance_records` (presente/ausente/avisó, un clic por alumno)
+      y `workshop_dues` (período/importe/vencimiento/pagada).
+- [x] `/talleres`: programas + grupos con cupo en vivo. Detalle de
+      grupo: inscribir, asistencia del día, estado de inscripción,
+      cuotas (`owner`+`operations`).
+- [x] Rol `workshop_staff` ya tiene permisos reales sobre esto desde la
+      Fase 1 — puede gestionar grupos/alumnos/asistencia, no cuotas.
+
+**Resultado**: Juli conoce alumnos, asistencia y deuda por grupo. ✅
 
 ## Fase 8 — Workshops + Ferias
 

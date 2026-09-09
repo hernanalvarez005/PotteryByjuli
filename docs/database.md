@@ -178,18 +178,26 @@ lectura abierta a cualquier usuario autenticado.
   unidad de negocio del pedido — nadie tiene que notar el faltante y
   cargarlo a mano (sección 89).
 
+## Fase 7 — implementado
+
+- **`workshop_programs`** / **`workshop_groups`** (cupo, horario,
+  ubicación). **`workshop_enrollments`** vincula `customers` — nunca
+  duplica a la persona en una tabla de "alumnos" aparte. El cupo se
+  valida con un trigger (`check_workshop_capacity`) sobre
+  `workshop_enrollments`, no sólo en la UI — ni una inscripción manual
+  por SQL puede sobrepasarlo.
+- **`attendance_records`**: un registro por inscripción+fecha
+  (`unique(enrollment_id, session_date)`), pensado para marcarse con un
+  clic y poder corregirse (upsert) el mismo día.
+- **`workshop_dues`**: período, importe, vencimiento, pagada/pendiente.
+  Deliberadamente autocontenida — no reutiliza `orders`/`payments`
+  (una cuota de taller no es la venta de un producto).
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
 pensadas, pero el detalle columna-por-columna se termina de cerrar recién
 al implementar cada una.
-
-### Fase 7 — Talleres
-
-- **`workshop_programs`**, **`workshop_groups`** (cupo, horario),
-  **`workshop_enrollments`** (vincula `customers`, nunca duplica la
-  persona), **`attendance_records`**, **`workshop_dues`** (cuotas:
-  período, importe, vencimiento, pagado/pendiente).
 
 ### Fase 8 — Eventos (workshops puntuales) y ferias
 
