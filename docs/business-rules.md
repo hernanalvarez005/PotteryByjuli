@@ -159,3 +159,56 @@ ARS, formato `$ 125.000` (sin decimales en la UI), fechas `DD/MM/YYYY`,
 timezone `America/Argentina/Buenos_Aires`. Los timestamps se guardan en UTC
 (`timestamptz`) y se formatean a hora local sólo en el borde de UI —
 `lib/format.ts` es el único lugar que debería tener esta lógica.
+
+## Importación de datos reales
+
+`scripts/import-tiendanube.ts` y `scripts/import-current-students.ts`
+cargan catálogo y alumnas reales sin crear ningún módulo paralelo — todo
+entra por `products`/`product_variants`/`price_list_items`/
+`inventory_movements` y por `customers`/`workshop_groups`/
+`workshop_enrollments` de siempre. La lógica de mapeo vive en
+`lib/import/*.ts` (pura, sin cliente de Supabase, testeada); los scripts
+son sólo el I/O.
+
+Reglas que estos scripts respetan y cualquier importador futuro debería
+también:
+
+- **Idempotencia por identidad externa**: `products.external_source` +
+  `external_id` (único cuando ambos están seteados) — reimportar el mismo
+  CSV nunca duplica un producto. Variantes se de-duplican por la
+  constraint existente `(product_id, name)`; no hizo falta una columna
+  nueva. Grupos/programas de taller se matchean por nombre exacto dentro
+  del programa que crea el importador — no hay un id externo natural en
+  un listado a mano.
+- **Nunca pisa un valor que ya exista**: un precio o un movimiento de
+  stock sólo se crea si no hay uno ya — así una corrida repetida (o
+  reanudada después de un error a mitad de camino) nunca duplica ni
+  sobrescribe algo que Juli pudo haber corregido a mano entre medio.
+- **`movement_type = 'initial_import'`**: declara stock inicial sin
+  fingir que fue una compra o una producción real — es la única forma de
+  distinguir "esto lo trajo un import" de un movimiento operativo real en
+  el ledger (`inventory_movements.reason` lleva además el `external_id`
+  de origen).
+- **Servicios legacy de Tienda Nube** (los 4 productos "... SEÑA", señas
+  de talleres cobradas ahí antes de que este módulo existiera) se
+  detectan por nombre (`/seña/i`) y se excluyen del catálogo físico —
+  workshops se gestionan por su propio módulo (Fase 8/9.5), nunca como un
+  producto con stock.
+- **Ubicación del stock nunca se asume**: el script exige `--location=` en
+  `--apply`; sin ese dato explícito, el `--dry-run` lo marca como "sin
+  confirmar" y no hay default.
+- **Duplicados de clientes**: sólo se matchea por nombre completo exacto
+  (normalizado en mayúsculas/espacios) — nunca fuzzy-merge. Un nombre de
+  pila repetido con apellido distinto se reporta como "potential conflict"
+  para revisión humana, nunca se fusiona automáticamente.
+- **Datos que el modelo actual no soporta** (precio promocional, peso/
+  dimensiones, SEO, marca, tags) no se inventan una columna nueva para
+  cada uno — se documentan en el reporte del `--dry-run`/`--apply` y quedan
+  como decisión pendiente, nunca se pierden silenciosamente ni se aplican
+  a un campo que significa otra cosa (ej.: el precio promocional jamás
+  reemplaza `price_list_items.unit_price`).
+- **Cupo de grupos importados**: como el listado a mano no traía el cupo
+  máximo real, `workshop_groups.capacity` (que la constraint exige `> 0`)
+  se cargó con la cantidad actual de alumnas como placeholder explícito —
+  documentado en el reporte, a ajustar a mano en `/talleres` cuando se
+  confirme el cupo real.

@@ -240,6 +240,48 @@ ningún sistema paralelo.
       sigue pendiente de tests de integración contra una base de test
       real (ver `docs/testing.md`).
 
+## Importación de datos reales ✅
+
+Carga real de Pottery (2026-09-09), sin módulos paralelos — ver
+`docs/business-rules.md` § Importación de datos reales y
+`docs/database.md` § Importación de datos reales.
+
+- [x] **Catálogo Tienda Nube**: `scripts/import-tiendanube.ts`. 63
+      productos, 170 variantes, 170 precios (`price_lists` retail), 75
+      movimientos de stock (`initial_import`, La Plata). 4 servicios
+      legacy "SEÑA" excluidos del catálogo físico. Categoría nueva:
+      `madera` (13 productos) — resto mapeado a las 6 categorías ya
+      seedeadas. Idempotencia verificada: segunda corrida de `--apply` →
+      0 creados, todo reconocido como existente.
+- [x] **Alumnas/grupos actuales**: `scripts/import-current-students.ts`.
+      34 clientes, 6 grupos (Lunes/Martes/Miércoles × 2), 34
+      inscripciones. Idempotencia verificada igual que el de productos.
+
+Pendiente de decisión de Juli (no resuelto acá a propósito — ver
+`docs/business-rules.md` para el criterio de "no inventar"):
+
+- **Grupo duplicado**: ya existía un grupo "Lunes" (programa
+  "Clases - Inicial", creado 2026-09-09 15:39, 0 alumnas) previo a este
+  import — el import no lo tocó ni lo fusionó, quedó un segundo concepto
+  de "lunes" (programa "Taller de cerámica (importado)"). Unificar o
+  archivar uno de los dos es una decisión de Juli, no del importador.
+- **Tefi Domínguez, martes**: confirmada en Lunes — Grupo 1. Asiste
+  también los martes pero no se sabe a qué grupo (1 o 2); no se importó
+  esa segunda inscripción.
+- **Cupo real de cada grupo**: se cargó la cantidad actual de alumnas
+  como placeholder (`capacity` es `not null` en el schema) — ajustar en
+  `/talleres` cuando se confirme el cupo real.
+- **Horarios de los 6 grupos**: se conoce el día (por eso alimentan
+  `/calendario` con `weekday`), no el horario exacto — falta cargar
+  `start_time`/`end_time` en cada grupo.
+- **Precio promocional** (6 productos del CSV): Pottery no modela
+  promociones todavía — el valor quedó documentado en el reporte del
+  import, no aplicado a ningún `price_list`. Diseñar el concepto (¿nueva
+  price_list "promo"? ¿vigencia con fecha?) es trabajo a futuro, no
+  incluido acá.
+- **Costo real de catálogo**: sólo 18/63 productos traían `Costo` en el
+  export; el resto quedó con `cost_estimate = null` (nunca inventado).
+
 ## Fase 10 — Optimización ⏳ (en progreso)
 
 - [x] **Auditoría de seguridad** — revisión completa de las políticas RLS

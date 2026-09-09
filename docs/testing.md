@@ -34,6 +34,20 @@
   inscripción abierta desmarcado = `false`, no `undefined`),
   `publicRegistrationSchema` (WhatsApp es el único campo realmente
   obligatorio del form público — es el único canal de seguimiento).
+- `lib/import/csv.test.ts`: parser CSV/TSV a mano — delimitador dentro de
+  comillas, newline literal dentro de un campo (las descripciones HTML de
+  Tienda Nube lo tienen), comilla escapada `""`, fila final sin newline.
+- `lib/import/tiendanube.test.ts`: `27,500.00` → `27500` (nunca `27.5`),
+  detección de los 4 productos legacy "SEÑA" por nombre, agrupar N filas
+  de variante bajo un solo producto (nunca N productos), mantener una
+  variante con stock 0 en vez de descartarla, nunca aplicar el precio
+  promocional como precio base, merge de una variante duplicada sumando
+  stock. Un test de punta a punta corre el parser completo contra un
+  fragmento con la forma real del export.
+- `lib/import/students.test.ts`: agrupar alumnas por grupo con el weekday
+  ISO correcto, nunca fusionar dos personas por compartir sólo el nombre
+  de pila (`Cami Pagella` ≠ `Cami Frigerio`), un nombre de una sola
+  palabra no inventa apellido.
 
 ## Cobertura pendiente (necesita una base de test, no sólo Vitest)
 

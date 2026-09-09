@@ -279,6 +279,25 @@ lectura abierta a cualquier usuario autenticado.
 - **Storage**: bucket `event-images` (público, mismo patrón que
   `product-images` de la Fase 2).
 
+## Importación de datos reales — implementado
+
+Migración `20260909193032_import_identity.sql` — no agrega ningún módulo,
+sólo lo mínimo para que un import sea idempotente:
+
+- `products.external_source text`, `products.external_id text` — índice
+  único parcial `(external_source, external_id) where ambos not null`.
+  `product_variants` no necesitó columna propia: `(product_id, name)` ya
+  era único desde la Fase 2 y alcanza para de-duplicar variantes.
+- `inventory_movement_type` gana el valor `'initial_import'` — declarar
+  stock inicial sin fingir una compra/producción real.
+
+Ver `docs/business-rules.md` § Importación de datos reales para las
+reglas de mapeo, y `lib/import/*.ts` + `scripts/import-*.ts` para la
+implementación. Datos reales cargados el 2026-09-09: 63 productos / 170
+variantes / 170 precios / 75 movimientos de stock (La Plata) desde el
+catálogo de Tienda Nube, y 34 clientes / 6 grupos / 34 inscripciones desde
+el listado de alumnas actuales.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
