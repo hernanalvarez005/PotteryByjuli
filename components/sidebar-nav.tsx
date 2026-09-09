@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { NAV_GROUPS, CURRENT_PHASE } from "@/lib/nav";
 import { Badge } from "@/components/ui/badge";
 
-export function SidebarNav() {
+export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
@@ -45,6 +45,7 @@ export function SidebarNav() {
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={onNavigate}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
                   isActive && "bg-accent text-accent-foreground"

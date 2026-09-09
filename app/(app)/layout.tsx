@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { SidebarNav } from "@/components/sidebar-nav";
+import { MobileNav } from "@/components/mobile-nav";
 import { UserMenu } from "@/components/user-menu";
 
 export default async function AppLayout({
@@ -18,7 +19,8 @@ export default async function AppLayout({
         <SidebarNav />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b px-4">
+        <header className="flex h-14 items-center gap-2 border-b px-4">
+          <MobileNav />
           <span className="text-sm text-muted-foreground md:hidden">Pottery</span>
           <div className="ml-auto">
             <UserMenu user={user} />
