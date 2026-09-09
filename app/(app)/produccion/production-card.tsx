@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/confirm-action";
 import { formatDate } from "@/lib/format";
 import {
   PRODUCTION_ORIGIN_LABELS,
@@ -79,15 +80,22 @@ export function ProductionCard({ order, canEdit }: { order: ProductionOrderRow; 
                 Avanzar etapa
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-xs text-muted-foreground"
-              disabled={isPending}
-              onClick={() => startTransition(() => cancelProductionOrder(order.id))}
+            <ConfirmAction
+              trigger={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs text-muted-foreground"
+                  disabled={isPending}
+                />
+              }
+              title="¿Cancelar esta orden de producción?"
+              description={`${productionItemLabel(order)} — ${order.quantity} unidades. Esta acción no se puede deshacer.`}
+              confirmLabel="Cancelar orden"
+              onConfirm={() => cancelProductionOrder(order.id)}
             >
               Cancelar
-            </Button>
+            </ConfirmAction>
             {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
         )}

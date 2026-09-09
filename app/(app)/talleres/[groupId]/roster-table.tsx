@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ConfirmAction } from "@/components/confirm-action";
 import { ATTENDANCE_LABELS } from "@/schemas/workshops";
 import { markAttendance, setEnrollmentStatus } from "./actions";
 
@@ -47,6 +48,7 @@ export function RosterTable({
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [pendingCancel, setPendingCancel] = useState<RosterRow | null>(null);
   const todayIso = new Date().toISOString().slice(0, 10);
 
   function run(action: () => Promise<void>) {
@@ -88,9 +90,14 @@ export function RosterTable({
                 <Select
                   value={row.status}
                   disabled={isPending}
-                  onValueChange={(next) =>
-                    next && run(() => setEnrollmentStatus(groupId, row.enrollmentId, next))
-                  }
+                  onValueChange={(next) => {
+                    if (!next) return;
+                    if (next === "cancelled") {
+                      setPendingCancel(row);
+                      return;
+                    }
+                    run(() => setEnrollmentStatus(groupId, row.enrollmentId, next));
+                  }}
                 >
                   <SelectTrigger className="h-8 w-32">
                     <SelectValue />
@@ -134,6 +141,22 @@ export function RosterTable({
         ))}
       </TableBody>
       </Table>
+      <ConfirmAction
+        open={pendingCancel !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingCancel(null);
+        }}
+        title="¿Dar de baja a este alumno/a?"
+        description={`${pendingCancel?.customerName ?? ""} deja de contar para el cupo del grupo.`}
+        confirmLabel="Dar de baja"
+        onConfirm={async () => {
+          if (!pendingCancel) return;
+          // ConfirmAction closes itself (calls onOpenChange(false)) once this
+          // resolves without throwing — that already clears pendingCancel via
+          // the onOpenChange handler above, no need to do it again here.
+          await setEnrollmentStatus(groupId, pendingCancel.enrollmentId, "cancelled");
+        }}
+      />
     </div>
   );
 }

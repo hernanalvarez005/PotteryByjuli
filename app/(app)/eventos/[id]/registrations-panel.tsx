@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmAction } from "@/components/confirm-action";
 import {
   Select,
   SelectContent,
@@ -108,15 +109,22 @@ export function RegistrationsPanel({
                       >
                         {r.is_paid ? "Marcar pendiente" : "Marcar pagado"}
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive"
-                        disabled={isPending}
-                        onClick={() => startTransition(() => cancelRegistration(eventId, r.id))}
+                      <ConfirmAction
+                        trigger={
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive"
+                            disabled={isPending}
+                          />
+                        }
+                        title="¿Cancelar esta inscripción?"
+                        description={`${r.customerName} — libera ${r.quantity} lugar${r.quantity > 1 ? "es" : ""} del cupo.`}
+                        confirmLabel="Cancelar inscripción"
+                        onConfirm={() => cancelRegistration(eventId, r.id)}
                       >
                         Cancelar
-                      </Button>
+                      </ConfirmAction>
                     </div>
                   </TableCell>
                 )}
