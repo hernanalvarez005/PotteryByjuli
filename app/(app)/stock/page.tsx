@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { AdjustmentDialog } from "./adjustment-dialog";
+import { AddProductDialog } from "./add-product-dialog";
 import { TransferForm } from "./transfer-form";
 import { TransferRow } from "./transfer-row";
 
@@ -70,12 +71,15 @@ export default async function StockPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Stock</h1>
-        <p className="text-muted-foreground">
-          Físico, reservado y disponible por ubicación. Una transferencia
-          entre ubicaciones nunca es una venta.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Stock</h1>
+          <p className="text-muted-foreground">
+            Físico, reservado y disponible por ubicación. Una transferencia
+            entre ubicaciones nunca es una venta.
+          </p>
+        </div>
+        {canEdit && <AddProductDialog products={productOptions} locations={locations ?? []} />}
       </div>
 
       <Tabs defaultValue="stock">
