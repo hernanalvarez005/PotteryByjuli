@@ -2,6 +2,9 @@ import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { getCustomers, customerDisplayName, whatsappLink } from "@/lib/customers";
+import { getStudentRoster } from "@/lib/students";
+import { formatCurrency } from "@/lib/format";
+import { DUE_STATUS_LABELS, formatPeriodLabel, currentPeriod, type DueDisplayStatus } from "@/lib/workshop-dues";
 import {
   Table,
   TableBody,
@@ -13,10 +16,37 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { NewCustomerDialog } from "./new-customer-dialog";
 
-export default async function ClientesPage() {
+const SEGMENTS = [
+  { value: "all", label: "Todos" },
+  { value: "students", label: "Alumnas" },
+  { value: "wholesale", label: "Mayoristas" },
+];
+
+const STATUS_BADGE_VARIANT: Record<DueDisplayStatus | "no_due", "secondary" | "outline" | "destructive"> = {
+  paid: "secondary",
+  partial: "outline",
+  pending: "outline",
+  cancelled: "destructive",
+  no_due: "outline",
+};
+
+export default async function ClientesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ segment?: string }>;
+}) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
+  const { segment = "all" } = await searchParams;
+
   const customers = await getCustomers();
+  const filteredCustomers =
+    segment === "wholesale"
+      ? customers.filter((c) => c.customer_tag_links.some((l) => l.customer_tags.code === "wholesale"))
+      : customers;
+
+  const period = currentPeriod();
+  const roster = segment === "students" ? await getStudentRoster(period) : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -31,7 +61,88 @@ export default async function ClientesPage() {
         {canEdit && <NewCustomerDialog />}
       </div>
 
-      {customers.length === 0 ? (
+      <div className="flex flex-wrap gap-1">
+        {SEGMENTS.map((s) => (
+          <Link key={s.value} href={s.value === "all" ? "/clientes" : `/clientes?segment=${s.value}`}>
+            <Badge variant={segment === s.value ? "secondary" : "outline"} className="cursor-pointer">
+              {s.label}
+            </Badge>
+          </Link>
+        ))}
+      </div>
+
+      {segment === "students" ? (
+        roster.length === 0 ? (
+          <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+            Todavía no hay alumnas con inscripción activa.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">Mes actual: {formatPeriodLabel(period)}</p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Nombre</TableHead>
+                  <TableHead>Clase/grupo</TableHead>
+                  <TableHead>WhatsApp</TableHead>
+                  <TableHead>Cuota mes actual</TableHead>
+                  <TableHead>Último mes pago</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {roster.map((r) => (
+                  <TableRow key={r.enrollmentId}>
+                    <TableCell className="font-medium">{r.customerName}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <Link href={`/talleres/${r.groupId}`} className="hover:underline">
+                        {r.groupName}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      {r.whatsapp ? (
+                        <a
+                          href={whatsappLink(r.whatsapp)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                        >
+                          <MessageCircle className="size-3.5" />
+                          {r.whatsapp}
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={STATUS_BADGE_VARIANT[r.currentPeriodStatus]}>
+                          {r.currentPeriodStatus === "no_due"
+                            ? "Sin cuota generada"
+                            : DUE_STATUS_LABELS[r.currentPeriodStatus]}
+                        </Badge>
+                        {r.currentPeriodBalance != null && r.currentPeriodBalance > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            Saldo {formatCurrency(r.currentPeriodBalance)}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {r.lastPaidPeriod ? formatPeriodLabel(r.lastPaidPeriod) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Link href={`/clientes/${r.customerId}`} className="text-sm hover:underline">
+                        Ver ficha
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
+        )
+      ) : filteredCustomers.length === 0 ? (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
           Todavía no cargaste ningún cliente.
         </p>
@@ -46,7 +157,7 @@ export default async function ClientesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {customers.map((c) => (
+            {filteredCustomers.map((c) => (
               <TableRow key={c.id}>
                 <TableCell>
                   <Link href={`/clientes/${c.id}`} className="font-medium hover:underline">

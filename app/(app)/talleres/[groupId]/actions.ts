@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { enrollmentSchema, dueSchema } from "@/schemas/workshops";
+import { enrollmentSchema, dueSchema, duePaymentSchema, groupMonthlyFeeSchema } from "@/schemas/workshops";
 
 export type WorkshopDetailState = { error?: string };
 
@@ -117,17 +117,77 @@ export async function createDue(
   return {};
 }
 
-export async function toggleDuePaid(groupId: string, dueId: string, isPaid: boolean) {
+/**
+ * Registers a real payment against a due — never a boolean flip.
+ * "Pagada"/"Parcial" fall out of summing these against workshop_dues.amount
+ * (lib/workshop-dues.ts), same as every other payable in this app never
+ * storing "cobrado" directly (docs/business-rules.md § Facturación ≠
+ * cobranza). Reuses `payments`, not a second ledger.
+ */
+export async function registerDuePayment(
+  groupId: string,
+  dueId: string,
+  _prevState: WorkshopDetailState,
+  formData: FormData
+): Promise<WorkshopDetailState> {
+  const user = await assertCanManageDues();
+
+  const parsed = duePaymentSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("payments").insert({
+    workshop_due_id: dueId,
+    amount: parsed.data.amount,
+    method_id: parsed.data.method_id,
+    account_id: parsed.data.account_id,
+    reference: parsed.data.reference,
+    created_by: user.id,
+  });
+  if (error) return { error: "No se pudo registrar el pago." };
+
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres/cuotas");
+  return {};
+}
+
+export async function cancelDue(groupId: string, dueId: string) {
   await assertCanManageDues();
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("workshop_dues")
-    .update({ is_paid: isPaid, paid_at: isPaid ? new Date().toISOString() : null })
-    .eq("id", dueId);
-  if (error) throw new Error("No se pudo actualizar.");
+  const { error } = await supabase.rpc("cancel_due", { p_id: dueId });
+  if (error) throw new Error(error.message || "No se pudo cancelar la cuota.");
 
   revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres/cuotas");
+}
+
+export async function updateGroupMonthlyFee(
+  groupId: string,
+  _prevState: WorkshopDetailState,
+  formData: FormData
+): Promise<WorkshopDetailState> {
+  const user = await requireUser();
+  if (!isOwner(user) && !hasRole(user, "operations")) {
+    return { error: "No tenés permiso para editar la cuota mensual." };
+  }
+
+  const parsed = groupMonthlyFeeSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("workshop_groups")
+    .update({ monthly_fee: parsed.data.monthly_fee })
+    .eq("id", groupId);
+  if (error) return { error: "No se pudo actualizar." };
+
+  revalidatePath(`/talleres/${groupId}`);
+  return {};
 }
 
 export async function deleteEnrollment(groupId: string, enrollmentId: string) {

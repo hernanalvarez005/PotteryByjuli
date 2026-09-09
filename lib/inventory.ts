@@ -11,6 +11,15 @@ export type StockRow = {
   minQuantity: number | null;
 };
 
+export type ProductStockSummary = {
+  inventoryItemId: string;
+  productLabel: string;
+  byLocation: Omit<StockRow, "inventoryItemId" | "productLabel">[];
+  totalPhysical: number;
+  totalReserved: number;
+  totalAvailable: number;
+};
+
 type InventoryItemRow = {
   id: string;
   product_variants: {
@@ -88,4 +97,43 @@ export async function getFinishedGoodsStock(): Promise<StockRow[]> {
   }
 
   return rows;
+}
+
+/**
+ * Groups the flat (item, location) rows into one summary per product, with
+ * a per-location breakdown plus totals. "Todas las ubicaciones" is
+ * genuinely a sum across real, distinct location rows — never a second
+ * copy of the same number (docs/business-rules.md § Stock por ubicación).
+ * Pure — no I/O, so it's unit-testable without a database.
+ */
+export function summarizeStockByProduct(rows: StockRow[]): ProductStockSummary[] {
+  const byItem = new Map<string, ProductStockSummary>();
+
+  for (const row of rows) {
+    let summary = byItem.get(row.inventoryItemId);
+    if (!summary) {
+      summary = {
+        inventoryItemId: row.inventoryItemId,
+        productLabel: row.productLabel,
+        byLocation: [],
+        totalPhysical: 0,
+        totalReserved: 0,
+        totalAvailable: 0,
+      };
+      byItem.set(row.inventoryItemId, summary);
+    }
+    summary.byLocation.push({
+      locationId: row.locationId,
+      locationName: row.locationName,
+      physical: row.physical,
+      reserved: row.reserved,
+      available: row.available,
+      minQuantity: row.minQuantity,
+    });
+    summary.totalPhysical += row.physical;
+    summary.totalReserved += row.reserved;
+    summary.totalAvailable += row.available;
+  }
+
+  return [...byItem.values()];
 }

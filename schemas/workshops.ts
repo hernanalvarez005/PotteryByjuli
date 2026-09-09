@@ -65,6 +65,25 @@ export const groupSchema = z.object({
     .min(1, "Requerido")
     .transform((v) => Number(v))
     .refine((v) => Number.isInteger(v) && v > 0, "Cupo inválido"),
+  monthly_fee: z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? Number(v) : null))
+    .refine((v) => v === null || (Number.isFinite(v) && v >= 0), "Importe inválido"),
+});
+
+/** Editing just the monthly fee on an existing group — its own tiny schema
+ * so the edit dialog doesn't have to resend every other group field. */
+export const groupMonthlyFeeSchema = z.object({
+  monthly_fee: z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? Number(v) : null))
+    .refine((v) => v === null || (Number.isFinite(v) && v >= 0), "Importe inválido"),
 });
 
 export const enrollmentSchema = z.object({
@@ -79,7 +98,10 @@ export const enrollmentSchema = z.object({
 });
 
 export const dueSchema = z.object({
-  period: z.string().trim().min(1, "Requerido").max(20),
+  period: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}$/, "Formato esperado AAAA-MM"),
   amount: z
     .string()
     .trim()
@@ -89,6 +111,36 @@ export const dueSchema = z.object({
   due_date: z
     .string()
     .trim()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+});
+
+export const duePaymentSchema = z.object({
+  amount: z
+    .string()
+    .trim()
+    .min(1, "Requerido")
+    .transform((v) => Number(v))
+    .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
+  method_id: z
+    .string()
+    .trim()
+    .uuid()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+  account_id: z
+    .string()
+    .trim()
+    .uuid()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+  reference: z
+    .string()
+    .trim()
+    .max(200)
     .optional()
     .or(z.literal(""))
     .transform((v) => (v ? v : null)),
