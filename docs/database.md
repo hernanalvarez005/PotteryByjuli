@@ -161,22 +161,28 @@ lectura abierta a cualquier usuario autenticado.
   clientes, pedidos, stock, costos o reportes tiene una policy para
   `anon`; sin policy, RLS deniega por defecto (sección 53, sección 84).
 
+## Fase 6 — implementado
+
+- **`production_orders`**: código `PRO-000123`, `origin` (restock/
+  retail_order/wholesale_order/custom_order/workshop/fair),
+  `product_variant_id`, `location_id` (destino del stock producido),
+  cantidad pedida/producida/rechazada, prioridad, responsable, estado.
+- **`production_stage_events`**: historial de etapas, escrito solo por
+  trigger (mismo patrón que `order_status_history`) — nunca a mano.
+- **`complete_production_order(id, producidas, rechazadas)`** (RPC): la
+  cantidad correcta impacta `inventory_movements` (`production_in`); la
+  merma/rechazo se guarda igual, nunca se oculta (sección 28).
+- **Integración automática**: `set_order_status()` (extendida desde la
+  Fase 4) reserva sólo lo disponible al confirmar un pedido y crea una
+  `production_orders` por la diferencia, con el `origin` derivado de la
+  unidad de negocio del pedido — nadie tiene que notar el faltante y
+  cargarlo a mano (sección 89).
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
 pensadas, pero el detalle columna-por-columna se termina de cerrar recién
 al implementar cada una.
-
-### Fase 6 — Producción
-
-- **`production_orders`**: código, origen (reposición/venta/mayorista/
-  personalizado/workshop/feria), producto/variante, cantidad, prioridad,
-  responsable, estado.
-- **`production_stage_events`**: historial de etapas (modelado → secado →
-  primera cocción → esmaltado → segunda cocción → control → terminado),
-  etapas configurables, no todas obligatorias por orden.
-- Al cerrar una orden: cantidad correcta impacta `inventory_movements`
-  (ingreso), merma/rechazo se registra igual, nunca se oculta.
 
 ### Fase 7 — Talleres
 

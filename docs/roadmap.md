@@ -111,11 +111,22 @@ verificada (6 tablas + función RPC `create_order`).
 
 **Resultado**: Juli deja de mandar catálogo + Excel. Manda **un link**. ✅
 
-## Fase 6 — Producción
+## Fase 6 — Producción ✅
 
-Órdenes de producción, etapas configurables, prioridades/fechas, conexión
-con pedidos, ingreso a stock al finalizar, registro de merma sin
-ocultarla.
+- [x] `production_orders`/`production_stage_events` (historial de etapa
+      automático, mismo patrón que `orders`), código `PRO-000123`.
+- [x] `complete_production_order()` (RPC): ingresa exactamente lo
+      producido a stock, registra la merma sin ocultarla.
+- [x] **Conexión automática con pedidos**: `set_order_status()` (Fases
+      4/6) ahora reserva sólo lo disponible al confirmar un pedido y
+      genera la orden de producción por la diferencia — con su origen
+      (minorista/mayorista/personalizado) — sin que nadie tenga que
+      crearla a mano.
+- [x] `/produccion`: tablero por etapa (modelado → secado → 1ª cocción →
+      esmaltado → 2ª cocción → control → terminado), "Nueva orden" manual
+      para reposición.
+
+**Resultado**: Juli sabe qué hay que fabricar y por qué. ✅
 
 ## Fase 7 — Talleres
 
