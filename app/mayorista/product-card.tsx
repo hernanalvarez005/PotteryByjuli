@@ -20,6 +20,13 @@ export function ProductCard({ product }: { product: WholesaleProduct }) {
   const [selectedVariantId, setSelectedVariantId] = useState(product.variants[0]?.id ?? "");
   const variant = product.variants.find((v) => v.id === selectedVariantId) ?? product.variants[0];
   const inCart = variant ? (cart[variant.id] ?? 0) : 0;
+  // Passed as Select's `items` prop — without it, Base UI's <Select.Value>
+  // can't resolve a label for a value that's already selected before the
+  // popup (where <Select.Item>s register) has ever opened, and falls back
+  // to showing the raw value — a variant UUID, not its name. Same root
+  // cause already fixed once in the admin bulk-price dialog; this is the
+  // customer-facing instance of the exact same Select-mount-timing bug.
+  const variantLabelsById = Object.fromEntries(product.variants.map((v) => [v.id, v.name]));
 
   if (!variant) return null;
 
@@ -51,7 +58,11 @@ export function ProductCard({ product }: { product: WholesaleProduct }) {
         </div>
 
         {product.variants.length > 1 && (
-          <Select value={selectedVariantId} onValueChange={(v) => v && setSelectedVariantId(v)}>
+          <Select
+            items={variantLabelsById}
+            value={selectedVariantId}
+            onValueChange={(v) => v && setSelectedVariantId(v)}
+          >
             <SelectTrigger className="h-8 w-full text-xs">
               <SelectValue />
             </SelectTrigger>
