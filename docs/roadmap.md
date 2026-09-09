@@ -15,7 +15,7 @@ Repo creado, Next.js + Supabase + Tailwind + shadcn/ui escafoldados,
 `docs/*.md` iniciales. Sin proyecto Supabase real todavía (ver
 `docs/architecture.md` § Riesgos).
 
-## Fase 1 — Fundaciones ✅ (código) / ⏳ (verificación end-to-end)
+## Fase 1 — Fundaciones ✅
 
 - [x] Next.js App Router, Tailwind, shadcn/ui.
 - [x] Clientes Supabase SSR (`lib/supabase/*`), `proxy.ts` con refresco de
@@ -28,13 +28,18 @@ Repo creado, Next.js + Supabase + Tailwind + shadcn/ui escafoldados,
       sólo `owner` escribe.
 - [x] Layout de backoffice (sidebar + navegación completa, con fases
       futuras deshabilitadas) y `/dashboard` mínimo.
-- [ ] **Bloqueado en**: crear el proyecto Supabase real, correr
-      `supabase link` + `supabase db push`, dar de alta el usuario owner
-      (Juli) y probar el login de punta a punta. Ver
-      `docs/architecture.md` § Riesgos.
+- [x] Proyecto Supabase real creado y linkeado (`mgpybpbkjosxzaptlwnm`),
+      migration aplicada, primer usuario `owner` dado de alta y login
+      verificado de punta a punta en local.
 
-**Resultado esperado**: Juli puede ingresar de forma segura. *(Pendiente
-de confirmar con un proyecto Supabase real.)*
+**Resultado**: se puede ingresar de forma segura. ✅ Verificado.
+
+Nota de infraestructura: la conexión **directa** de Postgres
+(`db.<ref>.supabase.co:5432`) no es alcanzable desde esta red (sólo tiene
+registro IPv6 y la conexión residencial no lo enruta bien) — usar siempre
+el **connection pooler** (`aws-0-sa-east-1.pooler.supabase.com:5432`,
+usuario `postgres.<project-ref>`) para `supabase db push`/CLI desde esta
+máquina.
 
 ## Fase 2 — Catálogo + Clientes
 

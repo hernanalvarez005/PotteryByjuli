@@ -129,26 +129,37 @@ ferias se filtran por ubicación, no por tenant.
 
 ## 7. Riesgos abiertos / bloqueadores de negocio
 
-Estas son decisiones que **no puedo inferir** y bloquean el resto de las
-fases si no se resuelven:
+Resueltos:
 
-1. **No existe un proyecto Supabase real.** Sin él no hay forma de: correr
-   las migrations, generar tipos, probar login de verdad, ni desplegar
-   nada funcional. Es la dependencia #1 para cerrar la Fase 1.
-2. **No hay proyecto Vercel conectado.** El deploy a producción/preview
+1. ~~No existe un proyecto Supabase real.~~ **Resuelto**: proyecto
+   `mgpybpbkjosxzaptlwnm` (región `sa-east-1`) creado y en uso. La
+   migration de Fase 1 se aplicó vía **SQL Editor del dashboard**, no vía
+   `supabase db push`: la conexión directa (`db.<ref>.supabase.co:5432`)
+   no es alcanzable desde esta red (sólo tiene registro IPv6, la conexión
+   residencial no lo enruta), y el connection pooler
+   (`aws-0-sa-east-1.pooler.supabase.com:5432`, usuario
+   `postgres.<project-ref>`) requiere la contraseña de la base — usarlo
+   para pushes futuros desde esta máquina si el CLI hace falta, sabiendo
+   que el SQL Editor sigue siendo el camino de respaldo. Como el CLI nunca
+   registró este push, `supabase_migrations.schema_migrations` no tiene
+   esta versión marcada — si en algún momento se usa `supabase db push`
+   desde el CLI, correr antes `supabase migration repair --status applied
+   20260908215501` (con el mismo `--db-url` del pooler) para que no
+   intente reaplicar una migration que ya existe.
+2. ~~Alta inicial del usuario owner.~~ **Resuelto**: usuario creado desde
+   el dashboard (Authentication → Users) y su fila en `user_roles` con
+   `role = 'owner'` insertada vía SQL Editor. Login verificado de punta a
+   punta en local.
+
+Pendientes:
+
+3. **No hay proyecto Vercel conectado.** El deploy a producción/preview
    depende de esto.
-3. **Alta inicial del usuario owner (Juli).** Supabase Auth no tiene "el
-   primer usuario es admin" automático: hay que crear su usuario (por
-   invitación desde el dashboard de Supabase, o `signUp` una vez) y luego
-   insertarle una fila en `user_roles` con `role = 'owner'` a mano (una
-   sola vez, documentado, no es un script recurrente).
 4. **Contenido de marca real** (logo, paleta de colores, tipografía) no
    existe todavía en el repo — la UI usa la paleta neutra por defecto de
    shadcn/ui hasta que Juli provea assets (sección 57 del brief).
 
-Ninguno de estos bloquea seguir escribiendo código (Fases 2 en adelante
-pueden avanzar contra un esquema versionado en migrations sin una base
-Supabase activa), pero si bloquean *probar* el sistema de punta a punta.
+Ninguno de estos bloquea seguir escribiendo código.
 
 ## 8. Modelo de permisos (resumen)
 
