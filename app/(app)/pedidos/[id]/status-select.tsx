@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
   Select,
   SelectContent,
@@ -21,29 +21,41 @@ export function StatusSelect({
   canEdit: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   if (!canEdit) {
     return <span className="text-sm">{ORDER_STATUS_LABELS[status]}</span>;
   }
 
   return (
-    <Select
-      value={status}
-      disabled={isPending}
-      onValueChange={(next) => {
-        if (next) startTransition(() => changeOrderStatus(orderId, next));
-      }}
-    >
-      <SelectTrigger className="w-48">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {ORDER_STATUSES.map((s) => (
-          <SelectItem key={s} value={s}>
-            {ORDER_STATUS_LABELS[s]}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="flex flex-col gap-1">
+      <Select
+        value={status}
+        disabled={isPending}
+        onValueChange={(next) => {
+          if (!next) return;
+          setError(null);
+          startTransition(async () => {
+            try {
+              await changeOrderStatus(orderId, next);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "No se pudo cambiar el estado.");
+            }
+          });
+        }}
+      >
+        <SelectTrigger className="w-48">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {ORDER_STATUSES.map((s) => (
+            <SelectItem key={s} value={s}>
+              {ORDER_STATUS_LABELS[s]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
   );
 }

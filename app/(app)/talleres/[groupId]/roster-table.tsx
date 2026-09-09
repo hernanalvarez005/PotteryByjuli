@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
   Table,
   TableBody,
@@ -46,7 +46,19 @@ export function RosterTable({
   canEdit: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   const todayIso = new Date().toISOString().slice(0, 10);
+
+  function run(action: () => Promise<void>) {
+    setError(null);
+    startTransition(async () => {
+      try {
+        await action();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo actualizar.");
+      }
+    });
+  }
 
   if (rows.length === 0) {
     return (
@@ -57,7 +69,9 @@ export function RosterTable({
   }
 
   return (
-    <Table>
+    <div className="flex flex-col gap-2">
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <Table>
       <TableHeader>
         <TableRow>
           <TableHead>Alumno/a</TableHead>
@@ -75,8 +89,7 @@ export function RosterTable({
                   value={row.status}
                   disabled={isPending}
                   onValueChange={(next) =>
-                    next &&
-                    startTransition(() => setEnrollmentStatus(groupId, row.enrollmentId, next))
+                    next && run(() => setEnrollmentStatus(groupId, row.enrollmentId, next))
                   }
                 >
                   <SelectTrigger className="h-8 w-32">
@@ -104,9 +117,7 @@ export function RosterTable({
                       variant={row.todayAttendance === value ? "secondary" : "outline"}
                       disabled={isPending}
                       onClick={() =>
-                        startTransition(() =>
-                          markAttendance(groupId, row.enrollmentId, todayIso, value)
-                        )
+                        run(() => markAttendance(groupId, row.enrollmentId, todayIso, value))
                       }
                     >
                       {label}
@@ -122,6 +133,7 @@ export function RosterTable({
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+      </Table>
+    </div>
   );
 }

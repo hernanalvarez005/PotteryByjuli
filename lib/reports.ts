@@ -30,7 +30,12 @@ export async function getDashboardSummary() {
     supabase.from("orders").select("total").neq("status", "cancelled").gte("created_at", monthStart),
     supabase.from("payments").select("amount").gte("paid_at", monthStart),
     supabase.from("orders").select("id,total").neq("status", "cancelled"),
-    supabase.from("payments").select("amount"),
+    // Joined to orders and filtered the same way as `allOrders` above —
+    // otherwise a deposit on an order that later got cancelled still
+    // counted as "collected" against nothing, silently under-stating
+    // pendingToCollect (it was even possible for it to make totalCollected
+    // exceed totalInvoiced, masked by the Math.max(0, …) clamp below).
+    supabase.from("payments").select("amount,orders!inner(status)").neq("orders.status", "cancelled"),
     supabase
       .from("orders")
       .select("id", { count: "exact", head: true })
@@ -82,9 +87,13 @@ export type TopProductRow = { label: string; unitsSold: number; revenue: number 
 
 export async function getTopProducts(limit = 10): Promise<TopProductRow[]> {
   const supabase = await createClient();
+  // A cancelled order didn't actually sell anything — exclude its items,
+  // same filter used everywhere else in this file (getSalesByBusinessUnit,
+  // getDashboardSummary), so "most sold" and "revenue" agree with them.
   const { data } = await supabase
     .from("order_items")
-    .select("quantity,unit_price,product_variants(name,products(name))");
+    .select("quantity,unit_price,product_variants(name,products(name)),orders!inner(status)")
+    .neq("orders.status", "cancelled");
 
   const byVariant = new Map<string, TopProductRow>();
   for (const row of data ?? []) {
