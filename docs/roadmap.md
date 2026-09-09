@@ -85,12 +85,31 @@ verificada (6 tablas + función RPC `create_order`).
 
 **Resultado**: Juli conoce el stock real por ubicación y su trazabilidad. ✅
 
-## Fase 5 — Mayoristas (prioridad de negocio más alta)
+## Fase 5 — Mayoristas (prioridad de negocio más alta) ✅
 
-Configuración y reglas mayoristas, catálogo público (`/mayorista`), carrito
-con validación en vivo, formulario de solicitud, snapshot de
-precio/condiciones, estados de la solicitud, conexión a CRM.
-**Resultado**: Juli deja de mandar catálogo + Excel. Manda **un link**.
+- [x] `wholesale_settings` (condiciones globales) + `wholesale_product_rules`
+      (público/mínimo/múltiplo/plazo por producto), editables desde
+      `/configuracion` y cada ficha de producto — sólo `owner`.
+- [x] `/mayorista`: catálogo público mobile-first (sin login — `/mayorista`
+      ya estaba en la lista de rutas públicas de `proxy.ts` desde la Fase
+      1), búsqueda, filtro por categoría, selector de variante, carrito
+      persistido en `localStorage`.
+- [x] Validación de mínimos en vivo en el carrito (monto, piezas totales,
+      mínimo y múltiplo por producto) — igual a la que corre en el
+      servidor, nunca deja enviar un pedido inválido.
+- [x] `submit_wholesale_request()` (RPC, único punto de escritura para
+      anónimos): recalcula cada precio del lado servidor, revalida
+      mínimos, crea o reutiliza el cliente, y crea el pedido con snapshot
+      de condiciones — nunca confía en lo que mande el navegador.
+- [x] RLS pública: sólo productos activos y marcados públicos, sus
+      variantes/imágenes/precio mayorista y las condiciones generales;
+      cero acceso a clientes, otros pedidos, costos o reportes.
+- [x] Código `MAY-000123` en vez de `PED-000123` para pedidos mayoristas
+      (misma tabla, mismo secuencial).
+- [x] `/mayoristas` (backoffice): lista de solicitudes, reutiliza
+      `/pedidos/[id]` para el detalle — no hay una UI de pedido paralela.
+
+**Resultado**: Juli deja de mandar catálogo + Excel. Manda **un link**. ✅
 
 ## Fase 6 — Producción
 

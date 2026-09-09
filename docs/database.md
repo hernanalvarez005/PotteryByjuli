@@ -133,6 +133,40 @@ lectura abierta a cualquier usuario autenticado.
   solicitud recién reserva/consume stock cuando efectivamente se
   confirma.
 
+## Fase 5 — implementado
+
+- **`wholesale_settings`**: fila única (condiciones globales: mínimo,
+  plazo, forma de pago, envío, mensaje comercial). Editable sólo por
+  `owner`, leída también por `anon` (no tiene nada sensible).
+- **`wholesale_product_rules`**: 1:1 con `products` — `is_public`
+  (visible en el catálogo público), `min_quantity`, `multiple_of`,
+  `lead_time_days`. Por producto, no por variante: "mínimo 4 tazas"
+  aplica a todos sus colores.
+- **`orders.wholesale_terms_snapshot`** (jsonb): condiciones vigentes al
+  momento de la solicitud, para que un cambio posterior en
+  `wholesale_settings` nunca reescriba una solicitud ya enviada (sección
+  91). El precio de cada ítem ya queda snapshoteado en
+  `order_items.unit_price` desde la Fase 3 — no hace falta duplicarlo acá.
+- **`submit_wholesale_request(...)`** (RPC, `security definer`): único
+  punto de escritura para el rol `anon`. Recalcula cada precio y
+  revalida cada mínimo del lado servidor (nunca confía en lo que mande
+  el carrito del navegador), busca o crea el `customer` por
+  WhatsApp/email, y crea `orders` + `order_items` en una sola
+  transacción. El código humano usa el prefijo `MAY-` en vez de `PED-`
+  cuando `business_unit = wholesale` (mismo secuencial, mismo `orders`).
+- **RLS pública** (`to anon`): políticas de `select` nuevas y separadas
+  de las de `authenticated`, acotadas a `products`/`product_variants`/
+  `product_images`/`product_categories`/`price_list_items` — sólo
+  filas activas y explícitamente marcadas públicas. Ninguna tabla de
+  clientes, pedidos, stock, costos o reportes tiene una policy para
+  `anon`; sin policy, RLS deniega por defecto (sección 53, sección 84).
+
+## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
+
+Se documenta la intención para que cada fase no reinvente relaciones ya
+pensadas, pero el detalle columna-por-columna se termina de cerrar recién
+al implementar cada una.
+
 ### Fase 6 — Producción
 
 - **`production_orders`**: código, origen (reposición/venta/mayorista/
