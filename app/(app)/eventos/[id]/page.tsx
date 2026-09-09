@@ -128,7 +128,7 @@ export default async function EventDetailPage({
                 description="Deja de aparecer en las listas activas y en el calendario, pero conserva todo su historial."
                 confirmLabel="Archivar"
                 variant="default"
-                onConfirm={() => archiveEvent(event.id)}
+                onConfirm={archiveEvent.bind(null, event.id)}
               >
                 Archivar
               </ConfirmAction>
@@ -138,7 +138,7 @@ export default async function EventDetailPage({
                   title="¿Eliminar este evento?"
                   description="Sólo se puede si no tiene inscripciones, ventas ni transferencias de stock asociadas. Esta acción no se puede deshacer."
                   confirmLabel="Eliminar"
-                  onConfirm={() => deleteEvent(event.id)}
+                  onConfirm={deleteEvent.bind(null, event.id)}
                 >
                   Eliminar
                 </ConfirmAction>
