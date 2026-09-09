@@ -4,12 +4,15 @@ import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { customerDisplayName } from "@/lib/customers";
+import { formatCurrency } from "@/lib/format";
+import { computeDueDisplayStatus, computeDueBalance } from "@/lib/workshop-dues";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/confirm-action";
 import { EnrollDialog } from "./enroll-dialog";
 import { RosterTable, type RosterRow } from "./roster-table";
 import { DuesPanel, type DueRow } from "./dues-panel";
+import { EditMonthlyFeeDialog } from "./edit-monthly-fee-dialog";
 import { archiveGroup, deleteGroup } from "./actions";
 
 export default async function GroupDetailPage({
@@ -28,7 +31,7 @@ export default async function GroupDetailPage({
 
   const { data: group } = await supabase
     .from("workshop_groups")
-    .select("id,name,schedule,capacity,archived_at,workshop_programs(name),locations(name)")
+    .select("id,name,schedule,capacity,monthly_fee,archived_at,workshop_programs(name),locations(name)")
     .eq("id", groupId)
     .maybeSingle();
 
@@ -50,7 +53,7 @@ export default async function GroupDetailPage({
       ? supabase
           .from("workshop_dues")
           .select(
-            "id,enrollment_id,period,amount,due_date,is_paid,workshop_enrollments(customers(first_name,last_name))"
+            "id,enrollment_id,period,amount,due_date,status,payments(amount),workshop_enrollments(customers(first_name,last_name))"
           )
           .in("enrollment_id", enrollmentIds)
           .order("period", { ascending: false })
@@ -83,20 +86,30 @@ export default async function GroupDetailPage({
     };
   });
 
-  const dueList: DueRow[] = (dueRows ?? []).map((d) => ({
-    id: d.id,
-    enrollmentId: d.enrollment_id,
-    customerName: (() => {
-      const enrollment = d.workshop_enrollments as unknown as {
-        customers: { first_name: string; last_name: string | null } | null;
-      } | null;
-      return enrollment?.customers ? customerDisplayName(enrollment.customers) : "—";
-    })(),
-    period: d.period,
-    amount: d.amount,
-    due_date: d.due_date,
-    is_paid: d.is_paid,
-  }));
+  const dueList: DueRow[] = (dueRows ?? []).map((d) => {
+    const paidAmount = ((d.payments ?? []) as { amount: number }[]).reduce((sum, p) => sum + p.amount, 0);
+    const status = d.status as "pending" | "cancelled";
+    const enrollment = d.workshop_enrollments as unknown as {
+      customers: { first_name: string; last_name: string | null } | null;
+    } | null;
+    return {
+      id: d.id,
+      enrollmentId: d.enrollment_id,
+      customerName: enrollment?.customers ? customerDisplayName(enrollment.customers) : "—",
+      period: d.period,
+      amount: d.amount,
+      due_date: d.due_date,
+      paidAmount,
+      balance: computeDueBalance(d.amount, paidAmount),
+      displayStatus: computeDueDisplayStatus(status, d.amount, paidAmount),
+    };
+  });
+
+  const { data: paymentMethods } = await supabase
+    .from("payment_methods")
+    .select("id,name")
+    .eq("is_active", true)
+    .order("sort_order");
 
   const enrollmentOptions = rosterRows
     .filter((r) => r.status === "active")
@@ -143,11 +156,16 @@ export default async function GroupDetailPage({
             </div>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">
-          {(group.workshop_programs as unknown as { name: string } | null)?.name}
-          {group.schedule && ` · ${group.schedule}`}
-          {group.locations && ` · ${(group.locations as unknown as { name: string }).name}`}
-          {group.archived_at && " · Archivado"}
+        <p className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+          <span>
+            {(group.workshop_programs as unknown as { name: string } | null)?.name}
+            {group.schedule && ` · ${group.schedule}`}
+            {group.locations && ` · ${(group.locations as unknown as { name: string }).name}`}
+            {group.archived_at && " · Archivado"}
+            {" · Cuota mensual: "}
+            {group.monthly_fee != null ? formatCurrency(group.monthly_fee) : "sin configurar"}
+          </span>
+          {canEditDues && <EditMonthlyFeeDialog groupId={groupId} currentFee={group.monthly_fee} />}
         </p>
       </div>
 
@@ -175,6 +193,7 @@ export default async function GroupDetailPage({
             groupId={groupId}
             dues={dueList}
             enrollments={enrollmentOptions}
+            paymentMethods={paymentMethods ?? []}
             canEdit={canEditDues}
           />
         </TabsContent>

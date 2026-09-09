@@ -106,9 +106,15 @@ export function NewGroupDialog({
               <Input id="end_time" name="end_time" type="time" />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="capacity">Cupo</Label>
-            <Input id="capacity" name="capacity" type="number" min="1" required />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="capacity">Cupo</Label>
+              <Input id="capacity" name="capacity" type="number" min="1" required />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="monthly_fee">Cuota mensual (opcional)</Label>
+              <Input id="monthly_fee" name="monthly_fee" type="number" min="0" step="0.01" />
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="location_id">Ubicación</Label>

@@ -4,6 +4,7 @@ import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { getGroupsByProgram } from "@/lib/workshops";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { NewProgramDialog } from "./new-program-dialog";
 import { NewGroupDialog } from "./new-group-dialog";
 
@@ -28,6 +29,11 @@ export default async function TalleresPage() {
         </div>
         {canEdit && (
           <div className="flex gap-2">
+            <Link href="/talleres/cuotas">
+              <Button size="sm" variant="outline">
+                Cuotas
+              </Button>
+            </Link>
             <NewProgramDialog />
             <NewGroupDialog programs={programs} locations={locations ?? []} />
           </div>
