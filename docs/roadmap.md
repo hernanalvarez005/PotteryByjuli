@@ -41,11 +41,22 @@ el **connection pooler** (`aws-0-sa-east-1.pooler.supabase.com:5432`,
 usuario `postgres.<project-ref>`) para `supabase db push`/CLI desde esta
 máquina.
 
-## Fase 2 — Catálogo + Clientes
+## Fase 2 — Catálogo + Clientes ✅
 
-Categorías, productos, variantes, imágenes (Storage), listas de precios
-(minorista/mayorista), clientes + tags + ficha única.
-**Resultado**: una sola fuente de productos, precios y clientes.
+- [x] `product_categories`, `products`, `product_variants` (con trigger
+      que crea la variante por defecto), `product_images` + bucket
+      público `product-images`.
+- [x] `price_lists`/`price_list_items` (minorista/mayorista), edición
+      sólo por `owner`.
+- [x] `customers`, `customer_tags`, `customer_tag_links`,
+      `customer_notes`.
+- [x] `/productos`, `/productos/[id]` (variantes, precios, imágenes),
+      `/precios` (vista tipo planilla), `/clientes`, `/clientes/[id]`
+      (ficha con tags y notas).
+- [x] Migration aplicada a producción vía SQL Editor (mismo motivo que en
+      Fase 1) y verificada — las 10 tablas responden.
+
+**Resultado**: una sola fuente de productos, precios y clientes. ✅
 
 ## Fase 3 — Pedidos + Pagos
 

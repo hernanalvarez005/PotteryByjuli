@@ -49,34 +49,37 @@ lectura abierta a cualquier usuario autenticado.
 - **`settings`** (key/value jsonb): configuración suelta que todavía no
   amerita tabla propia.
 
-## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
-
-Se documenta la intención para que cada fase no reinvente relaciones ya
-pensadas, pero el detalle columna-por-columna se termina de cerrar recién
-al implementar cada una (evita que este documento se desactualice antes de
-que exista una sola migration real).
-
-### Fase 2 — Catálogo y clientes
+## Fase 2 — implementado
 
 - **`product_categories`**: árbol simple (sin anidamiento profundo salvo
   que aparezca una necesidad real).
 - **`products`** / **`product_variants`**: un producto (p. ej. "Taza
   Clásica") tiene N variantes (Crudo, Rosa, Verde). El stock y el SKU
   viven en la variante cuando el producto tiene variantes; si no las
-  tiene, la variante "por defecto" igual existe (simplifica el resto del
-  modelo: todo movimiento de stock referencia siempre una variante).
-- **`product_images`**: N imágenes por producto/variante, en Supabase
-  Storage (`product-images`, bucket público).
-- **`price_lists`** / **`price_list_items`**: como mínimo `retail` y
-  `wholesale`. Precio = `(price_list_id, product_variant_id) → monto`.
+  tiene, la variante "por defecto" ("Único") igual existe — un trigger
+  (`create_default_product_variant`) la crea sola al insertar el
+  producto, así el invariante "todo producto tiene ≥1 variante" no
+  depende de que el código de aplicación se acuerde de respetarlo.
+- **`product_images`**: N imágenes por producto (o por variante puntual,
+  `variant_id` nullable), en Supabase Storage (`product-images`, bucket
+  público — pensado para el catálogo mayorista público de la Fase 5).
+- **`price_lists`** / **`price_list_items`**: `retail` y `wholesale`
+  sembradas. Precio = `(price_list_id, product_variant_id) → monto`.
   Preparado para sumar listas nuevas (promo, revendedor) sin tocar
-  `products`.
+  `products`. Escritura sólo `owner` (pricing es audit-sensitive).
 - **`customers`**: base única — un minorista, un mayorista y un alumno son
   el mismo tipo de fila, distinguidos por `customer_tags`, nunca por tener
   tablas separadas.
 - **`customer_tags`** / **`customer_tag_links`**: minorista, mayorista,
   alumno, workshop, recurrente, potencial mayorista, personalizado, etc.
 - **`customer_notes`**: notas internas con autor y fecha.
+
+## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
+
+Se documenta la intención para que cada fase no reinvente relaciones ya
+pensadas, pero el detalle columna-por-columna se termina de cerrar recién
+al implementar cada una (evita que este documento se desactualice antes de
+que exista una sola migration real).
 
 ### Fase 3 — Pedidos y pagos (motor central)
 
