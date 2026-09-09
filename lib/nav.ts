@@ -13,6 +13,7 @@ import {
   Wallet,
   Receipt,
   BarChart3,
+  Megaphone,
   Settings,
 } from "lucide-react";
 
@@ -30,7 +31,7 @@ export type NavGroup = {
 };
 
 /** Currently implemented — safe to link to. */
-export const CURRENT_PHASE = 8;
+export const CURRENT_PHASE = 9;
 
 export const NAV_GROUPS: NavGroup[] = [
   {
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Pagos", href: "/pagos", icon: Wallet, phase: 3 },
       { label: "Gastos", href: "/gastos", icon: Receipt, phase: 9 },
+      { label: "Campañas", href: "/campanas", icon: Megaphone, phase: 9 },
       { label: "Reportes", href: "/reportes", icon: BarChart3, phase: 9 },
     ],
   },
