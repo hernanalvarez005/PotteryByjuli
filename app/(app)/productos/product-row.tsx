@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/format";
 import { toggleProductActive } from "./actions";
+import { useSelection } from "./selection-context";
 
 export function ProductRow({
   id,
@@ -28,9 +29,21 @@ export function ProductRow({
   canEdit: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+  const { selected, toggle } = useSelection();
 
   return (
     <TableRow>
+      {canEdit && (
+        <TableCell className="w-8">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={selected.has(id)}
+            onChange={() => toggle(id)}
+            aria-label={`Seleccionar ${name}`}
+          />
+        </TableCell>
+      )}
       <TableCell>
         <Link href={`/productos/${id}`} className="font-medium hover:underline">
           {name}
