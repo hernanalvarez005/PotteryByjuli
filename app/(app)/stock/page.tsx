@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getFinishedGoodsStock } from "@/lib/inventory";
+import { getFinishedGoodsStock, summarizeStockByProduct } from "@/lib/inventory";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -21,12 +22,21 @@ function stockStatus(available: number, min: number | null) {
   return { label: "Normal", variant: "secondary" as const };
 }
 
-export default async function StockPage() {
+export default async function StockPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ location?: string }>;
+}) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
+  const { location: selectedLocationId } = await searchParams;
 
   const supabase = await createClient();
   const stockRows = await getFinishedGoodsStock();
+  const productSummaries = summarizeStockByProduct(stockRows);
+  const filteredRows = selectedLocationId
+    ? stockRows.filter((row) => row.locationId === selectedLocationId)
+    : [];
 
   const [{ data: locations }, { data: transfers }, { data: inventoryItems }] = await Promise.all([
     supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
@@ -75,16 +85,72 @@ export default async function StockPage() {
         </TabsList>
 
         <TabsContent value="stock" className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">Ubicación:</span>
+            <Link href="/stock">
+              <Badge variant={!selectedLocationId ? "secondary" : "outline"} className="cursor-pointer">
+                Todas
+              </Badge>
+            </Link>
+            {(locations ?? []).map((loc) => (
+              <Link key={loc.id} href={`/stock?location=${loc.id}`}>
+                <Badge variant={selectedLocationId === loc.id ? "secondary" : "outline"} className="cursor-pointer">
+                  {loc.name}
+                </Badge>
+              </Link>
+            ))}
+          </div>
+
           {stockRows.length === 0 ? (
             <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
               Todavía no hay productos activos.
             </p>
+          ) : !selectedLocationId ? (
+            // "Todas" — agregado real por producto, nunca el mismo número
+            // repetido en cada ubicación (docs/business-rules.md § Stock).
+            <div className="flex flex-col gap-3">
+              {productSummaries.map((summary) => {
+                const status = stockStatus(summary.totalAvailable, null);
+                return (
+                  <div key={summary.inventoryItemId} className="rounded-lg border bg-card p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">{summary.productLabel}</p>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                        <span className="text-sm text-muted-foreground">
+                          Total disponible: <span className="font-medium text-foreground">{summary.totalAvailable}</span>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-col gap-1 border-t pt-2">
+                      {summary.byLocation.map((loc) => (
+                        <div key={loc.locationId} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                          <span className="text-muted-foreground">{loc.locationName}</span>
+                          <div className="flex items-center gap-3">
+                            <span>
+                              Físico {loc.physical} · Reservado {loc.reserved} · Disponible {loc.available}
+                            </span>
+                            {canEdit && (
+                              <AdjustmentDialog
+                                inventoryItemId={summary.inventoryItemId}
+                                locationId={loc.locationId}
+                                productLabel={summary.productLabel}
+                                locationName={loc.locationName}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Producto</TableHead>
-                  <TableHead>Ubicación</TableHead>
                   <TableHead>Físico</TableHead>
                   <TableHead>Reservado</TableHead>
                   <TableHead>Disponible</TableHead>
@@ -93,12 +159,11 @@ export default async function StockPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {stockRows.map((row) => {
+                {filteredRows.map((row) => {
                   const status = stockStatus(row.available, row.minQuantity);
                   return (
                     <TableRow key={`${row.inventoryItemId}:${row.locationId}`}>
                       <TableCell className="font-medium">{row.productLabel}</TableCell>
-                      <TableCell className="text-muted-foreground">{row.locationName}</TableCell>
                       <TableCell>{row.physical}</TableCell>
                       <TableCell>{row.reserved}</TableCell>
                       <TableCell>{row.available}</TableCell>
