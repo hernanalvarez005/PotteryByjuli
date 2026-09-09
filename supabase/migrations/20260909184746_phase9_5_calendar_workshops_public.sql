@@ -130,6 +130,12 @@ create type public.event_registration_status as enum
   ('pending', 'confirmed', 'cancelled', 'attended', 'no_show');
 create type public.event_payment_status as enum ('pending', 'partial', 'paid');
 
+-- The Phase 8 capacity trigger is column-specific ("of quantity, status"),
+-- which Postgres treats as a dependency on that column — it has to be
+-- dropped before the column's type can change, then recreated below once
+-- check_event_capacity() is redefined for the new enum values.
+drop trigger if exists event_registrations_check_capacity on public.event_registrations;
+
 alter table public.event_registrations alter column status drop default;
 alter table public.event_registrations alter column status type public.event_registration_status using (
   case status::text when 'registered' then 'confirmed' else 'cancelled' end
@@ -221,6 +227,10 @@ begin
   return new;
 end;
 $$;
+
+create trigger event_registrations_check_capacity
+  before insert or update of quantity, status on public.event_registrations
+  for each row execute function public.check_event_capacity();
 
 -- ============================================================================
 -- 5. Special dates — Día de la Madre, lanzamientos, recordatorios. NOT a
