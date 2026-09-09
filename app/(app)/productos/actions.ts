@@ -47,7 +47,7 @@ export async function toggleProductActive(id: string, isActive: boolean) {
   revalidatePath("/productos");
 }
 
-export type BulkPriceState = { error?: string; applied?: number };
+export type BulkPriceState = { error?: string; applied?: number; warning?: string };
 
 /**
  * Applies one adjustment to every variant's existing price row in the
@@ -108,10 +108,15 @@ export async function applyBulkPriceAdjustment(
   // One audit row per bulk operation (docs/business-rules.md § Auditoría
   // obligatoria) — per-row updated_by/updated_at already says who touched
   // a given price last; this says what the batch that did it actually was.
+  // The price changes above already happened regardless of this outcome
+  // (never rolled back for an audit-only failure), but a failure here
+  // must still be visible — a silently-missing audit row would violate
+  // "todo cambio de precio queda registrado" without anyone noticing.
+  let auditError: string | null = null;
   for (const listId of targetListIds) {
     const countForList = (existingPrices ?? []).filter((r) => r.price_list_id === listId).length;
     if (countForList === 0) continue;
-    await supabase.from("price_bulk_adjustments").insert({
+    const { error } = await supabase.from("price_bulk_adjustments").insert({
       price_list_id: listId,
       adjustment_kind: kind,
       operation,
@@ -119,9 +124,12 @@ export async function applyBulkPriceAdjustment(
       affected_count: countForList,
       created_by: user.id,
     });
+    if (error) auditError = error.message;
   }
 
   revalidatePath("/productos");
   revalidatePath("/precios");
-  return { applied };
+  return auditError
+    ? { applied, warning: `Los precios se actualizaron, pero no se pudo registrar la auditoría: ${auditError}` }
+    : { applied };
 }

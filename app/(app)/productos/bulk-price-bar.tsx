@@ -32,6 +32,15 @@ export type ProductVariantForBulk = {
   wholesale: number | null;
 };
 
+// Passed as Select's `items` prop so the trigger shows the translated
+// label immediately — without it, Base UI's <Select.Value> can't resolve
+// a label for a value that's already selected before the popup has ever
+// been opened (its item registry is empty until then) and falls back to
+// showing the raw value ("retail" instead of "Minorista").
+const LIST_SCOPE_LABELS = { retail: "Minorista", wholesale: "Mayorista", both: "Ambas" };
+const KIND_LABELS = { percentage: "Porcentaje", fixed: "Importe fijo" };
+const OPERATION_LABELS = { increase: "Aumentar", decrease: "Disminuir" };
+
 export function BulkPriceBar({ variants }: { variants: ProductVariantForBulk[] }) {
   const { selected, clear } = useSelection();
 
@@ -69,12 +78,12 @@ function BulkPriceDialog({
 
   const wasPending = useRef(false);
   useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) {
+    if (wasPending.current && !isPending && !state.error && !state.warning) {
       setOpen(false);
       onApplied();
     }
     wasPending.current = isPending;
-  }, [isPending, state.error, onApplied]);
+  }, [isPending, state.error, state.warning, onApplied]);
 
   const selectedVariants = useMemo(
     () => variants.filter((v) => selectedProductIds.includes(v.productId)),
@@ -113,7 +122,11 @@ function BulkPriceDialog({
 
           <div className="space-y-2">
             <Label>Lista</Label>
-            <Select value={listScope} onValueChange={(v) => v && setListScope(v as typeof listScope)}>
+            <Select
+              items={LIST_SCOPE_LABELS}
+              value={listScope}
+              onValueChange={(v) => v && setListScope(v as typeof listScope)}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -128,7 +141,7 @@ function BulkPriceDialog({
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label>Tipo</Label>
-              <Select value={kind} onValueChange={(v) => v && setKind(v as AdjustmentKind)}>
+              <Select items={KIND_LABELS} value={kind} onValueChange={(v) => v && setKind(v as AdjustmentKind)}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -140,7 +153,11 @@ function BulkPriceDialog({
             </div>
             <div className="space-y-2">
               <Label>Operación</Label>
-              <Select value={operation} onValueChange={(v) => v && setOperation(v as AdjustmentOperation)}>
+              <Select
+                items={OPERATION_LABELS}
+                value={operation}
+                onValueChange={(v) => v && setOperation(v as AdjustmentOperation)}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -179,6 +196,7 @@ function BulkPriceDialog({
           </div>
 
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+          {state.warning && <p className="text-sm text-destructive">{state.warning}</p>}
           {state.applied != null && (
             <p className="text-sm text-muted-foreground">{state.applied} precio(s) actualizados.</p>
           )}
