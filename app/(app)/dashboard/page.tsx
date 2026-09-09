@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -60,9 +61,9 @@ export default async function DashboardPage() {
           medida que se implementan las siguientes fases (ver{" "}
           <code className="rounded bg-muted px-1 py-0.5">docs/roadmap.md</code>
           ). Por ahora podés revisar y ajustar la configuración base en{" "}
-          <a href="/configuracion" className="underline underline-offset-2">
+          <Link href="/configuracion" className="underline underline-offset-2">
             Configuración
-          </a>
+          </Link>
           .
         </CardContent>
       </Card>
