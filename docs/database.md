@@ -298,6 +298,33 @@ variantes / 170 precios / 75 movimientos de stock (La Plata) desde el
 catálogo de Tienda Nube, y 34 clientes / 6 grupos / 34 inscripciones desde
 el listado de alumnas actuales.
 
+## Ajustes post-lanzamiento — implementado
+
+Migración `20260909211120_workshop_monthly_dues.sql`:
+
+- `workshop_groups.monthly_fee` — nullable, cuota mensual del grupo.
+- `payments`: `order_id` pasa a nullable, se agrega `workshop_due_id`
+  (FK a `workshop_dues`), constraint `payments_exactly_one_target`
+  (exactamente uno de los dos no-nulo). Aditivo: filas existentes ya
+  tenían `order_id` seteado, cumplen la constraint sin backfill.
+- `workshop_dues`: se eliminan `is_paid`/`paid_at`/`method_id` (0 filas
+  en producción en ese momento — sin riesgo de pérdida de datos reales);
+  se agregan `status` (`'pending'|'cancelled'`, default `'pending'`) y
+  `generated_by`. Constraint `workshop_dues_period_format` exige
+  `AAAA-MM`.
+- `generate_monthly_dues(p_period text)`: `security invoker`, valida
+  owner/operations, inserta vía `ON CONFLICT (enrollment_id, period) DO
+  NOTHING` — idempotente sin lógica adicional en la app.
+- `cancel_due(p_id uuid)`: `security invoker`, valida owner/operations.
+
+Migración `20260909214351_price_bulk_adjustments.sql`:
+
+- `price_bulk_adjustments` — una fila por operación de ajuste masivo de
+  precios (lista, tipo, operación, valor, cantidad afectada, quién,
+  cuándo). No reemplaza `price_list_items.updated_by`/`updated_at`
+  (Fase 2, "quién tocó este precio por última vez") — lo complementa
+  ("qué operación masiva fue la que lo tocó").
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

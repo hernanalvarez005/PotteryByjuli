@@ -282,6 +282,52 @@ Pendiente de decisión de Juli (no resuelto acá a propósito — ver
 - **Costo real de catálogo**: sólo 18/63 productos traían `Costo` en el
   export; el resto quedó con `cost_estimate = null` (nunca inventado).
 
+## Ajustes post-lanzamiento (2026-09-09) ✅
+
+Primer ciclo real de bugs/pedidos operativos con la plataforma ya en uso.
+Tres tandas (P0/P1/P2), cada una en su propia branch, PR, y mergeada a
+`main` recién después de verificar en producción — nunca "andá probando
+en vivo".
+
+**P0 — bug crítico**: abrir una clase o evento como owner tiraba error de
+servidor. Causa raíz: un Server Component pasaba un closure inline
+(`onConfirm={() => archiveGroup(id)}`) a un Client Component — no
+serializable cruzando ese límite. Fix: `.bind(null, id)` sobre la Server
+Action. Test de regresión agregado: escanea todo `app/` buscando este
+patrón exacto en cualquier Server Component, no sólo en las dos páginas
+donde apareció.
+
+**P1**:
+- Stock por ubicación auditado primero (los datos NUNCA estuvieron
+  duplicados) y luego arreglada la UI: selector Todas/La Plata/Tres
+  Lomas, "Todas" con desglose real + total en vez de filas planas
+  confusas.
+- Cuotas mensuales de talleres — ver `docs/business-rules.md` § Cuotas
+  mensuales de talleres para el modelo completo. Reutiliza `payments`,
+  nunca una segunda contabilidad.
+
+**P2**:
+- Calendario con vistas Día/Semana/Mes (antes sólo Semana).
+- Vista Alumnas (`/clientes?segment=students`) — "alumna" inferido de
+  tener una inscripción activa, no de un tag manual.
+- Ajuste masivo de precios (selección múltiple, preview, auditoría).
+- Importar imagen de producto desde una URL pública (descarga
+  server-side + valida + sube a Storage propio — nunca linkea directo a
+  un CDN externo).
+- "+ Agregar producto" desde `/stock`, reutilizando el mismo
+  `createAdjustment` y el mismo formulario de creación de `/productos`.
+
+**Migrations**: `20260909211120_workshop_monthly_dues.sql`,
+`20260909214351_price_bulk_adjustments.sql` — ambas aplicadas y
+verificadas contra producción.
+
+**Verificación**: cada feature se probó en vivo (dev local + producción)
+con una cuenta de debug temporal (creada y borrada vía Admin API,
+nunca una cuenta real). Dos veces esto escribió datos reales de prueba
+sin querer (7 cuotas + 2 pagos falsos de una alumna real; una imagen de
+test en un producto real) — ambas veces detectado y limpiado
+inmediatamente, verificado que la base volvió al estado previo exacto.
+
 ## Fase 10 — Optimización ⏳ (en progreso)
 
 - [x] **Auditoría de seguridad** — revisión completa de las políticas RLS

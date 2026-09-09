@@ -212,3 +212,80 @@ también:
   se cargó con la cantidad actual de alumnas como placeholder explícito —
   documentado en el reporte, a ajustar a mano en `/talleres` cuando se
   confirme el cupo real.
+
+## Cuotas mensuales de talleres
+
+El valor mensual vive en `workshop_groups.monthly_fee` (no en el
+programa — el programa es sólo una categoría, todo lo demás operativo
+—horario, cupo, ubicación— ya vivía en el grupo). Una alumna puede tener
+`workshop_enrollments.monthly_fee` propio, que pisa el del grupo sólo
+para ella — nunca al revés, y nunca reescribe el valor general.
+
+"Generar cuotas" (`generate_monthly_dues(period)`) es idempotente por
+construcción: inserta contra el `unique(enrollment_id, period)` que ya
+existe desde Fase 7 con `ON CONFLICT DO NOTHING` — apretar el botón dos
+veces para el mismo mes nunca duplica una cuota. El importe queda
+grabado en el momento (`amount`) y nunca se recalcula después: si el
+`monthly_fee` del grupo cambia en octubre, la cuota de septiembre sigue
+en lo que costaba en septiembre — el mismo criterio de snapshot que ya
+usan los pedidos.
+
+**Pagada/Parcial nunca se guardan** — se calculan siempre sumando los
+`payments` reales contra el `amount` de la cuota (`pagado ≥ importe` →
+pagada; `0 < pagado < importe` → parcial; `pagado = 0` → pendiente),
+igual que "Facturación ≠ cobranza" ya funciona para pedidos.
+`workshop_dues.status` sólo guarda lo que **no** es derivable de pagos:
+si la cuota fue cancelada. La primera versión de esta tabla (Fase 7)
+guardaba `is_paid`/`paid_at`/`method_id` directo en la fila — una segunda
+contabilidad paralela a `payments` — reemplazada porque nunca llegó a
+tener filas reales en producción (seguro de reescribir sin backfill).
+
+`payments` se generalizó para poder apuntar a una cuota además de a un
+pedido: `order_id` pasó a nullable, se agregó `workshop_due_id`, y una
+constraint exige que sea exactamente uno de los dos. Nunca "cuotas
+tienen su propio pago" — es el mismo `payments` de siempre.
+
+"Sin registro" ≠ "pendiente": la vista Alumnas y la ficha de cliente
+distinguen explícitamente "Sin cuota generada" (todavía no se corrió
+"Generar cuotas" para ese mes) de "Pendiente" (la cuota existe, no se
+cobró) — nunca se asume lo segundo cuando es lo primero.
+
+## Stock por ubicación — nunca un número repetido
+
+`getFinishedGoodsStock()` calcula físico/reservado/disponible por
+`(inventory_item_id, location_id)` desde el ledger real — cada ubicación
+tiene su propio número genuino, nunca el mismo valor copiado a las dos.
+La vista "Todas" de `/stock` agrega esos números reales por producto
+(con desglose visible por ubicación); una ubicación específica filtra a
+sólo esa fila. Si algún día una ubicación nueva parece mostrar el mismo
+stock que otra, es señal de un bug real — no del comportamiento
+esperado, que siempre parte de movimientos con `location_id` propio.
+
+## Ajuste masivo de precios
+
+Sólo escribe sobre un `price_list_items` que ya existe — nunca crea un
+precio donde no había uno (aumentar el 5% de "nada" no tiene sentido).
+Redondea siempre al peso entero (`Math.round`), la misma convención que
+ya usa toda la plataforma para ARS — no una regla nueva de redondeo a
+miles. Un pedido histórico nunca se ve afectado: su `unit_price` ya
+quedó copiado al momento de la venta, la actualización masiva sólo toca
+`price_list_items` (el precio *vigente*, no el histórico). Cada
+operación masiva deja una fila en `price_bulk_adjustments` (quién,
+cuándo, qué lista, tipo, cuántos precios) — un fallo al grabar esa
+auditoría nunca se oculta: se revierte la interpretación de "éxito" y se
+muestra como advertencia, aunque los precios ya se hayan actualizado
+correctamente (nunca se deshace un cambio real por un problema sólo de
+auditoría).
+
+## Imágenes de producto por URL — nunca un hotlink
+
+Pegar una URL pública descarga la imagen server-side, valida que el
+`Content-Type` sea realmente `image/jpeg|png|webp` y que pese menos de
+10MB, y recién ahí la sube a Storage propio — el producto nunca queda
+dependiendo de que un CDN externo (ej. Tienda Nube) seguirá sirviendo esa
+URL. Protección SSRF en dos pasadas: se rechaza el hostname/esquema antes
+de tocar la red (`localhost`, IPs privadas, el rango link-local que
+incluye el endpoint de metadata de nube 169.254.169.254), y después se
+resuelve DNS y se vuelve a chequear la IP real — un hostname
+público-en-apariencia que resuelve a una dirección privada se bloquea
+igual.

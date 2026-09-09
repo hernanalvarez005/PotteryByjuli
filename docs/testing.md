@@ -48,6 +48,32 @@
   ISO correcto, nunca fusionar dos personas por compartir sólo el nombre
   de pila (`Cami Pagella` ≠ `Cami Frigerio`), un nombre de una sola
   palabra no inventa apellido.
+- `tests/no-inline-handlers-in-server-components.test.ts` (post-lanzamiento
+  P0): escaneo estático de todo Server Component bajo `app/` — falla si
+  alguno pasa un closure inline como prop tipo `on*` a un Client
+  Component. Regresión directa del bug productivo de Calendario → Clase;
+  verificado que detecta el código roto original antes del fix.
+- `lib/inventory.test.ts`: `summarizeStockByProduct` — el total agregado
+  es la suma real de cada ubicación, nunca el mismo número repetido en
+  todas; una ubicación con stock 0 sigue siendo su propia fila, no se
+  omite.
+- `lib/workshop-dues.test.ts`: estado mostrado (pendiente/parcial/pagada)
+  siempre derivado de `amount` vs. suma de `payments`, nunca "sin
+  registro = pendiente" tratado como el mismo caso que "pendiente real";
+  el ejemplo de facturación vs. cobranza del brief (sección 62) verificado
+  exactamente; `previousPeriod`/`nextPeriod` cruzando fin de año.
+- `lib/calendar.test.ts`: `entriesForDate` (una clase recurrente entra por
+  weekday, un workshop por fecha exacta, orden cronológico, filtro por
+  tipo), `monthGridDays` (siempre Lunes a Domingo, múltiplo de 7 días).
+- `lib/pricing.test.ts`: el ejemplo de ajuste masivo del brief (sección
+  65, +5%) verificado exacto; redondeo al peso entero; una disminución
+  nunca deja un precio negativo.
+- `lib/image-url-import.test.ts`: rechazo de esquemas no-http(s),
+  `localhost`, IPs privadas/loopback/link-local (incluye el rango de
+  metadata de nube), validación de `Content-Type`.
+- `schemas/workshops.test.ts`: `monthly_fee` opcional en el grupo,
+  formato `AAAA-MM` exigido en el período de una cuota, un pago de
+  cuota requiere importe positivo.
 
 ## Cobertura pendiente (necesita una base de test, no sólo Vitest)
 
@@ -89,6 +115,13 @@ son las pruebas de integración con más impacto, en orden:
    cargada en un año anterior debe seguir apareciendo en el calendario de
    los años siguientes en el mismo mes/día, sin duplicarse si el rango
    consultado abarca más de un año.
+9. **`generate_monthly_dues`** (post-lanzamiento): verificado manualmente
+   en vivo (34 alumnas activas, 1 grupo con `monthly_fee` → 7 generadas /
+   27 sin cuota; segunda corrida → 0 generadas / 7 existentes) — falta
+   automatizar como test de integración. Pendiente además: dos llamadas
+   *concurrentes* de "Generar cuotas" para el mismo período (la
+   constraint `unique(enrollment_id, period)` debería bastar, pero no
+   está probado bajo carrera real).
 
 ## Checks obligatorios antes de cerrar cualquier fase
 
@@ -127,3 +160,15 @@ destrabar un commit.
    tiempo para el último lugar — sólo una queda `confirmed`.
 9. **Workshop público, borrador**: un workshop en `draft` nunca debe ser
    accesible en `/workshops/[slug]`, aunque se conozca el slug exacto.
+10. **Calendario → clase → alumna → ficha** (post-lanzamiento, sección
+    59 — obligatorio por ser regresión de un bug productivo real): login
+    → `/calendario` → click en una clase → el detalle carga sin error →
+    la lista de alumnas es visible → click en una alumna → abre su ficha
+    de cliente. Verificado manualmente contra producción con el fix del
+    P0; falta automatizar.
+11. **Cuotas de un mes**: cargar `monthly_fee` en un grupo → "Generar
+    cuotas" → aparecen con estado Pendiente → registrar un pago parcial
+    → estado Parcial, saldo correcto → completar el pago → estado
+    Pagada → se refleja en `/clientes?segment=students` y en la ficha
+    ("Último mes pago"). Verificado manualmente contra producción (y
+    los datos de prueba, limpiados después); falta automatizar.
