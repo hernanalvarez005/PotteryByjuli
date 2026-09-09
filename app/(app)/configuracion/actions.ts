@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner } from "@/lib/auth";
 import { CATALOG_TABLES, type CatalogTableKey } from "@/lib/catalog";
+import { wholesaleSettingsSchema } from "@/schemas/wholesale";
 
 export type CatalogActionState = { error?: string };
 
@@ -62,4 +63,32 @@ export async function toggleCatalogItemActive(
 
   if (error) throw new Error("No se pudo actualizar.");
   revalidatePath("/configuracion");
+}
+
+export async function updateWholesaleSettings(
+  settingsId: string,
+  _prevState: CatalogActionState,
+  formData: FormData
+): Promise<CatalogActionState> {
+  const user = await requireUser();
+  if (!isOwner(user)) {
+    return { error: "Sólo la administradora puede modificar la configuración mayorista." };
+  }
+
+  const parsed = wholesaleSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("wholesale_settings")
+    .update({ ...parsed.data, updated_by: user.id })
+    .eq("id", settingsId);
+
+  if (error) return { error: "No se pudo guardar." };
+
+  revalidatePath("/configuracion");
+  revalidatePath("/mayorista");
+  return {};
 }

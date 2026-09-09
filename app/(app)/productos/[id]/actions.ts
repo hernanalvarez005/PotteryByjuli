@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { productSchema, variantSchema, priceSchema } from "@/schemas/products";
+import { wholesaleRulesSchema } from "@/schemas/wholesale";
 
 export type ProductDetailState = { error?: string };
 
@@ -159,4 +160,30 @@ export async function setPrimaryImage(productId: string, imageId: string) {
   if (error) throw new Error("No se pudo actualizar.");
 
   revalidatePath(`/productos/${productId}`);
+}
+
+export async function upsertWholesaleRules(
+  productId: string,
+  _prevState: ProductDetailState,
+  formData: FormData
+): Promise<ProductDetailState> {
+  const user = await requireUser();
+  if (!isOwner(user)) {
+    return { error: "Sólo la administradora puede modificar reglas mayoristas." };
+  }
+
+  const parsed = wholesaleRulesSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("wholesale_product_rules")
+    .upsert({ product_id: productId, ...parsed.data }, { onConflict: "product_id" });
+  if (error) return { error: "No se pudo guardar." };
+
+  revalidatePath(`/productos/${productId}`);
+  revalidatePath("/mayorista");
+  return {};
 }

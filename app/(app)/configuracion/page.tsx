@@ -3,6 +3,7 @@ import { requireUser, isOwner } from "@/lib/auth";
 import { CATALOG_TABLES, CATALOG_TABLE_KEYS, type CatalogRow } from "@/lib/catalog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CatalogManager } from "./catalog-manager";
+import { WholesaleSettingsForm, type WholesaleSettings } from "./wholesale-settings-form";
 
 export default async function ConfiguracionPage() {
   const user = await requireUser();
@@ -17,6 +18,12 @@ export default async function ConfiguracionPage() {
   const rowsByTable = Object.fromEntries(
     CATALOG_TABLE_KEYS.map((table, i) => [table, (results[i].data ?? []) as CatalogRow[]])
   ) as Record<(typeof CATALOG_TABLE_KEYS)[number], CatalogRow[]>;
+
+  const { data: wholesaleSettings } = await supabase
+    .from("wholesale_settings")
+    .select("*")
+    .limit(1)
+    .maybeSingle();
 
   return (
     <div className="flex flex-col gap-6">
@@ -35,6 +42,7 @@ export default async function ConfiguracionPage() {
               {CATALOG_TABLES[table].label}
             </TabsTrigger>
           ))}
+          {wholesaleSettings && <TabsTrigger value="wholesale">Mayorista</TabsTrigger>}
         </TabsList>
         {CATALOG_TABLE_KEYS.map((table) => (
           <TabsContent key={table} value={table}>
@@ -48,6 +56,21 @@ export default async function ConfiguracionPage() {
             />
           </TabsContent>
         ))}
+        {wholesaleSettings && (
+          <TabsContent value="wholesale">
+            <div className="flex flex-col gap-1 pb-4">
+              <h3 className="font-medium">Condiciones mayoristas</h3>
+              <p className="text-sm text-muted-foreground">
+                Esto se muestra tal cual en el catálogo público de{" "}
+                <code className="rounded bg-muted px-1 py-0.5">/mayorista</code>.
+              </p>
+            </div>
+            <WholesaleSettingsForm
+              settings={wholesaleSettings as WholesaleSettings}
+              canEdit={isOwner(user)}
+            />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

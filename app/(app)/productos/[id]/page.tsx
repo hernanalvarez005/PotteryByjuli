@@ -7,6 +7,7 @@ import { ProductInfoForm } from "./product-info-form";
 import { VariantsPanel } from "./variants-panel";
 import { PricesPanel } from "./prices-panel";
 import { ImagesPanel, type ProductImage } from "./images-panel";
+import { WholesaleRulesPanel, type WholesaleRules } from "./wholesale-rules-panel";
 
 export default async function ProductDetailPage({
   params,
@@ -19,7 +20,7 @@ export default async function ProductDetailPage({
 
   const supabase = await createClient();
 
-  const [{ data: product }, { data: categories }, { data: priceLists }, { data: images }] =
+  const [{ data: product }, { data: categories }, { data: priceLists }, { data: images }, { data: wholesaleRules }] =
     await Promise.all([
       supabase
         .from("products")
@@ -33,6 +34,11 @@ export default async function ProductDetailPage({
         .select("id,storage_path,is_primary")
         .eq("product_id", id)
         .order("sort_order"),
+      supabase
+        .from("wholesale_product_rules")
+        .select("is_public,min_quantity,multiple_of,lead_time_days")
+        .eq("product_id", id)
+        .maybeSingle(),
     ]);
 
   if (!product) notFound();
@@ -95,6 +101,17 @@ export default async function ProductDetailPage({
           variants={variants}
           priceLists={priceLists ?? []}
           prices={prices}
+          canEdit={isOwner(user)}
+        />
+        <WholesaleRulesPanel
+          productId={product.id}
+          rules={wholesaleRules as WholesaleRules}
+          hasWholesalePrice={(() => {
+            const wholesaleListId = (priceLists ?? []).find((pl) => pl.code === "wholesale")?.id;
+            return wholesaleListId
+              ? Object.keys(prices).some((key) => key.startsWith(`${wholesaleListId}:`))
+              : false;
+          })()}
           canEdit={isOwner(user)}
         />
       </div>
