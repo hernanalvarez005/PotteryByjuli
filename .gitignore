@@ -37,3 +37,7 @@ next-env.d.ts
 # supabase
 supabase/.branches
 supabase/.temp
+
+# real operational data used by scripts/import-*.ts — never committed,
+# the importer code that reads it is (docs/business-rules.md § Importación)
+/imports/
