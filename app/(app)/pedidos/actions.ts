@@ -1,0 +1,106 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { requireUser, hasRole, isOwner } from "@/lib/auth";
+import { createOrderSchema, paymentSchema, ORDER_STATUSES } from "@/schemas/orders";
+
+export type OrderActionState = { error?: string };
+
+async function assertCanManageOrders() {
+  const user = await requireUser();
+  if (!isOwner(user) && !hasRole(user, "operations")) {
+    throw new Error("No tenés permiso para gestionar pedidos.");
+  }
+  return user;
+}
+
+export async function createOrder(
+  _prevState: OrderActionState,
+  formData: FormData
+): Promise<OrderActionState> {
+  await assertCanManageOrders();
+
+  let itemsRaw: unknown;
+  try {
+    itemsRaw = JSON.parse(String(formData.get("items") ?? "[]"));
+  } catch {
+    return { error: "Los ítems del pedido son inválidos." };
+  }
+
+  const parsed = createOrderSchema.safeParse({
+    business_unit_id: formData.get("business_unit_id"),
+    customer_id: formData.get("customer_id"),
+    location_id: formData.get("location_id"),
+    origin_channel_id: formData.get("origin_channel_id"),
+    closing_channel_id: formData.get("closing_channel_id"),
+    delivery_method: formData.get("delivery_method"),
+    delivery_address: formData.get("delivery_address"),
+    estimated_date: formData.get("estimated_date"),
+    notes: formData.get("notes"),
+    items: itemsRaw,
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { data: orderId, error } = await supabase.rpc("create_order", {
+    p_business_unit_id: parsed.data.business_unit_id,
+    p_customer_id: parsed.data.customer_id,
+    p_location_id: parsed.data.location_id,
+    p_origin_channel_id: parsed.data.origin_channel_id,
+    p_closing_channel_id: parsed.data.closing_channel_id,
+    p_delivery_method: parsed.data.delivery_method,
+    p_delivery_address: parsed.data.delivery_address,
+    p_estimated_date: parsed.data.estimated_date,
+    p_notes: parsed.data.notes,
+    p_items: parsed.data.items,
+  });
+
+  if (error || !orderId) {
+    return { error: error?.message ?? "No se pudo crear el pedido." };
+  }
+
+  revalidatePath("/pedidos");
+  redirect(`/pedidos/${orderId}`);
+}
+
+export async function changeOrderStatus(orderId: string, status: string) {
+  await assertCanManageOrders();
+  if (!ORDER_STATUSES.includes(status as (typeof ORDER_STATUSES)[number])) {
+    throw new Error("Estado inválido.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("orders").update({ status }).eq("id", orderId);
+  if (error) throw new Error("No se pudo cambiar el estado.");
+
+  revalidatePath(`/pedidos/${orderId}`);
+  revalidatePath("/pedidos");
+}
+
+export async function addPayment(
+  orderId: string,
+  _prevState: OrderActionState,
+  formData: FormData
+): Promise<OrderActionState> {
+  const user = await assertCanManageOrders();
+
+  const parsed = paymentSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("payments")
+    .insert({ ...parsed.data, order_id: orderId, created_by: user.id });
+  if (error) return { error: "No se pudo registrar el pago." };
+
+  revalidatePath(`/pedidos/${orderId}`);
+  revalidatePath("/pedidos");
+  return {};
+}
