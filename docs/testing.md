@@ -1,53 +1,63 @@
 # Testing — Pottery
 
-Ningún framework de test está instalado todavía (Fase 1 no tiene lógica de
-negocio no trivial que lo justifique — `configuracion/actions.ts` es CRUD
-simple validado por zod). Se agrega en la fase donde aparece la primera
-regla de negocio real que vale la pena proteger: **Fase 3 (totales de
-pedido) y sobre todo Fase 5 (reglas mayoristas)**.
+## Qué se usa
 
-## Qué se va a usar
+- **Unit**: Vitest (`npm test`), instalado en la Fase 10. Cubre lógica
+  pura de TypeScript — schemas zod y funciones sin efectos secundarios.
+  Deliberadamente **no** cubre las reglas que viven en Postgres (triggers,
+  funciones RPC como `set_order_status`, `submit_wholesale_request`,
+  `complete_stock_transfer`) — esas son las que realmente mueven stock,
+  dinero y cupos, y probarlas de verdad requiere una base Supabase de test
+  (integración), no un mock. Ver "Cobertura pendiente" abajo.
+- **E2E**: Playwright — todavía no instalado; se suma cuando haya que
+  probar un flujo de punta a punta contra una base de test real.
 
-- **Unit / integration**: Vitest. Se prefiere sobre Jest por arrancar más
-  rápido con Turbopack/ESM y no necesitar configuración adicional de
-  transform para TypeScript.
-- **E2E**: Playwright.
+## Qué está cubierto hoy
 
-Ninguno de los dos se instala preventivamente — se agrega en el commit que
-trae el primer test real, para no cargar dependencias sin uso.
+- `lib/wholesale-cart.test.ts`: `validateWholesaleCart` — mínimo por
+  monto, mínimo por piezas totales, mínimo por producto, múltiplos,
+  cuánto falta para cada uno, y que todo junto habilite el envío. Es la
+  lógica con más superficie de error de negocio de todo el proyecto
+  (sección 10 del brief original), y la única razón por la que vale la
+  pena haberla sacado de `cart-sheet.tsx` a un archivo propio.
+- `schemas/orders.test.ts`, `schemas/wholesale.test.ts`: validación de
+  los formularios de pedido y de solicitud mayorista (campos requeridos,
+  UUIDs, al menos un ítem, email opcional pero bien formado si está).
+- `lib/customers.test.ts`: nombre para mostrar y normalización del link
+  de WhatsApp (agrega `54` cuando falta, no lo duplica cuando ya está).
+
+## Cobertura pendiente (necesita una base de test, no sólo Vitest)
+
+Las reglas más importantes del sistema viven en las migrations de
+Supabase, no en TypeScript — un test unitario no las alcanza. Cuando
+exista un proyecto Supabase de test (separado del de producción), estas
+son las pruebas de integración con más impacto, en orden:
+
+1. **`set_order_status`**: confirmar reserva sólo lo disponible y genera
+   la orden de producción por la diferencia; entregar consume la
+   reserva; cancelar la libera; el estado nunca retrocede (fix de la
+   Fase 10).
+2. **`submit_wholesale_request`**: rechaza un carrito por debajo de
+   cualquier mínimo, ignora el precio que mande el cliente y usa el del
+   servidor, no permite más de 200 líneas.
+3. **`complete_stock_transfer`**: atómica — si falta stock de un
+   producto, no se mueve ninguno.
+4. **`complete_production_order`**: la cantidad correcta impacta stock,
+   la merma queda registrada.
+5. **`check_workshop_capacity`/`check_event_capacity`**: no permiten
+   sobrevender un cupo, ni con dos inscripciones concurrentes.
 
 ## Checks obligatorios antes de cerrar cualquier fase
 
 ```bash
 npm run typecheck
 npm run lint
+npm test
 npm run build
 ```
 
-(`npm test` se suma a esta lista en cuanto exista al menos un test.) Nunca
-se ignoran errores de TypeScript ni se desactiva ESLint para destrabar un
-commit.
-
-## Casos que sí o sí necesitan test cuando se implementen
-
-Prioridad por impacto de un bug silencioso:
-
-1. **Mínimos y validación del carrito mayorista** (Fase 5): monto mínimo,
-   mínimo por producto, múltiplos, mensaje de "cuánto falta". Es la lógica
-   con más superficie de error de negocio de todo el proyecto.
-2. **Cálculo de totales/saldo de un pedido** (Fase 3): subtotal, descuentos,
-   pagado, saldo — con snapshots de precio, no con el precio actual del
-   catálogo.
-3. **Movimientos de stock y transferencias** (Fase 4): que una
-   transferencia entre ubicaciones sea atómica (todo o nada), y que
-   disponible = físico − reservado nunca dé negativo sin que el sistema lo
-   marque.
-4. **Cierre de una orden de producción** (Fase 6): que el ingreso a stock
-   sea exactamente la cantidad correcta declarada, y que la merma quede
-   registrada, nunca descartada silenciosamente.
-5. **Cupos de eventos/talleres** (Fases 7-8): que no se pueda sobrevender
-   un cupo por una condición de carrera entre dos inscripciones
-   simultáneas.
+Nunca se ignoran errores de TypeScript ni se desactiva ESLint para
+destrabar un commit.
 
 ## Flujos E2E críticos (Playwright), en el orden en que van a existir
 

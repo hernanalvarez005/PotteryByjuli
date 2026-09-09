@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ShoppingCart } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import type { WholesaleProduct, WholesaleSettingsPublic } from "@/lib/wholesale";
+import { validateWholesaleCart, type CartLine } from "@/lib/wholesale-cart";
 import { useCart } from "./cart-context";
 import { submitWholesaleRequest, type WholesaleRequestState } from "./actions";
 
@@ -49,28 +50,28 @@ export function CartSheet({
       .filter((l): l is NonNullable<typeof l> => l !== null);
   }, [cart, products]);
 
-  const totalAmount = lines.reduce((sum, l) => sum + l.variant.unitPrice * l.quantity, 0);
-  const totalUnits = lines.reduce((sum, l) => sum + l.quantity, 0);
-
-  const missingAmount = settings?.min_order_amount
-    ? Math.max(0, settings.min_order_amount - totalAmount)
-    : 0;
-  const missingUnits = settings?.min_total_units
-    ? Math.max(0, settings.min_total_units - totalUnits)
-    : 0;
-  const belowProductMinimums = lines.filter(
-    (l) => l.product.minQuantity && l.quantity < l.product.minQuantity
+  const cartLines: CartLine[] = useMemo(
+    () =>
+      lines.map((l) => ({
+        key: l.variant.id,
+        productName: l.product.name,
+        quantity: l.quantity,
+        unitPrice: l.variant.unitPrice,
+        minQuantity: l.product.minQuantity,
+        multipleOf: l.product.multipleOf,
+      })),
+    [lines]
   );
-  const wrongMultiples = lines.filter(
-    (l) => l.product.multipleOf && l.product.multipleOf > 1 && l.quantity % l.product.multipleOf !== 0
-  );
-
-  const canSubmit =
-    lines.length > 0 &&
-    missingAmount === 0 &&
-    missingUnits === 0 &&
-    belowProductMinimums.length === 0 &&
-    wrongMultiples.length === 0;
+  const validation = validateWholesaleCart(cartLines, settings);
+  const {
+    totalAmount,
+    totalUnits,
+    missingAmount,
+    missingUnits,
+    belowProductMinimums,
+    wrongMultiples,
+    canSubmit,
+  } = validation;
 
   if (state.humanCode && step !== "success") setStep("success");
 
@@ -169,13 +170,13 @@ export function CartSheet({
                 </p>
               )}
               {belowProductMinimums.map((l) => (
-                <p key={l.variant.id} className="text-sm text-amber-600">
-                  La cantidad mínima de {l.product.name} es {l.product.minQuantity}.
+                <p key={l.key} className="text-sm text-amber-600">
+                  La cantidad mínima de {l.productName} es {l.minQuantity}.
                 </p>
               ))}
               {wrongMultiples.map((l) => (
-                <p key={l.variant.id} className="text-sm text-amber-600">
-                  {l.product.name} se pide en múltiplos de {l.product.multipleOf}.
+                <p key={l.key} className="text-sm text-amber-600">
+                  {l.productName} se pide en múltiplos de {l.multipleOf}.
                 </p>
               ))}
             </div>
