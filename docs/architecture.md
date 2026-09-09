@@ -174,3 +174,102 @@ Ninguno de estos bloquea seguir escribiendo código.
 La tabla completa de políticas RLS vive en las migrations mismas
 (comentadas); esta tabla es la intención de negocio, no el código fuente de
 verdad.
+
+## 9. Brand / Design System
+
+Implementado en la Fase 10, antes de la Fase 2, a pedido explícito: la
+plataforma tenía que dejar de sentirse "SaaS genérico" y sentirse
+inequívocamente Pottery by Juli desde el día 1 de uso real.
+
+### Fuente de identidad
+
+- Tienda oficial: `potterybyjuliceramica.mitiendanube.com` (tema Morelia de
+  Tiendanube).
+- Logo oficial, descargado y versionado localmente en
+  [`public/brand/pottery-logo.png`](../public/brand/pottery-logo.png) (PNG
+  2000×2000, fondo transparente, sin redibujar/recolorear/vectorizar). El
+  asset original vivía en el CDN de Tiendanube — nunca se hotlinkea en
+  producción.
+- La paleta fue relevada del logo y de la marca (no inferida de fotos del
+  hero, que tienen verdes de bosque saturados que no pertenecen al sistema
+  — sección 40 del brief de diseño).
+
+### Tokens de marca
+
+Fuente única de verdad en [`app/globals.css`](../app/globals.css), bloque
+`:root` "Pottery Brand Tokens". Cada color se define **una sola vez** como
+oklch (para calzar con la arquitectura Tailwind v4/shadcn ya existente,
+enteramente en oklch) y todos los tokens semánticos (`--primary`,
+`--background`, etc.) son alias `var(--pottery-*)` — cambiar un color de
+marca es una edición en un solo lugar.
+
+| Token              | Hex        | Uso principal                                    |
+|--------------------|------------|---------------------------------------------------|
+| `--pottery-ink`    | `#273128`  | Texto principal, headings — `--foreground`         |
+| `--pottery-sage`   | `#687866`  | **Primary**: botones, links, focus, nav activa      |
+| `--pottery-sage-light` | `#7D8D78` | Iconos/decorativo — falla AA como texto chico       |
+| `--pottery-sage-soft`  | `#E7ECE5` | Ítem activo del sidebar, superficies seleccionadas |
+| `--pottery-ivory`  | `#F7F4ED`  | **Background** general de toda la app               |
+| `--pottery-sand`   | `#EEE9DE`  | `--muted`, paneles secundarios                      |
+| `--pottery-stone`  | `#D8D5CC`  | `--border`/`--input`                                |
+| `--pottery-muted`  | `#687068`  | `--muted-foreground` (texto secundario)             |
+| `--pottery-white`  | `#FFFFFF`  | `--card`/`--popover` (superficies elevadas)          |
+| `--pottery-clay`   | `#A8795D`  | Acento auxiliar (charts/categorías) — nunca primary |
+
+Hex → oklch calculado matemáticamente (conversión sRGB→OKLab→OKLCH
+estándar); el valor visual reproduce el hex exacto, no es una aproximación
+a ojo. `--destructive` se mantiene **fuera** de la marca deliberadamente —
+sigue siendo el rojo semántico de shadcn: un pedido cancelado tiene que
+leerse como destructivo pase lo que pase con la paleta.
+
+Mapeo semántico completo en `:root`: `background`→ivory, `foreground`→ink,
+`card`/`popover`→white, `primary`→sage (`primary-foreground`→white),
+`secondary`/`accent`→sage-soft (`-foreground`→ink), `muted`→sand
+(`muted-foreground`→pottery-muted), `border`/`input`→stone, `ring`→sage.
+Los tokens `--sidebar-*` usan el mismo mapeo (sidebar blanco, borde stone,
+ítem activo sage-soft/ink, ícono activo sage).
+
+**Contraste verificado (WCAG)**: primary sobre blanco 4.70:1, texto
+principal sobre ivory 12.28:1, texto muted sobre ivory 4.66:1 — los tres
+pasan AA para texto normal. `sage-light` (3.53:1) y `clay` (3.78:1) NO
+pasan AA como texto chico — por diseño sólo se usan como accent/ícono/chart
+(cumplen el mínimo de 3:1 para elementos no textuales), nunca como color de
+texto de cuerpo. El hover del botón primary usa una variante de sage ~6L
+más oscura (`--pottery-sage-hover`) en vez de opacidad — bajar la opacidad
+sobre un fondo claro aclara el botón en vez de oscurecerlo.
+
+`--radius` es `0.75rem` (antes `0.625rem`) — moderadamente orgánico, sin
+llegar a pill-shaped.
+
+Dark mode (`.dark`) se dejó intacto sin invertir tiempo en re-diseñarlo:
+hoy es inalcanzable en la práctica (nada agrega la clase `.dark`, no hay
+toggle ni media query wireados), así que no hay riesgo de que un usuario
+lo vea a medio adaptar.
+
+### Dónde vive cada pieza
+
+- Logo: `public/brand/pottery-logo.png`, mostrado con `next/image` en
+  `app/(auth)/layout.tsx` (login, ~176px), `app/(app)/layout.tsx` (sidebar
+  desktop ~96px + header mobile ~44px) y `app/mayorista/layout.tsx`
+  (~48px). Siempre con `object-fit: contain`, nunca deformado.
+- Favicon: `app/icon.tsx` (generado con `next/og`) — un cuadrado sage con
+  una "P" blanca. El logo completo tiene demasiado detalle para 16–32px;
+  esto es explícitamente temporal y **no** un isotipo inventado, sólo el
+  color de marca + tipografía. Pendiente: reemplazar cuando exista un
+  favicon oficial optimizado.
+- `components/ui/button.tsx`: única modificación puntual fuera de
+  `globals.css` — el hover del variant `default` usa
+  `--pottery-sage-hover` en vez de `/80` opacity.
+
+### Backoffice vs. portal mayorista
+
+Comparten exactamente los mismos tokens — nunca una paleta paralela. La
+diferencia es de composición, no de color: el backoffice prioriza
+densidad/velocidad de operación (tablas, forms compactos); el portal
+mayorista (Fase 5, `app/mayorista/`) prioriza fotografía de producto y
+espacio, más cerca del lenguaje visual de la tienda Tiendanube. Como todo
+el código ya usaba tokens semánticos (`bg-primary`, `border`, `bg-muted`...)
+y no colores hardcodeados, este cambio de paleta se propagó a las ~25
+rutas existentes sin tocar página por página — confirmado por auditoría
+(`grep` de hex/colores Tailwind fuera de marca en `app/` y `components/`:
+cero resultados fuera de `components/ui/` y `app/icon.tsx`).

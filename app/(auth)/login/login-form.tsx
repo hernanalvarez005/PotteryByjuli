@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { signIn, type LoginState } from "./actions";
 
 const initialState: LoginState = {};
@@ -14,10 +14,7 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Iniciar sesión</CardTitle>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         <form action={formAction} className="space-y-4">
           <input type="hidden" name="redirectTo" value={redirectTo ?? ""} />
           <div className="space-y-2">

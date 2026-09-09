@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pottery — Sistema operativo",
-  description: "Backoffice operativo de Pottery: pedidos, stock, producción, talleres y mayoristas.",
+  title: "Pottery | Gestión",
+  description: "Gestión integral de Pottery by Juli.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

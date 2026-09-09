@@ -47,11 +47,14 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                 href={item.href}
                 onClick={onNavigate}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                  isActive && "bg-accent text-accent-foreground"
+                  "relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground",
+                  isActive && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent"
                 )}
               >
-                <Icon className="size-4" />
+                {isActive && (
+                  <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
+                )}
+                <Icon className={cn("size-4", isActive && "text-primary")} />
                 {item.label}
               </Link>
             );

@@ -46,41 +46,84 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Pottery brand tokens exposed as Tailwind utilities (bg-pottery-sage,
+     text-pottery-clay, ...) for the handful of places that need a brand
+     color with no semantic slot — everything else should use the
+     semantic tokens above (bg-primary, bg-secondary, ...), not these
+     directly, so a future palette change stays a one-file edit. */
+  --color-pottery-ink: var(--pottery-ink);
+  --color-pottery-sage: var(--pottery-sage);
+  --color-pottery-sage-hover: var(--pottery-sage-hover);
+  --color-pottery-sage-light: var(--pottery-sage-light);
+  --color-pottery-sage-soft: var(--pottery-sage-soft);
+  --color-pottery-ivory: var(--pottery-ivory);
+  --color-pottery-sand: var(--pottery-sand);
+  --color-pottery-stone: var(--pottery-stone);
+  --color-pottery-muted: var(--pottery-muted);
+  --color-pottery-clay: var(--pottery-clay);
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  /* ==========================================================================
+     Pottery Brand Tokens — single source of truth for the palette.
+     Extracted from the official logo / potterybyjuliceramica.mitiendanube.com
+     (documented with their original hex values in docs/architecture.md).
+     Converted to oklch to match this project's existing Tailwind v4/shadcn
+     architecture (all other tokens here are oklch already) — the oklch
+     values below reproduce the hex colors exactly, see docs/architecture.md
+     § Brand / Design System for the hex → oklch table.
+     Every semantic token further down (--background, --primary, …) is just
+     an alias into this block — change a color once, here, only.
+     ========================================================================== */
+  --pottery-ink: oklch(0.3006 0.0211 147.8);        /* #273128 */
+  --pottery-sage: oklch(0.5541 0.0333 142.1);        /* #687866 — primary */
+  --pottery-sage-hover: oklch(0.4941 0.0333 142.1);  /* #687866 darkened ~6L — primary hover, not /80 opacity (that reads lighter on a light page) */
+  --pottery-sage-light: oklch(0.6244 0.0360 138.2);  /* #7D8D78 — icons/decorative only, fails AA as small text on white (3.53:1) */
+  --pottery-sage-soft: oklch(0.9373 0.0107 136.6);   /* #E7ECE5 — active/selected surfaces */
+  --pottery-ivory: oklch(0.9675 0.0098 87.5);        /* #F7F4ED — app background */
+  --pottery-sand: oklch(0.9349 0.0156 86.4);         /* #EEE9DE — secondary panels */
+  --pottery-stone: oklch(0.8729 0.0126 91.5);        /* #D8D5CC — borders/dividers */
+  --pottery-muted: oklch(0.5358 0.0156 145.4);       /* #687068 — secondary text, 4.66:1 on ivory */
+  --pottery-white: oklch(1 0 0);                     /* #FFFFFF — cards/surfaces */
+  --pottery-clay: oklch(0.6164 0.0715 51.8);         /* #A8795D — auxiliary accent only (charts/categories), fails AA as small text */
+
+  --background: var(--pottery-ivory);
+  --foreground: var(--pottery-ink);
+  --card: var(--pottery-white);
+  --card-foreground: var(--pottery-ink);
+  --popover: var(--pottery-white);
+  --popover-foreground: var(--pottery-ink);
+  --primary: var(--pottery-sage);
+  --primary-foreground: var(--pottery-white);
+  --secondary: var(--pottery-sage-soft);
+  --secondary-foreground: var(--pottery-ink);
+  --muted: var(--pottery-sand);
+  --muted-foreground: var(--pottery-muted);
+  --accent: var(--pottery-sage-soft);
+  --accent-foreground: var(--pottery-ink);
+  /* Destructive stays semantic red, deliberately NOT a brand color — a
+     cancelled order must always read as destructive (sección 5/20/36). */
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --border: var(--pottery-stone);
+  --input: var(--pottery-stone);
+  --ring: var(--pottery-sage);
+  /* Restricted chart palette for future KPI graphs (sección 24) —
+     Sage-led, Clay as the one warm accent, never more than these five. */
+  --chart-1: var(--pottery-sage);
+  --chart-2: var(--pottery-clay);
+  --chart-3: var(--pottery-sage-light);
+  --chart-4: oklch(0.7823 0.0553 74.3);  /* #C3AA8F — light clay/tan */
+  --chart-5: oklch(0.372 0.0261 146.9);  /* #4C5B4B — deep sage */
+  --radius: 0.75rem;
+  --sidebar: var(--pottery-white);
+  --sidebar-foreground: var(--pottery-ink);
+  --sidebar-primary: var(--pottery-sage);
+  --sidebar-primary-foreground: var(--pottery-white);
+  --sidebar-accent: var(--pottery-sage-soft);
+  --sidebar-accent-foreground: var(--pottery-ink);
+  --sidebar-border: var(--pottery-stone);
+  --sidebar-ring: var(--pottery-sage);
 }
 
 .dark {

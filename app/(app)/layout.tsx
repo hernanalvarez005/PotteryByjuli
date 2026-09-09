@@ -1,3 +1,5 @@
+import Image from "next/image";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { MobileNav } from "@/components/mobile-nav";
@@ -12,16 +14,37 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen">
-      <aside className="hidden w-60 shrink-0 border-r bg-muted/20 md:block">
-        <div className="flex h-14 items-center border-b px-4">
-          <span className="font-semibold tracking-tight">Pottery</span>
+      <aside className="hidden w-60 shrink-0 border-r border-sidebar-border bg-sidebar md:block">
+        <div className="flex h-20 items-center justify-center border-b border-sidebar-border px-4">
+          <Link href="/dashboard">
+            <Image
+              src="/brand/pottery-logo.png"
+              alt="Pottery by Juli"
+              width={2000}
+              height={2000}
+              priority
+              sizes="96px"
+              className="h-auto w-24"
+              style={{ objectFit: "contain" }}
+            />
+          </Link>
         </div>
         <SidebarNav />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-2 border-b px-4">
+        <header className="flex h-14 items-center gap-2 border-b border-border bg-background px-4">
           <MobileNav />
-          <span className="text-sm text-muted-foreground md:hidden">Pottery</span>
+          <Link href="/dashboard" className="md:hidden">
+            <Image
+              src="/brand/pottery-logo.png"
+              alt="Pottery by Juli"
+              width={2000}
+              height={2000}
+              sizes="44px"
+              className="h-11 w-11"
+              style={{ objectFit: "contain" }}
+            />
+          </Link>
           <div className="ml-auto">
             <UserMenu user={user} />
           </div>
