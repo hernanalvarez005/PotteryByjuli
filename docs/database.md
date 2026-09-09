@@ -193,17 +193,28 @@ lectura abierta a cualquier usuario autenticado.
   Deliberadamente autocontenida — no reutiliza `orders`/`payments`
   (una cuota de taller no es la venta de un producto).
 
+## Fase 8 — implementado
+
+- **`events`** (`event_type`: workshop/fair, cupo opcional, precio,
+  costo estimado, código `WOR-`/`FER-`), **`event_registrations`**
+  (cupo verificado por trigger — mismo patrón que
+  `workshop_enrollments`).
+- **Sin `event_inventory_allocations`** (simplificación deliberada,
+  distinta del diseño original): una feria es directamente una fila de
+  `locations` con `location_type = 'fair'`. Enviar/devolver mercadería
+  reutiliza `stock_transfers` (Fase 4); las ventas en el lugar reutilizan
+  `orders` (Fase 3) con `location_id` apuntando a esa ubicación — extiende
+  el núcleo en vez de duplicar el modelo de stock (sección 83).
+  `orders.event_id` y `stock_transfers.event_id` (nullable, agregadas en
+  esta fase) permiten atribuir ventas y movimientos a la feria exacta
+  cuando se completan a mano; la UI para tildarlos automáticamente queda
+  pendiente (ver `docs/roadmap.md`).
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
 pensadas, pero el detalle columna-por-columna se termina de cerrar recién
 al implementar cada una.
-
-### Fase 8 — Eventos (workshops puntuales) y ferias
-
-- **`events`** (workshop o feria), **`event_registrations`** (inscripción
-  + pago + cupo — sin sobreventa), **`event_inventory_allocations`**
-  (stock asignado a una feria y su devolución).
 
 ### Fase 9 — Marketing y finanzas
 

@@ -143,10 +143,25 @@ verificada (6 tablas + función RPC `create_order`).
 
 **Resultado**: Juli conoce alumnos, asistencia y deuda por grupo. ✅
 
-## Fase 8 — Workshops + Ferias
+## Fase 8 — Workshops + Ferias ✅
 
-Eventos, cupos sin sobreventa, inscripción + pago, asignación/devolución
-de stock, costos y resultado.
+- [x] `events`/`event_registrations` (cupo verificado por trigger, código
+      `WOR-`/`FER-`), `/eventos` + detalle con inscripción, pago y
+      resultado (ingresos − costo estimado).
+- [x] Las ferias **no** tienen un modelo de stock paralelo: una feria es
+      una `locations` de tipo `fair` — enviar/devolver mercadería usa las
+      transferencias de la Fase 4, y las ventas en la feria son `orders`
+      normales en esa ubicación. `orders.event_id` y
+      `stock_transfers.event_id` (columnas nuevas, nullable) permiten
+      atribuir esas operaciones a la feria exacta.
+- [ ] **Pendiente** (no bloqueante): la UI de "Nuevo pedido" y "Nueva
+      transferencia" todavía no exponen un selector para tildar
+      `event_id` — hoy se puede setear a mano vía SQL si hace falta
+      armar el resultado de una feria ya cerrada. Sumar ese selector es
+      un cambio chico cuando haga falta de verdad.
+
+**Resultado**: Juli sabe si un workshop o una feria dio resultado. ✅ (con
+la salvedad de arriba)
 
 ## Fase 9 — Finanzas + Reportes
 
