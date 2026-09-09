@@ -184,10 +184,36 @@ la salvedad de arriba)
       asociar `orders.campaign_id` — se puede setear a mano por SQL
       mientras tanto.
 
-## Fase 10 — Optimización
+## Fase 10 — Optimización ⏳ (en progreso)
 
-UX, mobile, accesibilidad, performance, auditoría de seguridad (RLS, Auth,
-Storage, acceso anónimo mayorista), índices, tests, edge cases.
+- [x] **Auditoría de seguridad** — revisión completa de las políticas RLS
+      de las 10 migrations anteriores. Encontró y corrigió 3 problemas
+      reales: `profiles.is_active` no se verificaba en ningún lado
+      (desactivar a alguien no le cortaba el acceso); un pedido podía
+      retroceder de estado y duplicar la reserva de stock + la orden de
+      producción generada al confirmarlo dos veces; la función pública
+      mayorista no tenía límite de líneas en el carrito. Las tres,
+      corregidas con su propia migration.
+- [x] **Tests** — Vitest instalado, 24 tests sobre la lógica más
+      riesgosa que es testeable sin una base de datos real: validación
+      del carrito mayorista (extraída a `lib/wholesale-cart.ts` para que
+      dejara de vivir sólo dentro del componente), schemas de pedidos y
+      solicitud mayorista, normalización de WhatsApp. Ver
+      `docs/testing.md` para lo que queda pendiente (todo lo que vive en
+      triggers/RPCs de Postgres necesita una base de test real, no sólo
+      Vitest).
+- [x] **Confirmaciones en acciones destructivas** (sección 69) — cancelar
+      pedido, cancelar orden de producción, cancelar inscripción a un
+      evento, dar de baja a un alumno.
+- [x] **Mobile** — la barra lateral desaparecía en mobile sin ningún
+      reemplazo; ahora hay un menú hamburguesa con el mismo panel en un
+      drawer.
+- [ ] **Pendiente**: paginación en listados grandes (`/clientes`,
+      `/productos`, `/pedidos`, `/pagos` traen todo sin límite —
+      aceptable al volumen actual, revisar cuando crezca), auditoría de
+      accesibilidad, tests E2E con Playwright contra una base de test
+      real, revisión de índices adicionales si aparecen queries lentas
+      con datos reales.
 
 ## Simplificaciones deliberadas para el MVP
 
