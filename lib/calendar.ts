@@ -148,3 +148,59 @@ export function addDays(d: Date, days: number): Date {
   next.setUTCDate(next.getUTCDate() + days);
   return next;
 }
+
+/** ISO weekday (1=Monday..7=Sunday) for a UTC-midnight Date. */
+export function isoWeekday(d: Date): number {
+  return ((d.getUTCDay() + 6) % 7) + 1;
+}
+
+function entryTime(e: CalendarEntry): string {
+  if (e.kind === "class") return e.startTime ?? "99:99";
+  if (e.kind === "workshop") return e.startTime ?? "99:99";
+  return "00:00";
+}
+
+/**
+ * Every entry that falls on one specific date, sorted chronologically —
+ * the one piece shared by the day/week/month views (each just picks which
+ * dates to call this for) so "what happens on 2026-09-09" is computed in
+ * exactly one place, pure and testable, no matter which view asked.
+ */
+export function entriesForDate(
+  classes: ClassSlot[],
+  workshops: WorkshopEntry[],
+  specialDates: SpecialDateEntry[],
+  dateIso: string,
+  filter: "all" | "class" | "workshop" | "special" = "all"
+): CalendarEntry[] {
+  const weekday = isoWeekday(new Date(`${dateIso}T00:00:00Z`));
+  const entries: CalendarEntry[] = [
+    ...classes.filter((c) => c.weekday === weekday),
+    ...workshops.filter((w) => w.date === dateIso),
+    ...specialDates.filter((s) => s.date === dateIso),
+  ];
+  const filtered = filter === "all" ? entries : entries.filter((e) => e.kind === filter);
+  return filtered.sort((a, b) => entryTime(a).localeCompare(entryTime(b)));
+}
+
+/** First day (UTC midnight) of the month containing `date`. */
+export function startOfMonth(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+/** All calendar days to render for a month grid, Monday-first, including
+ * the leading/trailing days from adjacent months that fill the grid. */
+export function monthGridDays(monthStart: Date): Date[] {
+  const firstOfMonth = startOfMonth(monthStart);
+  const gridStart = startOfWeek(firstOfMonth);
+  const lastOfMonth = new Date(Date.UTC(firstOfMonth.getUTCFullYear(), firstOfMonth.getUTCMonth() + 1, 0));
+  const gridEnd = addDays(startOfWeek(lastOfMonth), 6);
+
+  const days: Date[] = [];
+  let cursor = gridStart;
+  while (cursor <= gridEnd) {
+    days.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+  return days;
+}
