@@ -5,9 +5,12 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { customerDisplayName } from "@/lib/customers";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/confirm-action";
 import { EnrollDialog } from "./enroll-dialog";
 import { RosterTable, type RosterRow } from "./roster-table";
 import { DuesPanel, type DueRow } from "./dues-panel";
+import { archiveGroup, deleteGroup } from "./actions";
 
 export default async function GroupDetailPage({
   params,
@@ -25,7 +28,7 @@ export default async function GroupDetailPage({
 
   const { data: group } = await supabase
     .from("workshop_groups")
-    .select("id,name,schedule,capacity,workshop_programs(name),locations(name)")
+    .select("id,name,schedule,capacity,archived_at,workshop_programs(name),locations(name)")
     .eq("id", groupId)
     .maybeSingle();
 
@@ -34,7 +37,7 @@ export default async function GroupDetailPage({
   const [{ data: enrollments }, { data: allCustomers }] = await Promise.all([
     supabase
       .from("workshop_enrollments")
-      .select("id,status,customer_id,customers(first_name,last_name)")
+      .select("id,status,customer_id,customers(id,first_name,last_name,whatsapp)")
       .eq("group_id", groupId)
       .order("created_at"),
     supabase.from("customers").select("id,first_name,last_name").eq("is_active", true).order("first_name"),
@@ -63,12 +66,22 @@ export default async function GroupDetailPage({
 
   const attendanceByEnrollment = new Map((todayAttendance ?? []).map((a) => [a.enrollment_id, a.status]));
 
-  const rosterRows: RosterRow[] = (enrollments ?? []).map((e) => ({
-    enrollmentId: e.id,
-    customerName: e.customers ? customerDisplayName(e.customers as unknown as { first_name: string; last_name: string | null }) : "—",
-    status: e.status,
-    todayAttendance: attendanceByEnrollment.get(e.id) ?? null,
-  }));
+  const rosterRows: RosterRow[] = (enrollments ?? []).map((e) => {
+    const customer = e.customers as unknown as {
+      id: string;
+      first_name: string;
+      last_name: string | null;
+      whatsapp: string | null;
+    } | null;
+    return {
+      enrollmentId: e.id,
+      customerId: customer?.id ?? null,
+      customerName: customer ? customerDisplayName(customer) : "—",
+      whatsapp: customer?.whatsapp ?? null,
+      status: e.status,
+      todayAttendance: attendanceByEnrollment.get(e.id) ?? null,
+    };
+  });
 
   const dueList: DueRow[] = (dueRows ?? []).map((d) => ({
     id: d.id,
@@ -104,11 +117,37 @@ export default async function GroupDetailPage({
           <ArrowLeft className="size-4" />
           Talleres
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{group.name}</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">{group.name}</h1>
+          {isOwner(user) && !group.archived_at && (
+            <div className="flex gap-2">
+              <ConfirmAction
+                trigger={<Button size="sm" variant="outline" />}
+                title="¿Archivar este grupo?"
+                description="Deja de aparecer como grupo activo, pero conserva el historial de alumnos, asistencia y cuotas."
+                confirmLabel="Archivar"
+                variant="default"
+                onConfirm={() => archiveGroup(groupId)}
+              >
+                Archivar
+              </ConfirmAction>
+              <ConfirmAction
+                trigger={<Button size="sm" variant="outline" className="text-destructive" />}
+                title="¿Eliminar este grupo?"
+                description="Sólo se puede si no tiene ningún alumno inscripto. Esta acción no se puede deshacer."
+                confirmLabel="Eliminar"
+                onConfirm={() => deleteGroup(groupId)}
+              >
+                Eliminar
+              </ConfirmAction>
+            </div>
+          )}
+        </div>
         <p className="text-sm text-muted-foreground">
           {(group.workshop_programs as unknown as { name: string } | null)?.name}
           {group.schedule && ` · ${group.schedule}`}
           {group.locations && ` · ${(group.locations as unknown as { name: string }).name}`}
+          {group.archived_at && " · Archivado"}
         </p>
       </div>
 
@@ -128,6 +167,7 @@ export default async function GroupDetailPage({
             rows={rosterRows}
             todayLabel={new Date().toLocaleDateString("es-AR")}
             canEdit={canEditRoster}
+            canDelete={isOwner(user)}
           />
         </TabsContent>
         <TabsContent value="cuotas">

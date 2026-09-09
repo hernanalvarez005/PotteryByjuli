@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import {
   Table,
   TableBody,
@@ -19,12 +20,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ConfirmAction } from "@/components/confirm-action";
+import { MessageCircle } from "lucide-react";
+import { whatsappLink } from "@/lib/customers-shared";
 import { ATTENDANCE_LABELS } from "@/schemas/workshops";
-import { markAttendance, setEnrollmentStatus } from "./actions";
+import { markAttendance, setEnrollmentStatus, deleteEnrollment } from "./actions";
 
 export type RosterRow = {
   enrollmentId: string;
+  customerId: string | null;
   customerName: string;
+  whatsapp: string | null;
   status: string;
   todayAttendance: string | null;
 };
@@ -40,11 +45,13 @@ export function RosterTable({
   rows,
   todayLabel,
   canEdit,
+  canDelete,
 }: {
   groupId: string;
   rows: RosterRow[];
   todayLabel: string;
   canEdit: boolean;
+  canDelete: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -74,72 +81,105 @@ export function RosterTable({
     <div className="flex flex-col gap-2">
       {error && <p className="text-sm text-destructive">{error}</p>}
       <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Alumno/a</TableHead>
-          <TableHead>Estado</TableHead>
-          <TableHead>Asistencia — {todayLabel}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.enrollmentId}>
-            <TableCell className="font-medium">{row.customerName}</TableCell>
-            <TableCell>
-              {canEdit ? (
-                <Select
-                  value={row.status}
-                  disabled={isPending}
-                  onValueChange={(next) => {
-                    if (!next) return;
-                    if (next === "cancelled") {
-                      setPendingCancel(row);
-                      return;
-                    }
-                    run(() => setEnrollmentStatus(groupId, row.enrollmentId, next));
-                  }}
-                >
-                  <SelectTrigger className="h-8 w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(ENROLLMENT_STATUS_LABELS).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Badge variant="outline">{ENROLLMENT_STATUS_LABELS[row.status]}</Badge>
-              )}
-            </TableCell>
-            <TableCell>
-              {canEdit ? (
-                <div className="flex gap-1">
-                  {Object.entries(ATTENDANCE_LABELS).map(([value, label]) => (
-                    <Button
-                      key={value}
-                      size="sm"
-                      variant={row.todayAttendance === value ? "secondary" : "outline"}
-                      disabled={isPending}
-                      onClick={() =>
-                        run(() => markAttendance(groupId, row.enrollmentId, todayIso, value))
-                      }
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </div>
-              ) : row.todayAttendance ? (
-                <Badge variant="outline">{ATTENDANCE_LABELS[row.todayAttendance]}</Badge>
-              ) : (
-                <span className="text-sm text-muted-foreground">Sin registrar</span>
-              )}
-            </TableCell>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Alumno/a</TableHead>
+            <TableHead>Estado</TableHead>
+            <TableHead>Asistencia — {todayLabel}</TableHead>
+            {canDelete && <TableHead className="text-right">Acciones</TableHead>}
           </TableRow>
-        ))}
-      </TableBody>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.enrollmentId}>
+              <TableCell className="font-medium">
+                {row.customerId ? (
+                  <Link href={`/clientes/${row.customerId}`} className="hover:underline">
+                    {row.customerName}
+                  </Link>
+                ) : (
+                  row.customerName
+                )}
+                {row.whatsapp && (
+                  <a
+                    href={whatsappLink(row.whatsapp)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-2 inline-flex items-center text-muted-foreground hover:text-foreground"
+                    title="WhatsApp"
+                  >
+                    <MessageCircle className="size-3.5" />
+                  </a>
+                )}
+              </TableCell>
+              <TableCell>
+                {canEdit ? (
+                  <Select
+                    value={row.status}
+                    disabled={isPending}
+                    onValueChange={(next) => {
+                      if (!next) return;
+                      if (next === "cancelled") {
+                        setPendingCancel(row);
+                        return;
+                      }
+                      run(() => setEnrollmentStatus(groupId, row.enrollmentId, next));
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(ENROLLMENT_STATUS_LABELS).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Badge variant="outline">{ENROLLMENT_STATUS_LABELS[row.status]}</Badge>
+                )}
+              </TableCell>
+              <TableCell>
+                {canEdit ? (
+                  <div className="flex gap-1">
+                    {Object.entries(ATTENDANCE_LABELS).map(([value, label]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant={row.todayAttendance === value ? "secondary" : "outline"}
+                        disabled={isPending}
+                        onClick={() =>
+                          run(() => markAttendance(groupId, row.enrollmentId, todayIso, value))
+                        }
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                ) : row.todayAttendance ? (
+                  <Badge variant="outline">{ATTENDANCE_LABELS[row.todayAttendance]}</Badge>
+                ) : (
+                  <span className="text-sm text-muted-foreground">Sin registrar</span>
+                )}
+              </TableCell>
+              {canDelete && (
+                <TableCell className="text-right">
+                  <ConfirmAction
+                    trigger={<Button size="sm" variant="ghost" className="text-destructive" />}
+                    title="¿Eliminar esta inscripción?"
+                    description="Sólo se puede porque no tiene asistencia ni cuotas registradas. El cliente sigue existiendo en el CRM. Esta acción no se puede deshacer."
+                    confirmLabel="Eliminar"
+                    onConfirm={() => deleteEnrollment(groupId, row.enrollmentId)}
+                  >
+                    Eliminar
+                  </ConfirmAction>
+                </TableCell>
+              )}
+            </TableRow>
+          ))}
+        </TableBody>
       </Table>
       <ConfirmAction
         open={pendingCancel !== null}

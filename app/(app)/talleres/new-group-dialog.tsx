@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
+import { WEEKDAY_LABELS } from "@/schemas/workshops";
 import { createGroup } from "./actions";
 
 export function NewGroupDialog({
@@ -68,15 +70,45 @@ export function NewGroupDialog({
             <Label htmlFor="name">Nombre del grupo</Label>
             <Input id="name" name="name" placeholder="Martes 18hs" required />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="schedule">Horario (texto libre, para mostrar)</Label>
+            <Input id="schedule" name="schedule" placeholder="Martes 18 a 20hs" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Día y horario estructurados — para que la clase aparezca sola en el{" "}
+            <Link href="/calendario" className="underline underline-offset-2">
+              calendario
+            </Link>
+            .
+          </p>
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="schedule">Horario</Label>
-              <Input id="schedule" name="schedule" placeholder="Martes 18 a 20hs" />
+              <Label htmlFor="weekday">Día</Label>
+              <Select name="weekday">
+                <SelectTrigger id="weekday" className="w-full">
+                  <SelectValue placeholder="Elegir" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(WEEKDAY_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="capacity">Cupo</Label>
-              <Input id="capacity" name="capacity" type="number" min="1" required />
+              <Label htmlFor="start_time">Desde</Label>
+              <Input id="start_time" name="start_time" type="time" />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="end_time">Hasta</Label>
+              <Input id="end_time" name="end_time" type="time" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="capacity">Cupo</Label>
+            <Input id="capacity" name="capacity" type="number" min="1" required />
           </div>
           <div className="space-y-2">
             <Label htmlFor="location_id">Ubicación</Label>

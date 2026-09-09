@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { CustomerInfoForm } from "./customer-info-form";
 import { TagsPanel } from "./tags-panel";
 import { NotesPanel, type Note } from "./notes-panel";
+import { CustomerDangerActions } from "./customer-danger-actions";
 
 export default async function CustomerDetailPage({
   params,
@@ -46,7 +47,7 @@ export default async function CustomerDetailPage({
         .from("event_registrations")
         .select("id,quantity,events(id,name,event_date)")
         .eq("customer_id", id)
-        .eq("status", "registered"),
+        .in("status", ["confirmed", "attended"]),
     ]);
 
   if (!customer) notFound();
@@ -74,21 +75,30 @@ export default async function CustomerDetailPage({
           <ArrowLeft className="size-4" />
           Clientes
         </Link>
-        <div className="mt-1 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {customerDisplayName(customer)}
-          </h1>
-          {customer.whatsapp && (
-            <a
-              href={whatsappLink(customer.whatsapp)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <MessageCircle className="size-4" />
-              WhatsApp
-            </a>
-          )}
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {customerDisplayName(customer)}
+            </h1>
+            {!customer.is_active && <Badge variant="outline">Archivado</Badge>}
+            {customer.whatsapp && (
+              <a
+                href={whatsappLink(customer.whatsapp)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <MessageCircle className="size-4" />
+                WhatsApp
+              </a>
+            )}
+          </div>
+          <CustomerDangerActions
+            customerId={customer.id}
+            isActive={customer.is_active}
+            canArchive={canEdit}
+            canDelete={isOwner(user)}
+          />
         </div>
       </div>
 

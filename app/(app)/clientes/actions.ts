@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
@@ -99,4 +100,30 @@ export async function addCustomerNote(
 
   revalidatePath(`/clientes/${customerId}`);
   return {};
+}
+
+export async function toggleCustomerActive(customerId: string, isActive: boolean) {
+  await assertCanManageCustomers();
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("customers")
+    .update({ is_active: isActive })
+    .eq("id", customerId);
+  if (error) throw new Error("No se pudo actualizar.");
+
+  revalidatePath(`/clientes/${customerId}`);
+  revalidatePath("/clientes");
+}
+
+export async function deleteCustomer(customerId: string) {
+  const user = await requireUser();
+  if (!isOwner(user)) throw new Error("Sólo la administradora puede eliminar definitivamente.");
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_customer_safe", { p_id: customerId });
+  if (error) throw new Error(error.message || "No se pudo eliminar.");
+
+  revalidatePath("/clientes");
+  redirect("/clientes");
 }

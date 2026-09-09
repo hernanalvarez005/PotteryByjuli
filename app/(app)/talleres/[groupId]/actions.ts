@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
@@ -127,4 +128,42 @@ export async function toggleDuePaid(groupId: string, dueId: string, isPaid: bool
   if (error) throw new Error("No se pudo actualizar.");
 
   revalidatePath(`/talleres/${groupId}`);
+}
+
+export async function deleteEnrollment(groupId: string, enrollmentId: string) {
+  const user = await requireUser();
+  if (!isOwner(user)) throw new Error("Sólo la administradora puede eliminar definitivamente.");
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_enrollment_safe", { p_id: enrollmentId });
+  if (error) throw new Error(error.message || "No se pudo eliminar.");
+
+  revalidatePath(`/talleres/${groupId}`);
+}
+
+export async function archiveGroup(groupId: string) {
+  const user = await requireUser();
+  if (!isOwner(user)) throw new Error("Sólo la administradora puede archivar.");
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("workshop_groups")
+    .update({ archived_at: new Date().toISOString(), is_active: false })
+    .eq("id", groupId);
+  if (error) throw new Error("No se pudo archivar.");
+
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres");
+}
+
+export async function deleteGroup(groupId: string) {
+  const user = await requireUser();
+  if (!isOwner(user)) throw new Error("Sólo la administradora puede eliminar definitivamente.");
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_workshop_group_safe", { p_id: groupId });
+  if (error) throw new Error(error.message || "No se pudo eliminar.");
+
+  revalidatePath("/talleres");
+  redirect("/talleres");
 }
