@@ -75,11 +75,18 @@ export async function changeOrderStatus(orderId: string, status: string) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("orders").update({ status }).eq("id", orderId);
-  if (error) throw new Error("No se pudo cambiar el estado.");
+  // set_order_status (not a plain update) — it also reserves/consumes/
+  // releases stock as the status moves through confirmed/delivered/
+  // cancelled. See supabase/migrations/*_phase4_stock.sql.
+  const { error } = await supabase.rpc("set_order_status", {
+    p_order_id: orderId,
+    p_new_status: status,
+  });
+  if (error) throw new Error(error.message || "No se pudo cambiar el estado.");
 
   revalidatePath(`/pedidos/${orderId}`);
   revalidatePath("/pedidos");
+  revalidatePath("/stock");
 }
 
 export async function addPayment(

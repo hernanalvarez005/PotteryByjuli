@@ -58,17 +58,32 @@ máquina.
 
 **Resultado**: una sola fuente de productos, precios y clientes. ✅
 
-## Fase 3 — Pedidos + Pagos
+## Fase 3 — Pedidos + Pagos ✅
 
-Motor central de `orders`/`order_items` para minorista y personalizados
-básicos, estados, `payments`, saldo, canal de origen/cierre, entrega.
-**Resultado**: Pottery puede operar ventas reales desde el sistema.
+`orders`/`order_items` (código `PED-000123` automático, precio congelado
+por ítem), estados con historial automático, `payments` separado del
+pedido, `/pedidos`, `/pedidos/nuevo`, `/pedidos/[id]`, `/pagos`. Migration
+verificada (6 tablas + función RPC `create_order`).
+**Resultado**: Pottery puede operar ventas reales desde el sistema. ✅
 
-## Fase 4 — Stock
+## Fase 4 — Stock ✅
 
-Ubicaciones, ledger de movimientos, disponible vs. reservado,
-transferencias atómicas, alertas de stock mínimo.
-**Resultado**: Juli conoce el stock real por ubicación y su trazabilidad.
+- [x] `inventory_items` (se crea solo por cada variante de producto, vía
+      trigger — reposición, materias primas y packaging comparten la
+      misma tabla mediante `item_type`).
+- [x] `inventory_movements`: ledger append-only, sin política de
+      UPDATE/DELETE — nadie puede reescribir un movimiento ya hecho.
+- [x] `inventory_reservations`: disponible = físico − reservado.
+- [x] `stock_thresholds`, `stock_transfers`/`stock_transfer_items` +
+      función RPC `complete_stock_transfer` (atómica: sale+entra o nada).
+- [x] **Integración con pedidos**: `set_order_status()` reserva stock al
+      confirmar, lo consume al entregar, lo libera al cancelar — antes
+      era un `update` directo (Fase 3), ahora pasa por esta función.
+- [x] `/stock`: vista de físico/reservado/disponible + alerta por
+      mínimo, ajustes con motivo obligatorio, transferencias entre
+      ubicaciones.
+
+**Resultado**: Juli conoce el stock real por ubicación y su trazabilidad. ✅
 
 ## Fase 5 — Mayoristas (prioridad de negocio más alta)
 
