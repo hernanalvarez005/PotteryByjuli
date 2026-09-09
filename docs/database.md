@@ -210,25 +210,32 @@ lectura abierta a cualquier usuario autenticado.
   cuando se completan a mano; la UI para tildarlos automáticamente queda
   pendiente (ver `docs/roadmap.md`).
 
+## Fase 9 — implementado
+
+- **`expense_categories`** (catálogo, mismo patrón que los de la Fase 1)
+  + **`expenses`**: fecha, categoría, concepto, proveedor, importe,
+  medio, cuenta, unidad de negocio, evento opcional.
+- **`campaigns`**: nombre, fechas, objetivo, inversión. `orders.campaign_id`
+  (columna diferida desde la Fase 3) la asocia a un pedido.
+- **Reportes**: sin tablas nuevas — son lecturas agregadas sobre
+  `orders`/`payments`/`production_orders`/`inventory_*`, calculadas en
+  `lib/reports.ts` en el momento de pedir la página, no materializadas.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
 pensadas, pero el detalle columna-por-columna se termina de cerrar recién
 al implementar cada una.
 
-### Fase 9 — Marketing y finanzas
-
-- **`campaigns`**: nombre, fechas, objetivo, inversión; se asocia a
-  `orders.campaign_id`.
-- **`expenses`** / **`expense_categories`**: gasto con unidad de negocio y
-  evento/campaña opcionales.
-
-### Transversal — auditoría
+### Fase 10 — Auditoría transversal
 
 - **`audit_logs`**: quién, qué, cuándo, valor anterior/nuevo. Prioridad
   alta en: precios, stock, pagos, estado de pedidos, configuración
   mayorista. Se implementa como triggers genéricos sobre esas tablas
-  puntuales cuando existan, no como un mecanismo universal desde el día 1.
+  puntuales, no como un mecanismo universal desde el día 1 — hoy ya
+  existe auditoría *acotada* vía `order_status_history` y
+  `production_stage_events` (Fases 3 y 6); `audit_logs` generaliza eso a
+  precios/stock/pagos/configuración mayorista cuando se implemente.
 
 ## Reglas transversales de datos
 

@@ -163,10 +163,26 @@ verificada (6 tablas + función RPC `create_order`).
 **Resultado**: Juli sabe si un workshop o una feria dio resultado. ✅ (con
 la salvedad de arriba)
 
-## Fase 9 — Finanzas + Reportes
+## Fase 9 — Finanzas + Reportes ✅
 
-Gastos, cuentas/caja, dashboards por unidad de negocio, reportes de
-ventas/productos/mayoristas/stock/producción/talleres/workshops.
+- [x] `expense_categories` (catálogo) + `expenses`, `campaigns` +
+      `orders.campaign_id` (diferida desde la Fase 3). Primeras tablas
+      con lectura restringida a `owner`+`operations` — `viewer` no ve
+      finanzas, tal como dice el modelo de permisos.
+- [x] `/gastos`, `/campanas`: alta y listado.
+- [x] `/reportes`: ventas por unidad de negocio, mayoristas (solicitudes/
+      confirmadas/conversión), producción por etapa, stock crítico,
+      productos más vendidos — todo calculado sobre tablas que ya
+      existían, sin esquema nuevo.
+- [x] `/dashboard` reemplaza el placeholder de la Fase 1 por la pantalla
+      "Hoy" real: ventas/cobrado/pendiente del mes (sólo
+      `owner`+`operations`), "Necesita atención" (pedidos atrasados,
+      mayoristas sin revisar, producción activa, cuotas pendientes) y
+      próximos eventos, para cualquier rol.
+- [ ] **Pendiente** (no bloqueante, mismo motivo que en Fase 8): ni
+      "Nuevo pedido" ni "Nueva campaña" tienen todavía un selector para
+      asociar `orders.campaign_id` — se puede setear a mano por SQL
+      mientras tanto.
 
 ## Fase 10 — Optimización
 
