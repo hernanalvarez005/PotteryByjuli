@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getEvents } from "@/lib/events";
+import { getEvents, heldQuantity } from "@/lib/events";
 import { formatDate } from "@/lib/format";
 import { EVENT_STATUS_LABELS } from "@/schemas/events";
 import {
@@ -20,10 +20,13 @@ export default async function EventosPage() {
   const canEdit = isOwner(user) || hasRole(user, "operations") || hasRole(user, "workshop_staff");
 
   const supabase = await createClient();
-  const [events, { data: locations }] = await Promise.all([
+  const [events, { data: locations }, { data: paymentAccounts }] = await Promise.all([
     getEvents(),
     supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
+    supabase.from("payment_accounts").select("id,name").eq("is_active", true).order("code"),
   ]);
+
+  const activeEvents = events.filter((e) => !e.archived_at);
 
   return (
     <div className="flex flex-col gap-6">
@@ -32,10 +35,12 @@ export default async function EventosPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Eventos</h1>
           <p className="text-muted-foreground">Workshops puntuales y ferias.</p>
         </div>
-        {canEdit && <NewEventDialog locations={locations ?? []} />}
+        {canEdit && (
+          <NewEventDialog locations={locations ?? []} paymentAccounts={paymentAccounts ?? []} />
+        )}
       </div>
 
-      {events.length === 0 ? (
+      {activeEvents.length === 0 ? (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
           Todavía no hay eventos cargados.
         </p>
@@ -52,10 +57,8 @@ export default async function EventosPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {events.map((event) => {
-              const registered = event.event_registrations
-                .filter((r) => r.status === "registered")
-                .reduce((sum, r) => sum + r.quantity, 0);
+            {activeEvents.map((event) => {
+              const held = heldQuantity(event.event_registrations);
               return (
                 <TableRow key={event.id}>
                   <TableCell>
@@ -74,7 +77,7 @@ export default async function EventosPage() {
                     {event.locations?.name ?? "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {event.capacity ? `${registered}/${event.capacity}` : "—"}
+                    {event.capacity ? `${held}/${event.capacity}` : "—"}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{EVENT_STATUS_LABELS[event.status]}</Badge>

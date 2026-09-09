@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,15 +23,15 @@ import {
 import { Plus } from "lucide-react";
 import { createEvent } from "./actions";
 
-export function NewEventDialog({ locations }: { locations: { id: string; name: string }[] }) {
+export function NewEventDialog({
+  locations,
+  paymentAccounts,
+}: {
+  locations: { id: string; name: string }[];
+  paymentAccounts: { id: string; name: string }[];
+}) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createEvent, {});
-
-  const wasPending = useRef(false);
-  useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setOpen(false);
-    wasPending.current = isPending;
-  }, [isPending, state.error]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -39,7 +39,7 @@ export function NewEventDialog({ locations }: { locations: { id: string; name: s
         <Plus className="size-4" />
         Nuevo evento
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Nuevo evento</DialogTitle>
         </DialogHeader>
@@ -60,14 +60,26 @@ export function NewEventDialog({ locations }: { locations: { id: string; name: s
             <Label htmlFor="name">Nombre</Label>
             <Input id="name" name="name" placeholder="Workshop Niños" required />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="slug">Link público (opcional, se genera solo)</Label>
+            <Input id="slug" name="slug" placeholder="ceramica-ninos-la-plata-septiembre" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="description">Descripción</Label>
+            <Textarea id="description" name="description" rows={2} />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label htmlFor="event_date">Fecha</Label>
               <Input id="event_date" name="event_date" type="date" required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="schedule">Horario</Label>
-              <Input id="schedule" name="schedule" placeholder="16 a 18hs" />
+              <Label htmlFor="start_time">Desde</Label>
+              <Input id="start_time" name="start_time" type="time" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="end_time">Hasta</Label>
+              <Input id="end_time" name="end_time" type="time" />
             </div>
           </div>
           <div className="space-y-2">
@@ -85,6 +97,10 @@ export function NewEventDialog({ locations }: { locations: { id: string; name: s
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="address">Dirección (opcional)</Label>
+            <Input id="address" name="address" />
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label htmlFor="capacity">Cupo</Label>
@@ -100,9 +116,32 @@ export function NewEventDialog({ locations }: { locations: { id: string; name: s
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="notes">Notas</Label>
+            <Label htmlFor="payment_account_id">Cuenta para transferencia</Label>
+            <Select name="payment_account_id">
+              <SelectTrigger id="payment_account_id" className="w-full">
+                <SelectValue placeholder="Elegir cuenta (opcional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {paymentAccounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="additional_info">Información adicional (qué incluye, condiciones)</Label>
+            <Textarea id="additional_info" name="additional_info" rows={2} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="notes">Notas internas</Label>
             <Textarea id="notes" name="notes" rows={2} />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="is_registration_open" defaultChecked className="size-4" />
+            Inscripciones abiertas
+          </label>
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
             <Button type="submit" disabled={isPending}>
