@@ -74,50 +74,64 @@ lectura abierta a cualquier usuario autenticado.
   alumno, workshop, recurrente, potencial mayorista, personalizado, etc.
 - **`customer_notes`**: notas internas con autor y fecha.
 
-## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
+## Fase 3 — implementado
 
-Se documenta la intención para que cada fase no reinvente relaciones ya
-pensadas, pero el detalle columna-por-columna se termina de cerrar recién
-al implementar cada una (evita que este documento se desactualice antes de
-que exista una sola migration real).
-
-### Fase 3 — Pedidos y pagos (motor central)
-
-- **`orders`**: entidad única para minorista, personalizado y (Fase 5)
-  mayorista — no `retail_orders`/`wholesale_orders` separadas. Campos
-  clave: `business_unit_id`, `customer_id`, `origin_channel_id`,
-  `closing_channel_id`, `location_id`, `status`, `campaign_id` (nullable),
-  `external_source`/`external_order_id` (para una futura sync con Tienda
-  Nube, sección 62), `human_code` (`PED-000123`).
+- **`orders`**: entidad única para minorista y personalizado — Fase 5
+  (mayorista) reutiliza esta misma tabla, no `retail_orders`/
+  `wholesale_orders` separadas. Campos clave: `business_unit_id`,
+  `customer_id`, `origin_channel_id`, `closing_channel_id`, `location_id`,
+  `status` (enum `order_status`), `external_source`/`external_order_id`
+  (reservados para una futura sync con Tienda Nube, sección 62 — sin uso
+  todavía), `human_code` (`PED-000123`, generado por trigger). `campaign_id`
+  queda pendiente para cuando exista `campaigns` (Fase 9) — agregarlo ahí,
+  no antes.
 - **`order_items`**: producto/variante, cantidad, precio **congelado al
-  momento del pedido** (nunca recalculado si cambia el precio del
-  catálogo — sección 91).
-- **`order_item_customizations`**: texto libre, adjuntos, fecha requerida,
-  por ítem (pedidos personalizados).
-- **`order_status_history`**: cada cambio de estado, quién y cuándo.
+  momento del pedido** (columna propia, nunca un lookup en vivo a
+  `price_list_items` — sección 91). Un trigger recalcula
+  `orders.subtotal`/`total` automáticamente en cada cambio.
+- **`order_item_customizations`**: 1:1 con `order_items` — nota, fecha
+  requerida, imagen de referencia (para pedidos personalizados).
+- **`order_status_history`**: se escribe solo, por trigger, en cada
+  cambio de `orders.status` — ningún rol puede insertarla a mano.
 - **`order_attachments`**: Supabase Storage (`order-attachments`, bucket
-  privado).
+  privado, sólo staff).
 - **`payments`**: separado de `orders` — un pedido puede tener seña + N
   pagos parciales + saldo. Nunca se asume `total_pedido == cobrado`
-  (sección 42).
+  (sección 42); lo cobrado siempre se calcula como `SUM(payments)`.
 
-### Fase 4 — Stock
+## Fase 4 — implementado
 
-- **`inventory_items`**: producto terminado, materia prima o packaging,
-  con su unidad de medida.
+- **`inventory_items`**: producto terminado, materia prima o packaging
+  (`item_type`), con su unidad de medida (`unit_of_measure`). Los
+  productos terminados se crean solos vía trigger cuando se crea una
+  `product_variants` — nadie tiene que acordarse de duplicar el alta.
 - **`inventory_movements`**: ledger append-only (compra, ingreso
-  producción, venta, reserva, liberación, transferencia, devolución,
-  consumo taller/workshop, asignación/retorno feria, merma, ajuste). El
-  stock nunca se actualiza por un `UPDATE` directo a un contador — siempre
-  es la suma de movimientos, o un contador mantenido *sólo* por un trigger
-  que reacciona a esta tabla (a decidir por performance real, no de
-  antemano).
+  producción, venta, transferencia entrante/saliente, devolución,
+  consumo taller/workshop, asignación/retorno feria, merma, ajuste). Sin
+  política de `UPDATE`/`DELETE` en RLS — el stock nunca se corrige
+  editando un movimiento pasado, sólo agregando uno nuevo (`adjustment`,
+  con motivo obligatorio). El físico de un ítem en una ubicación siempre
+  es `SUM(quantity)`, nunca un contador aparte.
 - **`inventory_reservations`**: distingue físico vs. reservado vs.
-  disponible (sección 23) — evita vender dos veces lo mismo.
-- **`stock_thresholds`**: mínimo por variante/ubicación → alertas.
+  disponible (sección 23) — evita vender dos veces lo mismo. La reserva
+  se crea/consume/libera automáticamente según el estado del pedido (ver
+  `set_order_status()` abajo), nunca a mano.
+- **`stock_thresholds`**: mínimo por ítem, opcionalmente por ubicación
+  → estado normal/bajo/sin stock en `/stock`.
 - **`stock_transfers`** / **`stock_transfer_items`**: transferencia entre
-  ubicaciones (ej. La Plata → Tres Lomas). Atómica vía función RPC
-  (salida + entrada o ninguna de las dos); **no es una venta**.
+  ubicaciones (ej. La Plata → Tres Lomas), con estado
+  `pending`/`completed`/`cancelled` y código legible `TRA-000123`.
+  `complete_stock_transfer(transfer_id)` (RPC) mueve todas las líneas de
+  forma atómica — valida stock disponible en origen antes de mover nada;
+  si falta stock de un producto, no se transfiere ninguno. **Nunca** es
+  una venta.
+- **`set_order_status(order_id, new_status)`** (RPC): reemplaza el
+  `update orders set status = ...` directo desde Fase 3. Al confirmar un
+  pedido reserva el stock disponible; al entregarlo consume la reserva
+  (movimiento `sale`); al cancelarlo libera la reserva. Corresponde a la
+  regla de negocio "solicitud ≠ venta confirmada" (sección 88-89): una
+  solicitud recién reserva/consume stock cuando efectivamente se
+  confirma.
 
 ### Fase 6 — Producción
 
