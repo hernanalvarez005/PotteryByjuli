@@ -60,6 +60,16 @@ export default async function CustomerDetailPage({
 
   if (!customer) notFound();
 
+  // Sólo aplica a un cliente creado por un conflicto de deduplicación
+  // (whatsapp/email/CUIT apuntando a customers ya existentes pero
+  // distintos) — ver docs/business-rules.md § Checkout mayorista.
+  const { data: identityConflict } = await supabase
+    .from("customer_identity_conflicts")
+    .select("matched_customer_ids,signals,created_at")
+    .eq("new_customer_id", id)
+    .is("resolved_at", null)
+    .maybeSingle();
+
   const enrollmentIds = (enrollments ?? []).map((e) => e.id);
   const { data: dueRows } = enrollmentIds.length
     ? await supabase
@@ -129,6 +139,13 @@ export default async function CustomerDetailPage({
             canDelete={isOwner(user)}
           />
         </div>
+        {identityConflict && (
+          <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            ⚠ Posible identidad duplicada — Revisión pendiente. Este cliente se creó porque WhatsApp,
+            email y/o CUIT de una solicitud mayorista apuntaban a clientes distintos ya existentes —
+            ninguno se modificó automáticamente. Revisar y reconciliar manualmente si corresponde.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
