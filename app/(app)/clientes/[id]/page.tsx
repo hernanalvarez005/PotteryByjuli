@@ -8,6 +8,7 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import {
   computeDueDisplayStatus,
   computeDueBalance,
+  computeDueSummary,
   currentPeriod,
   formatPeriodLabel,
   lastPaidPeriod,
@@ -74,18 +75,25 @@ export default async function CustomerDetailPage({
   const { data: dueRows } = enrollmentIds.length
     ? await supabase
         .from("workshop_dues")
-        .select("enrollment_id,period,amount,status,payments(amount)")
+        .select("enrollment_id,period,amount,status,payments(amount),workshop_due_items(amount,voided_at)")
         .in("enrollment_id", enrollmentIds)
     : { data: [] as never[] };
 
+  // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
+  // para el total de una cuota — mismo cálculo que Talleres y el
+  // dashboard/reportes, nunca reimplementado acá. `amount` acá abajo ya
+  // es el total con extras incluidos (totalDue), no sólo la cuota base.
   const duesByEnrollment = new Map<string, { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number }[]>();
   for (const d of dueRows ?? []) {
+    const payments = (d.payments ?? []) as { amount: number }[];
+    const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
     const list = duesByEnrollment.get(d.enrollment_id) ?? [];
     list.push({
       period: d.period,
       status: d.status as "pending" | "cancelled",
-      amount: d.amount,
-      paidAmount: ((d.payments ?? []) as { amount: number }[]).reduce((sum, p) => sum + p.amount, 0),
+      amount: summary.totalDue,
+      paidAmount: summary.paidTotal,
     });
     duesByEnrollment.set(d.enrollment_id, list);
   }

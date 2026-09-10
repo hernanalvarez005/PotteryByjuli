@@ -5,8 +5,7 @@ import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency } from "@/lib/format";
 import {
-  computeDueDisplayStatus,
-  computeDueBalance,
+  computeDueSummary,
   currentPeriod,
   previousPeriod,
   nextPeriod,
@@ -62,16 +61,20 @@ export default async function CuotasPage({
     supabase
       .from("workshop_dues")
       .select(
-        "id,enrollment_id,period,amount,due_date,status,payments(amount),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
+        "id,enrollment_id,period,amount,due_date,status,payments(amount),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
       )
       .eq("period", period)
       .order("created_at"),
     supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),
   ]);
 
+  // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
+  // para el total de una cuota — mismo cálculo que Talleres, la ficha de
+  // alumna y el dashboard/reportes, nunca reimplementado acá.
   const dues = (dueRows ?? []).map((d) => {
-    const paidAmount = ((d.payments ?? []) as { amount: number }[]).reduce((sum, p) => sum + p.amount, 0);
-    const status = d.status as "pending" | "cancelled";
+    const payments = (d.payments ?? []) as { amount: number }[];
+    const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
     const enrollment = d.workshop_enrollments as unknown as {
       group_id: string;
       customers: { first_name: string; last_name: string | null } | null;
@@ -82,10 +85,11 @@ export default async function CuotasPage({
       groupId: enrollment?.group_id ?? "",
       groupName: enrollment?.workshop_groups?.name ?? "—",
       customerName: enrollment?.customers ? customerDisplayName(enrollment.customers) : "—",
-      amount: d.amount,
-      paidAmount,
-      balance: computeDueBalance(d.amount, paidAmount),
-      displayStatus: computeDueDisplayStatus(status, d.amount, paidAmount),
+      amount: summary.totalDue,
+      extrasTotal: summary.extrasTotal,
+      paidAmount: summary.paidTotal,
+      balance: summary.balance,
+      displayStatus: summary.status,
     };
   });
 
@@ -162,7 +166,14 @@ export default async function CuotasPage({
                     {due.groupName}
                   </Link>
                 </TableCell>
-                <TableCell>{formatCurrency(due.amount)}</TableCell>
+                <TableCell>
+                  {formatCurrency(due.amount)}
+                  {due.extrasTotal > 0 && (
+                    <span className="block text-xs text-muted-foreground">
+                      incl. {formatCurrency(due.extrasTotal)} en extras
+                    </span>
+                  )}
+                </TableCell>
                 <TableCell>{formatCurrency(due.paidAmount)}</TableCell>
                 <TableCell>{formatCurrency(due.balance)}</TableCell>
                 <TableCell>

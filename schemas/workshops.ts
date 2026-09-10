@@ -146,6 +146,25 @@ export const duePaymentSchema = z.object({
     .transform((v) => (v ? v : null)),
 });
 
+// Cargo extra sobre una cuota (sección 6) — nunca un payment, un monto que
+// se SUMA a lo que se debe.
+export const dueExtraSchema = z.object({
+  concept_id: z.string().trim().uuid("Elegí un concepto"),
+  amount: z
+    .string()
+    .trim()
+    .min(1, "Requerido")
+    .transform((v) => Number(v))
+    .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
+  note: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+});
+
 export const ATTENDANCE_LABELS: Record<string, string> = {
   present: "Presente",
   absent: "Ausente",

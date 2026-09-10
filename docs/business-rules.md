@@ -439,6 +439,39 @@ distinguen explícitamente "Sin cuota generada" (todavía no se corrió
 "Generar cuotas" para ese mes) de "Pendiente" (la cuota existe, no se
 cobró) — nunca se asume lo segundo cuando es lo primero.
 
+### Cargos extra sobre una cuota (2026-09-10, tanda de mejoras operativas)
+
+Un cargo puntual como "Arcilla $8.500" se agrega ARRIBA de la cuota
+mensual — nunca se inserta como `payment` (eso restaría del saldo en vez
+de sumarlo). `workshop_due_items` guarda esas líneas: `amount` +
+`concept_id` (catálogo chico en `workshop_due_concepts`, mismo patrón que
+`payment_methods`/`sales_channels`, gestionado desde /configuracion).
+
+**Sólo "anular", nunca hard delete** — decisión deliberada sobre la regla
+condicional que se había sugerido inicialmente ("si no tiene pagos
+asociados, borrar directo"): como los pagos se registran contra el TOTAL
+de una cuota y no contra un cargo puntual, no hay forma de saber desde los
+datos si un pago histórico ya "cubrió" un extra específico. Se usa una
+única política uniforme (anular vía `voided_at`/`voided_by`, nunca borrar)
+— un solo camino de código, coherente con el resto del proyecto
+(historial de estados, movimientos de stock: todo append-only).
+`workshop_due_items` **no tiene ninguna policy de update/delete** — ni
+siquiera para la owner — la única forma de tocar una fila después de
+insertada es la RPC `void_due_item` (`security definer`, igual patrón que
+`mark_wholesale_whatsapp_share_opened`), que sólo puede setear
+`voided_at`/`voided_by`. Es una garantía de base de datos, no sólo
+disciplina de la UI.
+
+**`computeDueSummary` (`lib/workshop-dues.ts`) es la única fuente de
+verdad del total de una cuota** — Talleres, la ficha de alumna y el
+dashboard/reportes la llaman todos, nunca reimplementan la suma de extras
+o pagos por su cuenta (`tests/workshop-due-summary-single-source.test.ts`
+lo confirma estáticamente). El estado ("Pagada"/"Parcial"/etc.) se deriva
+siempre contra `totalDue` (cuota + extras), nunca sólo contra la cuota
+base — así que agregar un extra a una cuota que hoy figura "Pagada" la
+vuelve "Parcial" automáticamente, sin ningún caso especial: el estado
+nunca se guarda, siempre se calcula.
+
 ## Stock por ubicación — nunca un número repetido
 
 `getFinishedGoodsStock()` calcula físico/reservado/disponible por

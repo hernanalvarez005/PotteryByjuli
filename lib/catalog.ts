@@ -103,6 +103,15 @@ export const CATALOG_TABLES = {
       },
     ] satisfies CatalogField[],
   },
+  workshop_due_concepts: {
+    label: "Conceptos de cargos extra",
+    description: "Cargos puntuales que se agregan arriba de una cuota mensual de talleres (arcilla, esmalte, etc.).",
+    schema: z.object({ code: codeSchema, name: nameSchema }),
+    fields: [
+      { name: "code", label: "Código", type: "text", placeholder: "arcilla" },
+      { name: "name", label: "Nombre", type: "text", placeholder: "Arcilla" },
+    ] satisfies CatalogField[],
+  },
 } as const;
 
 export type CatalogTableKey = keyof typeof CATALOG_TABLES;

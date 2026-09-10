@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeDueDisplayStatus,
   computeDueBalance,
+  computeDueSummary,
   formatPeriodLabel,
   lastPaidPeriod,
   previousPeriod,
@@ -78,6 +79,60 @@ describe("facturación vs cobranza (sección 62)", () => {
     expect(billed).toBe(100000);
     expect(collected).toBe(50000);
     expect(billed - collected).toBe(50000);
+  });
+});
+
+describe("computeDueSummary", () => {
+  it("with no extras, behaves exactly like the base amount alone", () => {
+    const summary = computeDueSummary({ status: "pending", amount: 50000 }, [], [{ amount: 20000 }]);
+    expect(summary).toEqual({
+      baseAmount: 50000,
+      extrasTotal: 0,
+      totalDue: 50000,
+      paidTotal: 20000,
+      balance: 30000,
+      status: "partial",
+    });
+  });
+
+  it("extras add to what's owed, never inserted as a payment", () => {
+    const items = [{ amount: 8500, voided_at: null }, { amount: 1500, voided_at: null }];
+    const summary = computeDueSummary({ status: "pending", amount: 50000 }, items, []);
+    expect(summary.extrasTotal).toBe(10000);
+    expect(summary.totalDue).toBe(60000);
+    expect(summary.status).toBe("pending"); // nothing paid yet
+  });
+
+  it("a voided extra is excluded from the total", () => {
+    const items = [
+      { amount: 8500, voided_at: null },
+      { amount: 1500, voided_at: "2026-09-10T12:00:00Z" }, // anulado
+    ];
+    const summary = computeDueSummary({ status: "pending", amount: 50000 }, items, []);
+    expect(summary.extrasTotal).toBe(8500);
+    expect(summary.totalDue).toBe(58500);
+  });
+
+  it("a due already fully paid drops back to partial once a new extra is added — no special case needed, the status is always derived", () => {
+    const paidInFull = computeDueSummary({ status: "pending", amount: 50000 }, [], [{ amount: 50000 }]);
+    expect(paidInFull.status).toBe("paid");
+
+    const withNewExtra = computeDueSummary(
+      { status: "pending", amount: 50000 },
+      [{ amount: 8500, voided_at: null }],
+      [{ amount: 50000 }] // same payments as before, nothing new paid
+    );
+    expect(withNewExtra.status).toBe("partial");
+    expect(withNewExtra.balance).toBe(8500);
+  });
+
+  it("cancelled status wins regardless of extras or payments", () => {
+    const summary = computeDueSummary(
+      { status: "cancelled", amount: 50000 },
+      [{ amount: 8500, voided_at: null }],
+      [{ amount: 58500 }]
+    );
+    expect(summary.status).toBe("cancelled");
   });
 });
 

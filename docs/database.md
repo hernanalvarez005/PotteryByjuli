@@ -438,6 +438,25 @@ cambio de tanda es el primero en escribirlo (`images-panel.tsx`, "Asociar
 la próxima foto a") y en leerlo con intención (`lib/wholesale.ts`,
 `app/mayorista/product-card.tsx`).
 
+Migración `20260910110510_workshop_due_extras.sql` (extras de cuotas de
+talleres, sección 6 de la tanda de mejoras operativas — ver
+`docs/business-rules.md` § Cargos extra sobre una cuota):
+
+- **`workshop_due_concepts`**: catálogo chico (`code, name, sort_order,
+  is_active`), mismo patrón que `payment_methods`/`sales_channels`.
+  Gestionado desde `/configuracion` vía `CATALOG_TABLES`
+  (`lib/catalog.ts`) — sin componente nuevo.
+- **`workshop_due_items`**: `due_id, concept_id, amount, note, created_by,
+  voided_at, voided_by`. Append-only a propósito: hay policy de `select`
+  y de `insert` (owner/operations) pero **ninguna de update/delete** —
+  la única forma de tocar una fila después de insertada es
+  `void_due_item`.
+- **`void_due_item(p_id uuid)`** (`security definer`, igual patrón que
+  `mark_wholesale_whatsapp_share_opened`): setea `voided_at`/`voided_by`
+  si la fila no estaba ya anulada; nunca borra, nunca toca `amount` ni
+  `concept_id`. Idempotente — llamarla dos veces sobre el mismo item no
+  hace nada la segunda vez.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

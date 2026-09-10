@@ -4,7 +4,13 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { enrollmentSchema, dueSchema, duePaymentSchema, groupMonthlyFeeSchema } from "@/schemas/workshops";
+import {
+  enrollmentSchema,
+  dueSchema,
+  duePaymentSchema,
+  groupMonthlyFeeSchema,
+  dueExtraSchema,
+} from "@/schemas/workshops";
 
 export type WorkshopDetailState = { error?: string };
 
@@ -151,6 +157,58 @@ export async function registerDuePayment(
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
   return {};
+}
+
+/**
+ * Cargo extra sobre una cuota (sección 6) — una línea aparte que AUMENTA
+ * lo que se debe, nunca un payment. `workshop_due_items` es append-only:
+ * insertar acá es la única escritura directa que la RLS de esa tabla
+ * permite (ver la migración) — "borrar" un extra pasa por voidDueExtra,
+ * nunca por un delete/update directo.
+ */
+export async function addDueExtra(
+  groupId: string,
+  dueId: string,
+  _prevState: WorkshopDetailState,
+  formData: FormData
+): Promise<WorkshopDetailState> {
+  const user = await assertCanManageDues();
+
+  const parsed = dueExtraSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("workshop_due_items").insert({
+    due_id: dueId,
+    concept_id: parsed.data.concept_id,
+    amount: parsed.data.amount,
+    note: parsed.data.note,
+    created_by: user.id,
+  });
+  if (error) return { error: "No se pudo agregar el cargo." };
+
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres/cuotas");
+  return {};
+}
+
+/**
+ * "Borrar" un extra siempre anula, nunca hard-delete (docs/business-rules
+ * § Cuotas mensuales de talleres) — los pagos se registran contra el
+ * total de la cuota, no contra un cargo puntual, así que no hay forma de
+ * saber desde los datos si un pago histórico ya "cubrió" este extra.
+ */
+export async function voidDueExtra(groupId: string, itemId: string) {
+  await assertCanManageDues();
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("void_due_item", { p_id: itemId });
+  if (error) throw new Error(error.message || "No se pudo anular el cargo.");
+
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres/cuotas");
 }
 
 export async function cancelDue(groupId: string, dueId: string) {
