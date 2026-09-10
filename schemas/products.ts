@@ -60,3 +60,17 @@ export const priceSchema = z.object({
     .transform((v) => Number(v))
     .refine((v) => Number.isFinite(v) && v >= 0, "Precio inválido"),
 });
+
+// Precio mayorista para todas las variantes de un producto de un saque
+// (sección 4 de la tanda de mejoras operativas). A propósito no incluye
+// price_list_id ni product_variant_id — el server action los resuelve
+// enteramente del lado del servidor, nunca confía en ids que mande el
+// cliente.
+export const bulkWholesalePriceSchema = z.object({
+  unit_price: z
+    .string()
+    .trim()
+    .min(1, "Requerido")
+    .transform((v) => Number(v))
+    .refine((v) => Number.isFinite(v) && v >= 0, "Precio inválido"),
+});

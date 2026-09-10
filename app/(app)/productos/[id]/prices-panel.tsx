@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { upsertPrice } from "./actions";
+import { BulkWholesalePriceForm } from "./bulk-wholesale-price-form";
 
 export type PriceList = { id: string; code: string; name: string };
 export type Variant = { id: string; name: string };
@@ -31,12 +32,27 @@ export function PricesPanel({
   prices: Record<string, number>;
   canEdit: boolean;
 }) {
+  const wholesaleList = priceLists.find((pl) => pl.code === "wholesale");
+  const wholesalePrices: Record<string, number | undefined> = {};
+  if (wholesaleList) {
+    for (const v of variants) {
+      wholesalePrices[v.id] = prices[`${wholesaleList.id}:${v.id}`];
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Precios</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
+        {canEdit && wholesaleList && (
+          <BulkWholesalePriceForm
+            productId={productId}
+            variants={variants}
+            currentPrices={wholesalePrices}
+          />
+        )}
         <Table>
           <TableHeader>
             <TableRow>

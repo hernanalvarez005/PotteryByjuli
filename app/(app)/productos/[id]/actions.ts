@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
-import { productSchema, variantSchema, priceSchema } from "@/schemas/products";
+import { productSchema, variantSchema, priceSchema, bulkWholesalePriceSchema } from "@/schemas/products";
 import { wholesaleRulesSchema } from "@/schemas/wholesale";
 import { lookup as dnsLookup } from "node:dns/promises";
 import {
@@ -117,6 +117,70 @@ export async function upsertPrice(
   revalidatePath(`/productos/${productId}`);
   revalidatePath("/productos");
   revalidatePath("/precios");
+  return {};
+}
+
+/**
+ * Precio mayorista para todas las variantes — sección 4 de la tanda de
+ * mejoras operativas. A propósito NO recibe price_list_id ni una lista de
+ * variantes del cliente: sólo productId (ya validado por la ruta) y el
+ * precio. Vuelve a resolver la lista mayorista por código y las variantes
+ * reales de ese producto enteramente del lado del servidor, así un id
+ * ajeno o manipulado no puede llegar a afectar otro producto ni la lista
+ * minorista. Un único upsert con un array de filas es atómico a nivel de
+ * Postgres — no hace falta una RPC nueva para esto.
+ */
+export async function applyWholesalePriceToAllVariants(
+  productId: string,
+  _prevState: ProductDetailState,
+  formData: FormData
+): Promise<ProductDetailState> {
+  const user = await requireUser();
+  if (!isOwner(user)) {
+    return { error: "Sólo la administradora puede modificar precios." };
+  }
+
+  const parsed = bulkWholesalePriceSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Precio inválido." };
+  }
+
+  const supabase = await createClient();
+
+  const { data: wholesaleList, error: listError } = await supabase
+    .from("price_lists")
+    .select("id")
+    .eq("code", "wholesale")
+    .maybeSingle();
+  if (listError || !wholesaleList) {
+    return { error: "No se encontró la lista de precios mayorista." };
+  }
+
+  const { data: variants, error: variantsError } = await supabase
+    .from("product_variants")
+    .select("id")
+    .eq("product_id", productId);
+  if (variantsError) return { error: "No se pudieron leer las variantes del producto." };
+  if (!variants || variants.length === 0) {
+    return { error: "Este producto no tiene variantes." };
+  }
+
+  const rows = variants.map((v) => ({
+    price_list_id: wholesaleList.id,
+    product_variant_id: v.id,
+    unit_price: parsed.data.unit_price,
+    updated_by: user.id,
+  }));
+
+  const { error } = await supabase
+    .from("price_list_items")
+    .upsert(rows, { onConflict: "price_list_id,product_variant_id" });
+  if (error) return { error: "No se pudieron guardar los precios." };
+
+  revalidatePath(`/productos/${productId}`);
+  revalidatePath("/productos");
+  revalidatePath("/precios");
+  revalidatePath("/mayorista");
   return {};
 }
 
