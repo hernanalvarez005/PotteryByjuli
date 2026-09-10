@@ -422,6 +422,22 @@ físico con historial relacionado; ver esa sección para el detalle de
   aborta toda la función (transacción implícita de Postgres) en vez de
   dejar un resultado parcial.
 
+Migración `20260910104405_wholesale_images_variant_filter.sql` (imágenes ↔
+variantes, sección 5 de la tanda de mejoras operativas — ver
+`docs/business-rules.md` § Seguridad del portal mayorista público):
+
+- Reemplaza `product_images_select_public_wholesale`: además de exigir
+  producto activo/público, ahora exige que — si `product_images.variant_id`
+  no es null — esa variante también esté activa. Una imagen general
+  (`variant_id is null`) nunca se ve afectada. Sólo achica acceso.
+
+No hace falta migración para el resto de la sección 5:
+`product_images.variant_id` ya existía (nullable, `on delete cascade`
+desde `product_variants`, sin usar hasta ahora en ninguna UI) — este
+cambio de tanda es el primero en escribirlo (`images-panel.tsx`, "Asociar
+la próxima foto a") y en leerlo con intención (`lib/wholesale.ts`,
+`app/mayorista/product-card.tsx`).
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

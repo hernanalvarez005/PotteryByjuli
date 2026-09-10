@@ -284,6 +284,19 @@ un `REVOKE SELECT ON tabla FROM rol` + `GRANT SELECT (columnas seguras)
 ON tabla TO rol` explícito — nunca asumir que "la app no lo pide" alcanza
 como protección.
 
+**Imagen atada a una variante inactiva (2026-09-10, tanda de mejoras
+operativas)**: `product_images_select_public_wholesale` sólo exigía que el
+producto estuviera activo y fuera público — nunca miraba
+`product_images.variant_id`. Una imagen atada a una variante que después
+se desactiva seguía siendo visible para `anon`, aunque esa variante ya no
+apareciera en ningún selector. Corregido para exigir además que, si
+`variant_id` no es null, esa variante también esté activa (una imagen
+general, `variant_id is null`, nunca se ve afectada). El cambio sólo
+achica acceso — test de regresión en
+`lib/wholesale-image-variant-filter.integration.test.ts` confirma tanto
+el caso nuevo (oculto) como que todo lo que ya era visible sigue
+siéndolo.
+
 ## Seguridad del portal público de workshops (Fase 9.5)
 
 Mismo criterio que el portal mayorista, pero sin RLS directa sobre
