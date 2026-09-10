@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getProductsWithVariants, getPricesForVariants } from "@/lib/products";
+import { getProductsWithVariants, getPricesForVariants, type ProductStatusFilter } from "@/lib/products";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -14,14 +16,28 @@ import { SelectionProvider } from "./selection-context";
 import { BulkPriceBar, type ProductVariantForBulk } from "./bulk-price-bar";
 import { SelectAllCheckbox } from "./select-all-checkbox";
 
-export default async function ProductosPage() {
+const STATUS_FILTERS: { value: ProductStatusFilter; label: string }[] = [
+  { value: "active", label: "Activos" },
+  { value: "inactive", label: "Inactivos" },
+  { value: "all", label: "Todos" },
+];
+
+export default async function ProductosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ estado?: string }>;
+}) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
+
+  const { estado } = await searchParams;
+  const status: ProductStatusFilter =
+    estado === "inactive" || estado === "all" ? estado : "active";
 
   const supabase = await createClient();
   const [{ data: categories }, products] = await Promise.all([
     supabase.from("product_categories").select("id,name").order("name"),
-    getProductsWithVariants(),
+    getProductsWithVariants(status),
   ]);
 
   const allVariantIds = products.flatMap((p) => p.product_variants.map((v) => v.id));
@@ -51,11 +67,26 @@ export default async function ProductosPage() {
           {canEdit && <NewProductDialog categories={categories ?? []} />}
         </div>
 
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Estado</span>
+          {STATUS_FILTERS.map((f) => (
+            <Link key={f.value} href={f.value === "active" ? "/productos" : `/productos?estado=${f.value}`}>
+              <Badge variant={status === f.value ? "secondary" : "outline"} className="cursor-pointer">
+                {f.label}
+              </Badge>
+            </Link>
+          ))}
+        </div>
+
         {canEdit && <BulkPriceBar variants={variantsForBulk} />}
 
         {products.length === 0 ? (
           <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            Todavía no cargaste ningún producto.
+            {status === "active"
+              ? "No hay productos activos con este filtro."
+              : status === "inactive"
+                ? "No hay productos inactivos."
+                : "Todavía no cargaste ningún producto."}
           </p>
         ) : (
           <Table>
