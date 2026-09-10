@@ -1,9 +1,22 @@
 import Link from "next/link";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getDashboardSummary } from "@/lib/reports";
+import { createClient } from "@/lib/supabase/server";
+import {
+  getDashboardSummary,
+  getSalesOverTime,
+  getTopProducts,
+  getSalesByBusinessUnit,
+  getMixByChannel,
+  defaultDashboardFilters,
+  type DashboardFilters,
+} from "@/lib/reports";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DashboardFilters as DashboardFiltersBar } from "./dashboard-filters";
+import { SalesOverTimeChart } from "./sales-over-time-chart";
+import { TopProductsChart } from "./top-products-chart";
+import { MixDonutChart } from "./mix-donut-chart";
 
 const ROLE_LABELS: Record<string, string> = {
   owner: "Dueña",
@@ -12,12 +25,49 @@ const ROLE_LABELS: Record<string, string> = {
   viewer: "Solo lectura",
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string; unit?: string; location?: string; channel?: string }>;
+}) {
   const user = await requireUser();
   const hasAnyRole = user.roles.length > 0;
   const canSeeFinance = isOwner(user) || hasRole(user, "operations");
 
-  const summary = hasAnyRole ? await getDashboardSummary() : null;
+  const params = await searchParams;
+  const defaults = defaultDashboardFilters();
+  const filters: DashboardFilters = {
+    from: params.from && /^\d{4}-\d{2}-\d{2}$/.test(params.from) ? params.from : defaults.from,
+    to: params.to && /^\d{4}-\d{2}-\d{2}$/.test(params.to) ? params.to : defaults.to,
+    businessUnitId: params.unit ?? null,
+    locationId: params.location ?? null,
+    channelId: params.channel ?? null,
+  };
+
+  const supabase = await createClient();
+  const [
+    summary,
+    salesOverTime,
+    topProducts,
+    salesByUnit,
+    mixByChannel,
+    { data: businessUnits },
+    { data: locations },
+    { data: channels },
+  ] = hasAnyRole && canSeeFinance
+    ? await Promise.all([
+        getDashboardSummary(filters),
+        getSalesOverTime(filters),
+        getTopProducts(filters),
+        getSalesByBusinessUnit(filters),
+        getMixByChannel(filters),
+        supabase.from("business_units").select("id,name").eq("is_active", true).order("name"),
+        supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
+        supabase.from("sales_channels").select("id,name").eq("is_active", true).order("name"),
+      ])
+    : hasAnyRole
+      ? [await getDashboardSummary(filters), [], [], [], [], { data: [] }, { data: [] }, { data: [] }]
+      : [null, [], [], [], [], { data: [] }, { data: [] }, { data: [] }];
 
   const attentionItems = summary
     ? [
@@ -74,11 +124,37 @@ export default async function DashboardPage() {
       )}
 
       {summary && canSeeFinance && (
+        <DashboardFiltersBar
+          businessUnits={businessUnits ?? []}
+          locations={locations ?? []}
+          channels={channels ?? []}
+          defaultFrom={filters.from}
+          defaultTo={filters.to}
+        />
+      )}
+
+      {summary && canSeeFinance && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <Kpi label="Ventas del mes" value={formatCurrency(summary.salesThisMonth)} />
-          <Kpi label="Cobrado del mes" value={formatCurrency(summary.collectedThisMonth)} />
+          <Kpi label="Ventas del período" value={formatCurrency(summary.totalInvoicedFiltered)} />
+          <Kpi label="Cobrado del período" value={formatCurrency(summary.collectedFiltered)} />
           <Kpi label="Pendiente de cobro" value={formatCurrency(summary.pendingToCollect)} />
           <Kpi label="Pedidos activos" value={String(summary.activeOrdersCount)} />
+        </div>
+      )}
+
+      {summary && canSeeFinance && summary.duesExcludedByChannelFilter && (
+        <p className="text-xs text-muted-foreground">
+          Las cuotas de talleres no tienen canal asociado y no se incluyen en estos totales mientras el filtro de canal esté activo.
+        </p>
+      )}
+
+      {summary && canSeeFinance && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <SalesOverTimeChart data={salesOverTime} />
+          <MixDonutChart byUnit={salesByUnit} byChannel={mixByChannel} />
+          <div className="lg:col-span-2">
+            <TopProductsChart data={topProducts} />
+          </div>
         </div>
       )}
 

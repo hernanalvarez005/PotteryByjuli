@@ -64,3 +64,13 @@ export function todayInArgentina(): string {
 export function dateOnlyToArgentinaNoonISO(dateOnly: string): string {
   return `${dateOnly}T12:00:00-03:00`;
 }
+
+/** Start of a calendar day in Argentina time, as a real timestamptz-ready ISO string. */
+export function dateOnlyToArgentinaStartOfDayISO(dateOnly: string): string {
+  return `${dateOnly}T00:00:00-03:00`;
+}
+
+/** End of a calendar day (inclusive) in Argentina time, as a real timestamptz-ready ISO string. */
+export function dateOnlyToArgentinaEndOfDayISO(dateOnly: string): string {
+  return `${dateOnly}T23:59:59.999-03:00`;
+}

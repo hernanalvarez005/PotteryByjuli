@@ -5,6 +5,7 @@ import {
   getSalesByBusinessUnit,
   getWholesaleConversion,
   getProductionCounts,
+  allTimeDashboardFilters,
 } from "@/lib/reports";
 import { formatCurrency } from "@/lib/format";
 import { PRODUCTION_STATUS_LABELS } from "@/schemas/production";
@@ -30,9 +31,13 @@ export default async function ReportesPage() {
     );
   }
 
+  // "Todo el histórico, no sólo el mes actual" — a diferencia del
+  // dashboard (que sí filtra por período por default), /reportes sigue
+  // mostrando todo lo que hubo alguna vez.
+  const allTime = allTimeDashboardFilters();
   const [topProducts, salesByUnit, wholesale, productionCounts, stockRows] = await Promise.all([
-    getTopProducts(),
-    getSalesByBusinessUnit(),
+    getTopProducts(allTime),
+    getSalesByBusinessUnit(allTime),
     getWholesaleConversion(),
     getProductionCounts(),
     getFinishedGoodsStock(),

@@ -494,6 +494,47 @@ base — así que agregar un extra a una cuota que hoy figura "Pagada" la
 vuelve "Parcial" automáticamente, sin ningún caso especial: el estado
 nunca se guarda, siempre se calcula.
 
+## Dashboard con filtros genuinamente server-side (2026-09-10, tanda de mejoras operativas)
+
+Primera instancia real del patrón "filtros que de verdad empujan
+`.gte()/.lte()/.eq()` a la query" en el proyecto — `/clientes?segment=` y
+`/stock?location=` parecen server-side pero en realidad traen todo y
+filtran en JS. `lib/reports.ts` gana `DashboardFilters` (rango de fechas
++ unidad de negocio + ubicación + canal, todo opcional) que
+`getDashboardSummary`/`getSalesOverTime`/`getTopProducts`/
+`getSalesByBusinessUnit`/`getMixByChannel` aplican de verdad.
+`defaultDashboardFilters()` (mes actual) es el default del dashboard;
+`allTimeDashboardFilters()` (desde 2000, sin más) es lo que usa
+`/reportes`, que dice explícitamente "todo el histórico" — **nunca
+llamar estas funciones sin filtro esperando "todo el histórico" por
+default**, eso rompió `/reportes` en silencio la primera vez que se hizo
+(regresión real, corregida antes de mergear — ver
+`tests/reports-filters-regressions.test.ts`).
+
+**Cuotas de talleres en los totales filtrados**: no tienen
+`business_unit_id`/`location_id`/canal propios (cuelgan de
+`workshop_enrollments → workshop_groups`). Se incluyen en "Cobrado del
+período" sólo cuando el filtro de unidad es "Todas" o específicamente la
+unidad `classes`; si además hay un filtro de ubicación activo, se sigue
+el join hasta `workshop_groups.location_id` (un join anidado de 3
+niveles vía PostgREST, `payments → workshop_dues → workshop_enrollments →
+workshop_groups`, verificado en
+`lib/dashboard-dues-location-filter.integration.test.ts`); un filtro de
+canal activo las excluye siempre (no tienen canal), con un texto
+explícito en la UI para que nunca parezca un bug silencioso.
+
+**Un embed de PostgREST con FK ambigua falla en silencio si no se
+chequea `error`** (hallazgo real durante la verificación manual):
+`orders` tiene dos FKs a `sales_channels` (`origin_channel_id` y
+`closing_channel_id`) — `.select("total,sales_channels(name)")` sin
+nombrar la FK exacta devuelve `PGRST201` ("more than one relationship
+was found"), y como el código sólo desestructura `data` (no `error`,
+mismo patrón que el resto del proyecto), el síntoma era "Sin ventas en
+este período" en el donut de Canal, nunca un error visible. Corregido
+nombrando la FK exacta: `sales_channels!orders_closing_channel_id_fkey(name)`.
+Cualquier embed nuevo hacia una tabla con más de una FK desde el origen
+necesita este mismo cuidado.
+
 ## Stock por ubicación — nunca un número repetido
 
 `getFinishedGoodsStock()` calcula físico/reservado/disponible por
