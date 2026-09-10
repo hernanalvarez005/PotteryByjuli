@@ -131,6 +131,7 @@ export function RegistrationsPanel({
                 <TableCell>
                   {canEdit ? (
                     <Select
+                      items={PAYMENT_STATUS_LABELS}
                       value={r.payment_status}
                       disabled={isPending}
                       onValueChange={(next) =>
@@ -157,6 +158,7 @@ export function RegistrationsPanel({
                 <TableCell>
                   {canEdit ? (
                     <Select
+                      items={REGISTRATION_STATUS_LABELS}
                       value={r.status}
                       disabled={isPending}
                       onValueChange={(next) =>

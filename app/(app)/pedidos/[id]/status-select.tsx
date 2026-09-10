@@ -43,6 +43,7 @@ export function StatusSelect({
   return (
     <div className="flex flex-col gap-1">
       <Select
+        items={ORDER_STATUS_LABELS}
         value={status}
         disabled={isPending}
         onValueChange={(next) => {

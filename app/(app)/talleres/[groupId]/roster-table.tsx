@@ -115,6 +115,7 @@ export function RosterTable({
               <TableCell>
                 {canEdit ? (
                   <Select
+                    items={ENROLLMENT_STATUS_LABELS}
                     value={row.status}
                     disabled={isPending}
                     onValueChange={(next) => {

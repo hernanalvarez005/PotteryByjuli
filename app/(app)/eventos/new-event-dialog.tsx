@@ -46,7 +46,11 @@ export function NewEventDialog({
         <form action={formAction} className="flex flex-col gap-4">
           <div className="space-y-2">
             <Label htmlFor="event_type">Tipo</Label>
-            <Select name="event_type" defaultValue="workshop">
+            <Select
+              name="event_type"
+              items={{ workshop: "Workshop", fair: "Feria" }}
+              defaultValue="workshop"
+            >
               <SelectTrigger id="event_type" className="w-full">
                 <SelectValue />
               </SelectTrigger>

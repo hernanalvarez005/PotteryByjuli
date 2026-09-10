@@ -49,7 +49,11 @@ export function ProductInfoForm({
             </div>
             <div className="space-y-2">
               <Label htmlFor="category_id">Categoría</Label>
-              <Select name="category_id" defaultValue={categoryId ?? undefined}>
+              <Select
+                name="category_id"
+                items={categories.map((c) => ({ value: c.id, label: c.name }))}
+                defaultValue={categoryId ?? undefined}
+              >
                 <SelectTrigger id="category_id" className="w-full">
                   <SelectValue placeholder="Sin categoría" />
                 </SelectTrigger>

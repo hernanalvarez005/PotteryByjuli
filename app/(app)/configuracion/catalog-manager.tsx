@@ -179,7 +179,7 @@ function NewItemForm({
         <div key={field.name} className="space-y-2">
           <Label htmlFor={field.name}>{field.label}</Label>
           {field.type === "select" ? (
-            <Select name={field.name} defaultValue={field.options?.[0]?.value}>
+            <Select name={field.name} items={field.options} defaultValue={field.options?.[0]?.value}>
               <SelectTrigger id={field.name} className="w-full">
                 <SelectValue />
               </SelectTrigger>
