@@ -14,6 +14,7 @@ import { NewProductDialog } from "./new-product-dialog";
 import { ProductRow } from "./product-row";
 import { SelectionProvider } from "./selection-context";
 import { BulkPriceBar, type ProductVariantForBulk } from "./bulk-price-bar";
+import { BulkDeleteBar } from "./bulk-delete-bar";
 import { SelectAllCheckbox } from "./select-all-checkbox";
 
 const STATUS_FILTERS: { value: ProductStatusFilter; label: string }[] = [
@@ -78,7 +79,12 @@ export default async function ProductosPage({
           ))}
         </div>
 
-        {canEdit && <BulkPriceBar variants={variantsForBulk} />}
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <BulkPriceBar variants={variantsForBulk} />
+            <BulkDeleteBar canDelete={isOwner(user)} />
+          </div>
+        )}
 
         {products.length === 0 ? (
           <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -128,6 +134,7 @@ export default async function ProductosPage({
                     }
                     isActive={product.is_active}
                     canEdit={canEdit}
+                    canDelete={isOwner(user)}
                   />
                 );
               })}

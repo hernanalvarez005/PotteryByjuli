@@ -237,11 +237,22 @@ borrar, y sólo `owner` puede invocarlas.
 | `events` (workshops/ferias) | Sí (`delete_event_safe`) | `status = 'archived'` / `'cancelled'` | 0 inscripciones, 0 pedidos, 0 transferencias de stock asociadas |
 | `workshop_enrollments` | Sí (`delete_enrollment_safe`) | `status = 'cancelled'` (baja) | 0 registros de asistencia, 0 cuotas |
 | `event_registrations` | Sí (`delete_registration_safe`) | `status = 'cancelled'` | `payment_status = 'pending'` (nunca se registró un pago) |
-| `products`, `orders`, `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
+| `products` | Sí (`delete_product_safe`, individual; `bulk_delete_products_safe`, en lote) | `is_active = false` | 0 `order_items`, 0 `inventory_movements`, 0 `production_orders` (vía `product_variants`) |
+| `orders`, `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
 
 En todos los casos: eliminar una inscripción/enrollment **nunca** borra al
 `customer` — María puede dejar el taller y seguir existiendo en el CRM con
 sus compras.
+
+**`stock_thresholds` no es historial, es configuración** (un umbral de
+alerta que la usuaria cargó, "avisame cuando quede menos de X") — no
+bloquea el borrado de un producto por sí solo. Como tampoco cascadea desde
+`inventory_items`, `delete_product_safe`/`bulk_delete_products_safe` lo
+limpian explícitamente antes de dejar que el borrado del producto cascadee,
+para no toparse con un error crudo de FK por una fila que no es "historial
+real". `inventory_reservations` no necesita chequeo propio: sólo se crean
+junto a `order_items` al confirmar un pedido, así que `order_items = 0` ya
+garantiza `inventory_reservations = 0` para ese producto.
 
 ## Seguridad del portal mayorista público
 

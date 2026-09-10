@@ -399,6 +399,29 @@ regla):
   `whatsapp_share_opened_at = now()`, porque `orders` no tiene policy de
   update para `anon`.
 
+Migración `20260910131110_product_safe_delete.sql` (borrado seguro de
+productos — cambia deliberadamente la política anterior de "hard delete:
+no, siempre" documentada en `docs/business-rules.md` § Nunca borrado
+físico con historial relacionado; ver esa sección para el detalle de
+`stock_thresholds`/`inventory_reservations`):
+
+- `delete_product_safe(p_id uuid)` (`security invoker`, owner-only):
+  cuenta `order_items`, `inventory_movements`, `production_orders` (vía
+  `product_variants`); bloquea con mensaje si hay alguno; si no, limpia
+  `stock_thresholds` y borra el producto (`product_variants`,
+  `product_images`, `price_list_items`, `inventory_items` cascadean
+  solos).
+- `classify_products_for_delete(p_ids uuid[])` (read-only, sin gate de
+  owner — no escribe nada ni revela más de lo que la RLS ya deja leer por
+  separado): misma cuenta por id, para el preview del borrado múltiple.
+- `bulk_delete_products_safe(p_ids uuid[])` (owner-only): re-cuenta cada
+  id por su cuenta (nunca confía en el preview de
+  `classify_products_for_delete`), borra los elegibles y desactiva
+  (`is_active = false`) los bloqueados, todo en una sola llamada — el loop
+  interno nunca atrapa excepciones por-id, así que un fallo inesperado
+  aborta toda la función (transacción implícita de Postgres) en vez de
+  dejar un resultado parcial.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

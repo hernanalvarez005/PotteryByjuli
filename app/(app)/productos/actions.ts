@@ -47,6 +47,66 @@ export async function toggleProductActive(id: string, isActive: boolean) {
   revalidatePath("/productos");
 }
 
+/**
+ * Hard delete, only when the product has no real history (ventas,
+ * movimientos de stock, órdenes de producción) — enforced server-side by
+ * `delete_product_safe`, never just by hiding the button. Owner-only.
+ */
+export async function deleteProduct(id: string) {
+  const user = await requireUser();
+  if (!isOwner(user)) throw new Error("Sólo la administradora puede eliminar definitivamente.");
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_product_safe", { p_id: id });
+  if (error) throw new Error(error.message || "No se pudo eliminar.");
+
+  revalidatePath("/productos");
+}
+
+export type ProductDeleteClassification = {
+  product_id: string;
+  product_name: string;
+  deletable: boolean;
+  order_items_count: number;
+  movements_count: number;
+  production_orders_count: number;
+};
+
+/** Read-only preview for the bulk-delete dialog — never mutates anything. */
+export async function classifyProductsForDelete(ids: string[]): Promise<ProductDeleteClassification[]> {
+  const user = await requireUser();
+  if (!canManageCatalog(user)) throw new Error("No tenés permiso.");
+  if (ids.length === 0) return [];
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("classify_products_for_delete", { p_ids: ids });
+  if (error) throw new Error(error.message || "No se pudo clasificar la selección.");
+
+  return (data ?? []) as ProductDeleteClassification[];
+}
+
+export type BulkDeleteResult = { deletedIds: string[]; deactivatedIds: string[] };
+
+/**
+ * Atomic: deletes whatever's eligible and deactivates the rest, in one RPC
+ * call that re-checks each id itself (never trusts the preview from
+ * classifyProductsForDelete — state can change between preview and
+ * confirm). Owner-only.
+ */
+export async function bulkDeleteProducts(ids: string[]): Promise<BulkDeleteResult> {
+  const user = await requireUser();
+  if (!isOwner(user)) throw new Error("Sólo la administradora puede eliminar definitivamente.");
+  if (ids.length === 0) return { deletedIds: [], deactivatedIds: [] };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("bulk_delete_products_safe", { p_ids: ids });
+  if (error) throw new Error(error.message || "No se pudo completar la operación.");
+
+  const row = (data as { deleted_ids: string[]; deactivated_ids: string[] }[] | null)?.[0];
+  revalidatePath("/productos");
+  return { deletedIds: row?.deleted_ids ?? [], deactivatedIds: row?.deactivated_ids ?? [] };
+}
+
 export type BulkPriceState = { error?: string; applied?: number; warning?: string };
 
 /**
