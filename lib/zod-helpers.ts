@@ -40,6 +40,16 @@ export function requiredString(inner: z.ZodString) {
   return z.preprocess((v) => (v === null || v === undefined ? "" : v), inner);
 }
 
+/** An optional UUID field: null, undefined or "" all become `null`. */
+export function optionalUuid() {
+  return z
+    .preprocess(
+      (v) => (v === null || v === undefined || v === "" ? undefined : v),
+      z.string().trim().uuid().optional()
+    )
+    .transform((v) => v ?? null);
+}
+
 /** An optional integer field (form values arrive as strings). */
 export function optionalInteger(min = 1) {
   return z.preprocess(
