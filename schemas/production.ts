@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalString } from "@/lib/zod-helpers";
 
 export const PRODUCTION_STATUS_LABELS: Record<string, string> = {
   pending: "Pendiente",
@@ -42,19 +43,8 @@ export const newProductionOrderSchema = z.object({
     .transform((v) => Number(v))
     .refine((v) => Number.isInteger(v) && v > 0, "Cantidad inválida"),
   priority: z.enum(["low", "normal", "high"]).default("normal"),
-  target_date: z
-    .string()
-    .trim()
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  notes: z
-    .string()
-    .trim()
-    .max(1000)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
+  target_date: optionalString(10),
+  notes: optionalString(1000),
 });
 
 export const completeProductionSchema = z.object({

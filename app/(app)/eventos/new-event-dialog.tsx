@@ -32,6 +32,13 @@ export function NewEventDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createEvent, {});
+  const [locationId, setLocationId] = useState("");
+  const [paymentAccountId, setPaymentAccountId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for the selected value — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its label.
+  const locationLabels = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+  const paymentAccountLabels = Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name]));
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -88,7 +95,8 @@ export function NewEventDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="location_id">Ubicación</Label>
-            <Select name="location_id">
+            <input type="hidden" name="location_id" value={locationId} />
+            <Select items={locationLabels} value={locationId} onValueChange={(v) => setLocationId(v ?? "")}>
               <SelectTrigger id="location_id" className="w-full">
                 <SelectValue placeholder="Elegir ubicación" />
               </SelectTrigger>
@@ -121,7 +129,8 @@ export function NewEventDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="payment_account_id">Cuenta para transferencia</Label>
-            <Select name="payment_account_id">
+            <input type="hidden" name="payment_account_id" value={paymentAccountId} />
+            <Select items={paymentAccountLabels} value={paymentAccountId} onValueChange={(v) => setPaymentAccountId(v ?? "")}>
               <SelectTrigger id="payment_account_id" className="w-full">
                 <SelectValue placeholder="Elegir cuenta (opcional)" />
               </SelectTrigger>

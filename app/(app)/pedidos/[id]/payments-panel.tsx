@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +38,14 @@ export function PaymentsPanel({
 }) {
   const boundAction = addPayment.bind(null, orderId);
   const [state, formAction, isPending] = useActionState(boundAction, {});
+  const [methodId, setMethodId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for a value that's already selected before the popup has ever
+  // registered its <Select.Item>s — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its label.
+  const methodLabels = Object.fromEntries(methods.map((m) => [m.id, m.name]));
+  const accountLabels = Object.fromEntries(accounts.map((a) => [a.id, a.name]));
 
   return (
     <Card>
@@ -76,7 +84,8 @@ export function PaymentsPanel({
             </div>
             <div className="space-y-1">
               <Label htmlFor="method_id">Método</Label>
-              <Select name="method_id">
+              <input type="hidden" name="method_id" value={methodId} />
+              <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
                 <SelectTrigger id="method_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -91,7 +100,8 @@ export function PaymentsPanel({
             </div>
             <div className="space-y-1">
               <Label htmlFor="account_id">Cuenta</Label>
-              <Select name="account_id">
+              <input type="hidden" name="account_id" value={accountId} />
+              <Select items={accountLabels} value={accountId} onValueChange={(v) => setAccountId(v ?? "")}>
                 <SelectTrigger id="account_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>

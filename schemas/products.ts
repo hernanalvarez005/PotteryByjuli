@@ -1,30 +1,11 @@
 import { z } from "zod";
+import { optionalString, optionalUuid, optionalMoneyAmount } from "@/lib/zod-helpers";
 
 export const productSchema = z.object({
   name: z.string().trim().min(1, "Requerido").max(120),
-  category_id: z
-    .string()
-    .trim()
-    .uuid()
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  description: z
-    .string()
-    .trim()
-    .max(2000)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  cost_estimate: z
-    .string()
-    .trim()
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? Number(v) : null))
-    .refine((v) => v === null || (Number.isFinite(v) && v >= 0), {
-      message: "El costo tiene que ser un número positivo.",
-    }),
+  category_id: optionalUuid(),
+  description: optionalString(2000),
+  cost_estimate: optionalMoneyAmount(),
 });
 
 export type ProductInput = z.infer<typeof productSchema>;
@@ -41,13 +22,7 @@ export const categorySchema = z.object({
 
 export const variantSchema = z.object({
   name: z.string().trim().min(1, "Requerido").max(80),
-  sku: z
-    .string()
-    .trim()
-    .max(60)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
+  sku: optionalString(60),
 });
 
 export const priceSchema = z.object({

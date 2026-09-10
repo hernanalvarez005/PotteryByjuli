@@ -239,12 +239,20 @@ function RegisterDialog({
   unitPrice: number | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [customerId, setCustomerId] = useState("");
   const boundAction = registerCustomer.bind(null, eventId, unitPrice);
   const [state, formAction, isPending] = useActionState(boundAction, {});
+  // Passed as Select's `items` prop so the trigger can resolve a label
+  // for the selected customer — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of the name.
+  const customerLabels = Object.fromEntries(customers.map((c) => [c.id, c.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setOpen(false);
+    if (wasPending.current && !isPending && !state.error) {
+      setOpen(false);
+      setCustomerId("");
+    }
     wasPending.current = isPending;
   }, [isPending, state.error]);
 
@@ -261,7 +269,8 @@ function RegisterDialog({
         <form action={formAction} className="flex flex-col gap-4">
           <div className="space-y-2">
             <Label htmlFor="customer_id">Cliente / contacto</Label>
-            <Select name="customer_id" required>
+            <input type="hidden" name="customer_id" value={customerId} />
+            <Select items={customerLabels} value={customerId} onValueChange={(v) => setCustomerId(v ?? "")}>
               <SelectTrigger id="customer_id" className="w-full">
                 <SelectValue placeholder="Elegir cliente" />
               </SelectTrigger>
@@ -284,7 +293,7 @@ function RegisterDialog({
           </div>
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" disabled={isPending || !customerId}>
               {isPending ? "Inscribiendo..." : "Inscribir"}
             </Button>
           </DialogFooter>

@@ -32,10 +32,21 @@ export function NewOrderDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createProductionOrder, {});
+  const [productVariantId, setProductVariantId] = useState("");
+  const [locationId, setLocationId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for the selected value — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its label.
+  const variantLabels = Object.fromEntries(variants.map((v) => [v.id, v.name]));
+  const locationLabels = Object.fromEntries(locations.map((l) => [l.id, l.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setOpen(false);
+    if (wasPending.current && !isPending && !state.error) {
+      setOpen(false);
+      setProductVariantId("");
+      setLocationId("");
+    }
     wasPending.current = isPending;
   }, [isPending, state.error]);
 
@@ -52,7 +63,8 @@ export function NewOrderDialog({
         <form action={formAction} className="flex flex-col gap-4">
           <div className="space-y-2">
             <Label htmlFor="product_variant_id">Producto</Label>
-            <Select name="product_variant_id" required>
+            <input type="hidden" name="product_variant_id" value={productVariantId} />
+            <Select items={variantLabels} value={productVariantId} onValueChange={(v) => setProductVariantId(v ?? "")}>
               <SelectTrigger id="product_variant_id" className="w-full">
                 <SelectValue placeholder="Elegir producto" />
               </SelectTrigger>
@@ -90,7 +102,8 @@ export function NewOrderDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="location_id">Ubicación destino</Label>
-            <Select name="location_id" required>
+            <input type="hidden" name="location_id" value={locationId} />
+            <Select items={locationLabels} value={locationId} onValueChange={(v) => setLocationId(v ?? "")}>
               <SelectTrigger id="location_id" className="w-full">
                 <SelectValue placeholder="Elegir ubicación" />
               </SelectTrigger>
@@ -113,7 +126,7 @@ export function NewOrderDialog({
           </div>
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" disabled={isPending || !productVariantId || !locationId}>
               {isPending ? "Creando..." : "Crear orden"}
             </Button>
           </DialogFooter>
