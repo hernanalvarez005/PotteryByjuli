@@ -336,6 +336,24 @@ Seguridad del portal mayorista público para la causa raíz completa):
   external_id, created_at, updated_at) ... TO anon` — `cost_estimate`
   queda fuera del grant. `authenticated` no se toca.
 
+Migración `20260910002142_wholesale_checkout_idempotency.sql` (P0 —
+checkout mayorista roto para `anon` con "Invalid input: expected string,
+received null", ver `docs/business-rules.md` § Checkout mayorista para la
+causa raíz completa):
+
+- `orders.client_request_id` (uuid, nullable) + índice único parcial
+  `orders_client_request_id_key` (`where client_request_id is not null`)
+  — permite miles de pedidos históricos con la columna en `NULL` sin
+  violar la unicidad, y garantiza que dos pedidos con el mismo id de
+  intento de checkout no puedan coexistir.
+- `submit_wholesale_request(...)` gana el parámetro
+  `p_client_request_id uuid default null` (compatible hacia atrás: un
+  caller que no lo pasa se comporta igual que antes). Antes de cualquier
+  otra validación, si ya existe un `orders` con ese `client_request_id`
+  devuelve su `human_code` sin crear nada nuevo — dedup por reintento/doble
+  submit/timeout resuelto dentro de la misma transacción atómica que ya
+  tenía la función.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

@@ -8,6 +8,24 @@ export type WholesaleRequestState = {
   humanCode?: string;
 };
 
+const GENERIC_ERROR = "No pudimos enviar tu solicitud. Revisá los datos ingresados e intentá nuevamente.";
+
+/**
+ * Never show a customer a raw Zod/Postgres error (sección 11) — a
+ * structural bug like the missing `website` field (2026-09-09 P0:
+ * "Invalid input: expected string, received null") must fail with a
+ * generic, actionable message while the real detail goes to the server
+ * log, not the browser. A schema issue we wrote ourselves on purpose
+ * (`.min()`/`.refine()` messages like "Falta el nombre.") IS meant to
+ * reach the customer as-is — only Zod's own default type-mismatch
+ * wording gets swapped out.
+ */
+function friendlyValidationMessage(issue: { code: string; message: string } | undefined): string {
+  if (!issue) return GENERIC_ERROR;
+  const isOurOwnMessage = issue.code === "custom" || issue.code === "too_small" || issue.code === "too_big";
+  return isOurOwnMessage ? issue.message : GENERIC_ERROR;
+}
+
 export async function submitWholesaleRequest(
   _prevState: WholesaleRequestState,
   formData: FormData
@@ -22,6 +40,17 @@ export async function submitWholesaleRequest(
   if (!Array.isArray(items) || items.length === 0) {
     return { error: "Tu carrito está vacío." };
   }
+
+  // Reused across retries of the same checkout attempt (double click, a
+  // visual error, a timeout) so the RPC can recognize "this is the same
+  // request again" and return the existing order instead of duplicating it
+  // (sección 10). Absent/malformed just means "no dedup for this call" —
+  // never a reason to fail the submission.
+  const rawClientRequestId = formData.get("client_request_id");
+  const clientRequestId =
+    typeof rawClientRequestId === "string" && rawClientRequestId.length > 0
+      ? rawClientRequestId
+      : null;
 
   const parsed = wholesaleRequestFormSchema.safeParse({
     first_name: formData.get("first_name"),
@@ -38,7 +67,8 @@ export async function submitWholesaleRequest(
   });
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Revisá los datos." };
+    console.error("submitWholesaleRequest: validation failed", parsed.error.issues);
+    return { error: friendlyValidationMessage(parsed.error.issues[0]) };
   }
 
   // No session here on purpose — this runs against the `anon` role, exactly
@@ -57,10 +87,17 @@ export async function submitWholesaleRequest(
     p_email: parsed.data.email,
     p_notes: parsed.data.notes,
     p_items: items,
+    p_client_request_id: clientRequestId,
   });
 
   if (error) {
-    return { error: error.message || "No se pudo enviar la solicitud." };
+    console.error("submitWholesaleRequest: RPC failed", error);
+    // 'P0001' is what a plain `raise exception 'texto en español'` inside
+    // submit_wholesale_request surfaces as — those messages are written
+    // by us on purpose for the customer to read (sección 132-141 of the
+    // function). Anything else (constraint violation, connection issue,
+    // etc.) is an internal error the customer never needs the detail of.
+    return { error: error.code === "P0001" ? error.message : GENERIC_ERROR };
   }
 
   return { humanCode: data as string };
