@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { StatusSelect } from "./status-select";
 import { PaymentsPanel, type Payment } from "./payments-panel";
+import { DocumentPanel } from "./document-panel";
 
 export default async function OrderDetailPage({
   params,
@@ -32,12 +33,15 @@ export default async function OrderDetailPage({
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id,human_code,status,subtotal,discount_total,total,notes,delivery_method,delivery_address,estimated_date,created_at,customers(id,first_name,last_name,whatsapp),business_units(name),locations(name),origin:origin_channel_id(name),closing:closing_channel_id(name)"
+      "id,human_code,status,subtotal,discount_total,total,notes,delivery_method,delivery_address,estimated_date,created_at,wholesale_terms_snapshot,customers(id,first_name,last_name,whatsapp,email,company_name,cuit,instagram,website,city,province,address,postal_code),business_units(code,name),locations(name),origin:origin_channel_id(name),closing:closing_channel_id(name)"
     )
     .eq("id", id)
     .maybeSingle();
 
   if (!order) notFound();
+
+  const businessUnit = order.business_units as unknown as { code: string; name: string } | null;
+  const isWholesaleOrder = businessUnit?.code === "wholesale";
 
   const [{ data: items }, { data: payments }, { data: history }, { data: methods }, { data: accounts }] =
     await Promise.all([
@@ -67,7 +71,40 @@ export default async function OrderDetailPage({
     first_name: string;
     last_name: string | null;
     whatsapp: string | null;
+    email: string | null;
+    company_name: string | null;
+    cuit: string | null;
+    instagram: string | null;
+    website: string | null;
+    city: string | null;
+    province: string | null;
+    address: string | null;
+    postal_code: string | null;
   } | null;
+
+  // Sólo relevante para pedidos mayoristas: documento generado en el
+  // checkout, y un posible conflicto de identidad sin resolver del cliente
+  // asociado (ver docs/business-rules.md § Checkout mayorista — dedup).
+  const [{ data: attachment }, { data: identityConflict }] = await Promise.all([
+    isWholesaleOrder
+      ? supabase
+          .from("order_attachments")
+          .select("storage_path")
+          .eq("order_id", id)
+          .eq("kind", "wholesale_request_pdf")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    customer
+      ? supabase
+          .from("customer_identity_conflicts")
+          .select("matched_customer_ids,signals,created_at")
+          .eq("new_customer_id", customer.id)
+          .is("resolved_at", null)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -99,6 +136,13 @@ export default async function OrderDetailPage({
                 WhatsApp
               </a>
             )}
+          </p>
+        )}
+        {identityConflict && (
+          <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            ⚠ Posible identidad duplicada — Revisión pendiente. Este cliente se creó porque WhatsApp,
+            email y/o CUIT de la solicitud apuntaban a clientes distintos ya existentes — ninguno se
+            modificó automáticamente. Revisar y reconciliar manualmente si corresponde.
           </p>
         )}
       </div>
@@ -221,6 +265,79 @@ export default async function OrderDetailPage({
             <Row label="Creado" value={formatDateTime(order.created_at)} />
           </CardContent>
         </Card>
+
+        {isWholesaleOrder && customer && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Comercio</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2 text-sm">
+              <Row label="Razón social" value={customer.company_name} />
+              <Row label="CUIT" value={customer.cuit} />
+              <Row label="Email" value={customer.email} />
+              <Row label="Ciudad" value={customer.city} />
+              <Row label="Provincia" value={customer.province} />
+              <Row label="Dirección" value={customer.address} />
+              <Row label="Código postal" value={customer.postal_code} />
+              <Row label="Instagram" value={customer.instagram} />
+              <Row label="Web" value={customer.website} />
+            </CardContent>
+          </Card>
+        )}
+
+        {isWholesaleOrder && order.wholesale_terms_snapshot && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Condiciones de la solicitud</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2 text-sm">
+              {(() => {
+                const terms = order.wholesale_terms_snapshot as {
+                  min_order_amount: number | null;
+                  min_total_units: number | null;
+                  lead_time_min_days: number | null;
+                  lead_time_max_days: number | null;
+                  payment_terms: string | null;
+                  shipping_terms: string | null;
+                };
+                const leadTime =
+                  terms.lead_time_min_days != null && terms.lead_time_max_days != null
+                    ? `${terms.lead_time_min_days}–${terms.lead_time_max_days} días`
+                    : undefined;
+                return (
+                  <>
+                    <Row
+                      label="Pedido mínimo"
+                      value={terms.min_order_amount != null ? formatCurrency(terms.min_order_amount) : undefined}
+                    />
+                    <Row
+                      label="Mínimo de piezas"
+                      value={terms.min_total_units != null ? String(terms.min_total_units) : undefined}
+                    />
+                    <Row label="Plazo estimado" value={leadTime} />
+                    <Row label="Forma de pago" value={terms.payment_terms} />
+                    <Row label="Envío" value={terms.shipping_terms} />
+                  </>
+                );
+              })()}
+              <p className="pt-1 text-xs text-muted-foreground">
+                Condiciones vigentes al momento de la solicitud — no cambian si Juli actualiza la
+                configuración mayorista después.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {isWholesaleOrder && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Documento</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DocumentPanel orderId={order.id} storagePath={attachment?.storage_path ?? null} canEdit={canEdit} />
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

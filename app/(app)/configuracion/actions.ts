@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner } from "@/lib/auth";
 import { CATALOG_TABLES, type CatalogTableKey } from "@/lib/catalog";
 import { wholesaleSettingsSchema } from "@/schemas/wholesale";
+import { normalizePhoneForStorage } from "@/lib/phone";
 
 export type CatalogActionState = { error?: string };
 
@@ -80,10 +81,22 @@ export async function updateWholesaleSettings(
     return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
   }
 
+  // Mismo normalizador que usa el checkout mayorista para el WhatsApp del
+  // comprador — así el número que arma el link `wa.me` del botón de éxito
+  // siempre queda en la forma correcta (incluye el "9" móvil argentino).
+  let businessWhatsapp = parsed.data.business_whatsapp;
+  if (businessWhatsapp) {
+    const normalized = normalizePhoneForStorage(businessWhatsapp);
+    if (!normalized.isValid) {
+      return { error: "El WhatsApp ingresado no parece válido." };
+    }
+    businessWhatsapp = normalized.canonical;
+  }
+
   const supabase = await createClient();
   const { error } = await supabase
     .from("wholesale_settings")
-    .update({ ...parsed.data, updated_by: user.id })
+    .update({ ...parsed.data, business_whatsapp: businessWhatsapp, updated_by: user.id })
     .eq("id", settingsId);
 
   if (error) return { error: "No se pudo guardar." };

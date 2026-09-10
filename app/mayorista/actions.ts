@@ -2,10 +2,19 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { wholesaleRequestFormSchema } from "@/schemas/wholesale";
+import { normalizePhoneForStorage } from "@/lib/phone";
+import { renderWholesaleOrderPdf } from "@/lib/wholesale-pdf";
+import {
+  getWholesaleOrderForDocument,
+  uploadWholesaleOrderPdf,
+  createWholesalePdfSignedUrl,
+} from "@/lib/supabase/admin-server-only";
 
 export type WholesaleRequestState = {
   error?: string;
   humanCode?: string;
+  orderId?: string;
+  documentUrl?: string | null;
 };
 
 const GENERIC_ERROR = "No pudimos enviar tu solicitud. Revisá los datos ingresados e intentá nuevamente.";
@@ -61,6 +70,8 @@ export async function submitWholesaleRequest(
     website: formData.get("website"),
     city: formData.get("city"),
     province: formData.get("province"),
+    address: formData.get("address"),
+    postal_code: formData.get("postal_code"),
     whatsapp: formData.get("whatsapp"),
     email: formData.get("email"),
     notes: formData.get("notes"),
@@ -69,6 +80,14 @@ export async function submitWholesaleRequest(
   if (!parsed.success) {
     console.error("submitWholesaleRequest: validation failed", parsed.error.issues);
     return { error: friendlyValidationMessage(parsed.error.issues[0]) };
+  }
+
+  // Normalizado acá (no en el schema) para que el dedup de
+  // submit_wholesale_request siempre compare contra la misma forma
+  // canónica que ya guarda para clientes existentes — ver lib/phone.ts.
+  const normalizedWhatsapp = normalizePhoneForStorage(parsed.data.whatsapp);
+  if (!normalizedWhatsapp.isValid) {
+    return { error: "El WhatsApp ingresado no parece válido. Revisalo e intentá de nuevo." };
   }
 
   // No session here on purpose — this runs against the `anon` role, exactly
@@ -83,7 +102,9 @@ export async function submitWholesaleRequest(
     p_website: parsed.data.website,
     p_city: parsed.data.city,
     p_province: parsed.data.province,
-    p_whatsapp: parsed.data.whatsapp,
+    p_address: parsed.data.address,
+    p_postal_code: parsed.data.postal_code,
+    p_whatsapp: normalizedWhatsapp.canonical,
     p_email: parsed.data.email,
     p_notes: parsed.data.notes,
     p_items: items,
@@ -100,5 +121,49 @@ export async function submitWholesaleRequest(
     return { error: error.code === "P0001" ? error.message : GENERIC_ERROR };
   }
 
-  return { humanCode: data as string };
+  const humanCode = data as string;
+
+  // El pedido ya está creado y a salvo en este punto (transacción atómica
+  // de la RPC, ya resuelta). Todo lo que sigue es "mejor esfuerzo": si el
+  // PDF falla, la solicitud sigue existiendo y la pantalla de éxito debe
+  // funcionar igual, sin link al documento -- nunca mostramos un error acá
+  // que sugiera reintentar (eso sí podría terminar en un pedido duplicado,
+  // exactamente lo que esta función existe para evitar).
+  let orderId: string | undefined;
+  let documentUrl: string | null = null;
+  try {
+    const order = await getWholesaleOrderForDocument(humanCode);
+    if (order) {
+      orderId = order.orderId;
+      const pdfBytes = await renderWholesaleOrderPdf({
+        humanCode,
+        createdAt: new Date(order.createdAt),
+        buyer: order.buyer,
+        items: order.items,
+        terms: order.terms,
+      });
+      const storagePath = await uploadWholesaleOrderPdf(order.orderId, humanCode, pdfBytes);
+      documentUrl = await createWholesalePdfSignedUrl(storagePath);
+    }
+  } catch (pdfError) {
+    console.error(`submitWholesaleRequest: PDF generation/upload failed for ${humanCode} (non-fatal)`, pdfError);
+  }
+
+  return { humanCode, orderId, documentUrl };
+}
+
+/**
+ * "Se abrió el botón de WhatsApp" — nunca "se envió el mensaje", eso la
+ * app no lo puede saber con certeza (sección 26). `orders` no tiene
+ * policy de select/update para `anon`, así que esto pasa por su propia
+ * RPC (`mark_wholesale_whatsapp_share_opened`) en vez de un update
+ * directo. Fire-and-forget desde la UI: nunca debe bloquear ni romper el
+ * link de WhatsApp en sí.
+ */
+export async function markWhatsappShareOpened(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("mark_wholesale_whatsapp_share_opened", { p_order_id: orderId });
+  if (error) {
+    console.error("markWhatsappShareOpened failed (non-fatal)", error);
+  }
 }

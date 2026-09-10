@@ -16,6 +16,7 @@ export type WholesaleSettings = {
   payment_terms: string | null;
   shipping_terms: string | null;
   commercial_message: string | null;
+  business_whatsapp: string | null;
 };
 
 export function WholesaleSettingsForm({
@@ -100,6 +101,19 @@ export function WholesaleSettingsForm({
             rows={3}
             defaultValue={settings.commercial_message ?? ""}
           />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="business_whatsapp">WhatsApp de Pottery</Label>
+          <Input
+            id="business_whatsapp"
+            name="business_whatsapp"
+            placeholder="11 2233-4455"
+            defaultValue={settings.business_whatsapp ?? ""}
+          />
+          <p className="text-xs text-muted-foreground">
+            Es el número al que el botón &quot;Enviar pedido por WhatsApp&quot; del catálogo público le
+            escribe a la compradora. Si queda vacío, ese botón no se muestra.
+          </p>
         </div>
         {state.error && <p className="text-sm text-destructive">{state.error}</p>}
         {canEdit && (

@@ -9,6 +9,7 @@ export const wholesaleSettingsSchema = z.object({
   payment_terms: optionalString(500),
   shipping_terms: optionalString(500),
   commercial_message: optionalString(1000),
+  business_whatsapp: optionalString(30),
 });
 
 export const wholesaleRulesSchema = z.object({
@@ -23,20 +24,21 @@ export const wholesaleRulesSchema = z.object({
 
 export const wholesaleRequestFormSchema = z.object({
   first_name: requiredString(z.string().trim().min(1, "Falta el nombre.").max(80)),
-  last_name: optionalString(80),
-  company_name: optionalString(120),
+  last_name: requiredString(z.string().trim().min(1, "Falta el apellido.").max(80)),
+  company_name: requiredString(
+    z.string().trim().min(1, "Falta la razón social o el nombre del comercio.").max(120)
+  ),
   cuit: optionalString(20),
   instagram: optionalString(60),
   website: optionalString(160),
-  city: optionalString(80),
-  province: optionalString(80),
+  city: requiredString(z.string().trim().min(1, "Falta la ciudad.").max(80)),
+  province: requiredString(z.string().trim().min(1, "Falta la provincia.").max(80)),
+  address: optionalString(160),
+  postal_code: optionalString(20),
   whatsapp: requiredString(z.string().trim().min(6, "Falta un WhatsApp de contacto.").max(30)),
-  email: z.preprocess(
-    (v) => (v === null || v === undefined || v === "" ? undefined : v),
-    z.string().trim().max(160).optional()
-  )
-    .refine((v) => !v || z.string().email().safeParse(v).success, "Email inválido.")
-    .transform((v) => v ?? null),
+  email: requiredString(
+    z.string().trim().min(1, "Falta el email.").max(160).email("Ingresá un email válido.")
+  ),
   notes: optionalString(1000),
 });
 

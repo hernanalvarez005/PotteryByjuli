@@ -26,6 +26,7 @@ export type WholesaleSettingsPublic = {
   payment_terms: string | null;
   shipping_terms: string | null;
   commercial_message: string | null;
+  business_whatsapp: string | null;
 };
 
 /**

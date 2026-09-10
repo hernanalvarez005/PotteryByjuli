@@ -354,6 +354,51 @@ causa raíz completa):
   submit/timeout resuelto dentro de la misma transacción atómica que ya
   tenía la función.
 
+Migración `20260910020648_wholesale_checkout_buyer_pdf.sql` (extensión del
+checkout mayorista — datos del comprador, PDF, WhatsApp; ver
+`docs/business-rules.md` § Checkout mayorista para el detalle de cada
+regla):
+
+- `customers`: agrega `address text`, `postal_code text`.
+- `orders`: agrega `whatsapp_share_opened_at timestamptz` y
+  `wholesale_buyer_snapshot jsonb` (datos del comprador congelados tal
+  como se enviaron en esa solicitud puntual — nunca un join en vivo a
+  `customers`).
+- `wholesale_settings`: agrega `business_whatsapp text`.
+- `order_attachments`: agrega `kind text` (nullable) — `'wholesale_request_pdf'`
+  para el documento del checkout; la ausencia de fila para un pedido es la
+  señal de "no se generó/falló el PDF", no hace falta una columna de
+  estado separada.
+- `sales_channels`: nueva fila `('web_mayorista', 'Catálogo web
+  mayorista')` — origen de todo pedido creado desde `/mayorista`.
+- Nueva tabla `customer_identity_conflicts` (`id, order_id,
+  new_customer_id, matched_customer_ids uuid[], signals jsonb,
+  resolved_at, resolved_by, created_at`) — cuando el dedup encuentra
+  señales (whatsapp/email/CUIT) que apuntan a customers existentes
+  distintos, se crea un customer nuevo para el pedido y el conflicto
+  queda acá para revisión manual; ningún customer existente se
+  modifica. RLS: `select` para cualquier `authenticated`, `update` (para
+  marcar `resolved_at`) sólo para `is_operations_or_owner()`.
+- `submit_wholesale_request`: **drop explícito de la firma vieja de 13
+  argumentos antes del `create or replace`** (13→15 args, agrega
+  `p_address`, `p_postal_code`) — la misma precaución que ya hizo falta
+  una vez esta sesión: sin el drop, Postgres deja dos funciones
+  superpuestas y `grant execute` sin lista de argumentos falla con 42725
+  "function name is not unique". Cambios de lógica: `raise exception` con
+  mensaje propio para `last_name`/`email`/`company_name`/`city`/
+  `province` vacíos (mismo patrón que `first_name`/`whatsapp`); dedup en 3
+  queries separadas (whatsapp, email, cuit) con detección de conflicto
+  (inserta en `customer_identity_conflicts` cuando señales distintas
+  apuntan a clientes distintos); update fill-null-only
+  (`coalesce(existente, nuevo)`) al reusar un cliente encontrado; arma
+  `wholesale_buyer_snapshot` directamente desde los parámetros `p_*`
+  (nunca desde `customers`); `origin_channel_id = web_mayorista` en el
+  insert de `orders`.
+- Nueva RPC `mark_wholesale_whatsapp_share_opened(p_order_id uuid)`
+  (`security definer`, grant a `anon, authenticated`) — sólo setea
+  `whatsapp_share_opened_at = now()`, porque `orders` no tiene policy de
+  update para `anon`.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
