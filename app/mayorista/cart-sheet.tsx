@@ -32,6 +32,12 @@ export function CartSheet({
   const { cart, setQuantity, totalItemCount, clear } = useCart();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>("cart");
+  // One id per checkout attempt — reused across retries (a failed submit,
+  // a timeout, a double click) so the server can recognize "this is the
+  // same request again" and never create a second order for it. Only
+  // rotates once a checkout actually succeeds and the cart is cleared for
+  // a genuinely new one (sección 10).
+  const [requestId, setRequestId] = useState<string>(() => crypto.randomUUID());
   const [state, formAction, isPending] = useActionState<WholesaleRequestState, FormData>(
     submitWholesaleRequest,
     {}
@@ -82,6 +88,7 @@ export function CartSheet({
         setOpen(next);
         if (!next && step === "success") {
           clear();
+          setRequestId(crypto.randomUUID());
           setStep("cart");
         }
       }}
@@ -201,6 +208,7 @@ export function CartSheet({
                   lines.map((l) => ({ product_variant_id: l.variant.id, quantity: l.quantity }))
                 )}
               />
+              <input type="hidden" name="client_request_id" value={requestId} />
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label htmlFor="first_name">Nombre</Label>
@@ -246,6 +254,10 @@ export function CartSheet({
                 </div>
               </div>
               <div className="space-y-1">
+                <Label htmlFor="website">Web (opcional)</Label>
+                <Input id="website" name="website" type="url" placeholder="https://..." />
+              </div>
+              <div className="space-y-1">
                 <Label htmlFor="notes">Observaciones</Label>
                 <Textarea id="notes" name="notes" rows={2} />
               </div>
@@ -270,6 +282,7 @@ export function CartSheet({
               onClick={() => {
                 setOpen(false);
                 clear();
+                setRequestId(crypto.randomUUID());
                 setStep("cart");
               }}
             >
