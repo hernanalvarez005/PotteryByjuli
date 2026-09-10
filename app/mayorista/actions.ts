@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { wholesaleRequestFormSchema } from "@/schemas/wholesale";
+import { normalizePhoneForStorage } from "@/lib/phone";
 
 export type WholesaleRequestState = {
   error?: string;
@@ -61,6 +62,8 @@ export async function submitWholesaleRequest(
     website: formData.get("website"),
     city: formData.get("city"),
     province: formData.get("province"),
+    address: formData.get("address"),
+    postal_code: formData.get("postal_code"),
     whatsapp: formData.get("whatsapp"),
     email: formData.get("email"),
     notes: formData.get("notes"),
@@ -69,6 +72,14 @@ export async function submitWholesaleRequest(
   if (!parsed.success) {
     console.error("submitWholesaleRequest: validation failed", parsed.error.issues);
     return { error: friendlyValidationMessage(parsed.error.issues[0]) };
+  }
+
+  // Normalizado acá (no en el schema) para que el dedup de
+  // submit_wholesale_request siempre compare contra la misma forma
+  // canónica que ya guarda para clientes existentes — ver lib/phone.ts.
+  const normalizedWhatsapp = normalizePhoneForStorage(parsed.data.whatsapp);
+  if (!normalizedWhatsapp.isValid) {
+    return { error: "El WhatsApp ingresado no parece válido. Revisalo e intentá de nuevo." };
   }
 
   // No session here on purpose — this runs against the `anon` role, exactly
@@ -83,7 +94,9 @@ export async function submitWholesaleRequest(
     p_website: parsed.data.website,
     p_city: parsed.data.city,
     p_province: parsed.data.province,
-    p_whatsapp: parsed.data.whatsapp,
+    p_address: parsed.data.address,
+    p_postal_code: parsed.data.postal_code,
+    p_whatsapp: normalizedWhatsapp.canonical,
     p_email: parsed.data.email,
     p_notes: parsed.data.notes,
     p_items: items,
