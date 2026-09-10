@@ -90,7 +90,11 @@ export function EditEventForm({
             </div>
             <div className="space-y-2">
               <Label htmlFor="location_id">Ubicación</Label>
-              <Select name="location_id" defaultValue={event.location_id ?? undefined}>
+              <Select
+                name="location_id"
+                items={locations.map((l) => ({ value: l.id, label: l.name }))}
+                defaultValue={event.location_id ?? undefined}
+              >
                 <SelectTrigger id="location_id" className="w-full">
                   <SelectValue placeholder="Elegir ubicación" />
                 </SelectTrigger>
@@ -130,7 +134,11 @@ export function EditEventForm({
             </div>
             <div className="space-y-2">
               <Label htmlFor="payment_account_id">Cuenta para transferencia</Label>
-              <Select name="payment_account_id" defaultValue={event.payment_account_id ?? undefined}>
+              <Select
+                name="payment_account_id"
+                items={paymentAccounts.map((a) => ({ value: a.id, label: a.name }))}
+                defaultValue={event.payment_account_id ?? undefined}
+              >
                 <SelectTrigger id="payment_account_id" className="w-full">
                   <SelectValue placeholder="Elegir cuenta (opcional)" />
                 </SelectTrigger>

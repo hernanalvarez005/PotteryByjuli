@@ -72,7 +72,11 @@ export function NewOrderDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="priority">Prioridad</Label>
-              <Select name="priority" defaultValue="normal">
+              <Select
+                name="priority"
+                items={{ low: "Baja", normal: "Normal", high: "Alta" }}
+                defaultValue="normal"
+              >
                 <SelectTrigger id="priority" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
