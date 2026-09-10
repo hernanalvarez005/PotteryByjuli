@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
-import { productSchema, variantSchema, priceSchema } from "@/schemas/products";
+import { productSchema, variantSchema, priceSchema, bulkWholesalePriceSchema } from "@/schemas/products";
 import { wholesaleRulesSchema } from "@/schemas/wholesale";
 import { lookup as dnsLookup } from "node:dns/promises";
 import {
@@ -120,22 +120,134 @@ export async function upsertPrice(
   return {};
 }
 
+/**
+ * Precio mayorista para todas las variantes — sección 4 de la tanda de
+ * mejoras operativas. A propósito NO recibe price_list_id ni una lista de
+ * variantes del cliente: sólo productId (ya validado por la ruta) y el
+ * precio. Vuelve a resolver la lista mayorista por código y las variantes
+ * reales de ese producto enteramente del lado del servidor, así un id
+ * ajeno o manipulado no puede llegar a afectar otro producto ni la lista
+ * minorista. Un único upsert con un array de filas es atómico a nivel de
+ * Postgres — no hace falta una RPC nueva para esto.
+ */
+export async function applyWholesalePriceToAllVariants(
+  productId: string,
+  _prevState: ProductDetailState,
+  formData: FormData
+): Promise<ProductDetailState> {
+  const user = await requireUser();
+  if (!isOwner(user)) {
+    return { error: "Sólo la administradora puede modificar precios." };
+  }
+
+  const parsed = bulkWholesalePriceSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Precio inválido." };
+  }
+
+  const supabase = await createClient();
+
+  const { data: wholesaleList, error: listError } = await supabase
+    .from("price_lists")
+    .select("id")
+    .eq("code", "wholesale")
+    .maybeSingle();
+  if (listError || !wholesaleList) {
+    return { error: "No se encontró la lista de precios mayorista." };
+  }
+
+  const { data: variants, error: variantsError } = await supabase
+    .from("product_variants")
+    .select("id")
+    .eq("product_id", productId);
+  if (variantsError) return { error: "No se pudieron leer las variantes del producto." };
+  if (!variants || variants.length === 0) {
+    return { error: "Este producto no tiene variantes." };
+  }
+
+  const rows = variants.map((v) => ({
+    price_list_id: wholesaleList.id,
+    product_variant_id: v.id,
+    unit_price: parsed.data.unit_price,
+    updated_by: user.id,
+  }));
+
+  const { error } = await supabase
+    .from("price_list_items")
+    .upsert(rows, { onConflict: "price_list_id,product_variant_id" });
+  if (error) return { error: "No se pudieron guardar los precios." };
+
+  revalidatePath(`/productos/${productId}`);
+  revalidatePath("/productos");
+  revalidatePath("/precios");
+  revalidatePath("/mayorista");
+  return {};
+}
+
+/**
+ * variantId liga la foto a un modelo puntual (sección 5 — imágenes ↔
+ * variantes); null = imagen general, la que se muestra para cualquier
+ * variante. Se re-valida server-side que el variantId (si viene) sea
+ * realmente una variante de este producto — nunca se confía en el id tal
+ * cual llega del cliente.
+ */
 export async function addProductImage(
   productId: string,
   storagePath: string,
-  isFirst: boolean
+  isFirst: boolean,
+  variantId: string | null
 ) {
   await assertCanManageCatalog();
 
   const supabase = await createClient();
+  const validVariantId = await resolveOwnVariantId(supabase, productId, variantId);
+
   const { error } = await supabase.from("product_images").insert({
     product_id: productId,
     storage_path: storagePath,
+    variant_id: validVariantId,
     is_primary: isFirst,
   });
   if (error) throw new Error("No se pudo guardar la imagen.");
 
   revalidatePath(`/productos/${productId}`);
+  revalidatePath("/mayorista");
+}
+
+export async function setImageVariant(
+  productId: string,
+  imageId: string,
+  variantId: string | null
+) {
+  await assertCanManageCatalog();
+
+  const supabase = await createClient();
+  const validVariantId = await resolveOwnVariantId(supabase, productId, variantId);
+
+  const { error } = await supabase
+    .from("product_images")
+    .update({ variant_id: validVariantId })
+    .eq("id", imageId)
+    .eq("product_id", productId);
+  if (error) throw new Error("No se pudo actualizar.");
+
+  revalidatePath(`/productos/${productId}`);
+  revalidatePath("/mayorista");
+}
+
+async function resolveOwnVariantId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  productId: string,
+  variantId: string | null
+): Promise<string | null> {
+  if (!variantId) return null;
+  const { data } = await supabase
+    .from("product_variants")
+    .select("id")
+    .eq("id", variantId)
+    .eq("product_id", productId)
+    .maybeSingle();
+  return data?.id ?? null;
 }
 
 export async function deleteProductImage(
@@ -220,6 +332,14 @@ export async function importProductImageFromUrl(
 ): Promise<ImportImageState> {
   await assertCanManageCatalog();
 
+  const supabaseForVariant = await createClient();
+  const rawVariantId = String(formData.get("variant_id") ?? "").trim();
+  const validVariantId = await resolveOwnVariantId(
+    supabaseForVariant,
+    productId,
+    rawVariantId || null
+  );
+
   const rawUrl = String(formData.get("image_url") ?? "").trim();
   const shapeCheck = validateImageUrlShape(rawUrl);
   if (!shapeCheck.ok) return { error: shapeCheck.error };
@@ -271,9 +391,10 @@ export async function importProductImageFromUrl(
 
   const { error: insertError } = await supabase
     .from("product_images")
-    .insert({ product_id: productId, storage_path: path, is_primary: isFirst });
+    .insert({ product_id: productId, storage_path: path, variant_id: validVariantId, is_primary: isFirst });
   if (insertError) return { error: "No se pudo registrar la imagen." };
 
   revalidatePath(`/productos/${productId}`);
+  revalidatePath("/mayorista");
   return {};
 }

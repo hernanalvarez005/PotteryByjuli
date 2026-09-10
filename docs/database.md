@@ -399,6 +399,64 @@ regla):
   `whatsapp_share_opened_at = now()`, porque `orders` no tiene policy de
   update para `anon`.
 
+Migración `20260910131110_product_safe_delete.sql` (borrado seguro de
+productos — cambia deliberadamente la política anterior de "hard delete:
+no, siempre" documentada en `docs/business-rules.md` § Nunca borrado
+físico con historial relacionado; ver esa sección para el detalle de
+`stock_thresholds`/`inventory_reservations`):
+
+- `delete_product_safe(p_id uuid)` (`security invoker`, owner-only):
+  cuenta `order_items`, `inventory_movements`, `production_orders` (vía
+  `product_variants`); bloquea con mensaje si hay alguno; si no, limpia
+  `stock_thresholds` y borra el producto (`product_variants`,
+  `product_images`, `price_list_items`, `inventory_items` cascadean
+  solos).
+- `classify_products_for_delete(p_ids uuid[])` (read-only, sin gate de
+  owner — no escribe nada ni revela más de lo que la RLS ya deja leer por
+  separado): misma cuenta por id, para el preview del borrado múltiple.
+- `bulk_delete_products_safe(p_ids uuid[])` (owner-only): re-cuenta cada
+  id por su cuenta (nunca confía en el preview de
+  `classify_products_for_delete`), borra los elegibles y desactiva
+  (`is_active = false`) los bloqueados, todo en una sola llamada — el loop
+  interno nunca atrapa excepciones por-id, así que un fallo inesperado
+  aborta toda la función (transacción implícita de Postgres) en vez de
+  dejar un resultado parcial.
+
+Migración `20260910104405_wholesale_images_variant_filter.sql` (imágenes ↔
+variantes, sección 5 de la tanda de mejoras operativas — ver
+`docs/business-rules.md` § Seguridad del portal mayorista público):
+
+- Reemplaza `product_images_select_public_wholesale`: además de exigir
+  producto activo/público, ahora exige que — si `product_images.variant_id`
+  no es null — esa variante también esté activa. Una imagen general
+  (`variant_id is null`) nunca se ve afectada. Sólo achica acceso.
+
+No hace falta migración para el resto de la sección 5:
+`product_images.variant_id` ya existía (nullable, `on delete cascade`
+desde `product_variants`, sin usar hasta ahora en ninguna UI) — este
+cambio de tanda es el primero en escribirlo (`images-panel.tsx`, "Asociar
+la próxima foto a") y en leerlo con intención (`lib/wholesale.ts`,
+`app/mayorista/product-card.tsx`).
+
+Migración `20260910110510_workshop_due_extras.sql` (extras de cuotas de
+talleres, sección 6 de la tanda de mejoras operativas — ver
+`docs/business-rules.md` § Cargos extra sobre una cuota):
+
+- **`workshop_due_concepts`**: catálogo chico (`code, name, sort_order,
+  is_active`), mismo patrón que `payment_methods`/`sales_channels`.
+  Gestionado desde `/configuracion` vía `CATALOG_TABLES`
+  (`lib/catalog.ts`) — sin componente nuevo.
+- **`workshop_due_items`**: `due_id, concept_id, amount, note, created_by,
+  voided_at, voided_by`. Append-only a propósito: hay policy de `select`
+  y de `insert` (owner/operations) pero **ninguna de update/delete** —
+  la única forma de tocar una fila después de insertada es
+  `void_due_item`.
+- **`void_due_item(p_id uuid)`** (`security definer`, igual patrón que
+  `mark_wholesale_whatsapp_share_opened`): setea `voided_at`/`voided_by`
+  si la fila no estaba ya anulada; nunca borra, nunca toca `amount` ni
+  `concept_id`. Idempotente — llamarla dos veces sobre el mismo item no
+  hace nada la segunda vez.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya

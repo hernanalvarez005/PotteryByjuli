@@ -13,15 +13,26 @@ export type ProductListRow = {
 
 export type PriceByVariant = Record<string, { retail?: number; wholesale?: number }>;
 
-/** Products + their variants + category name, newest-first is irrelevant — sorted by name. */
-export async function getProductsWithVariants(): Promise<ProductListRow[]> {
+export type ProductStatusFilter = "all" | "active" | "inactive";
+
+/** Products + their variants + category name, newest-first is irrelevant —
+ * sorted by name. `status` is applied server-side (a real `.eq()`, not a
+ * fetch-all-then-filter) — there's no pagination on this list today, so
+ * this stays trivial without needing to preserve one. */
+export async function getProductsWithVariants(status: ProductStatusFilter = "active"): Promise<ProductListRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  let query = supabase
     .from("products")
     .select(
       "id,name,description,cost_estimate,is_active,category_id,product_categories(name),product_variants(id,name,sku,is_active)"
     )
     .order("name");
+
+  if (status !== "all") {
+    query = query.eq("is_active", status === "active");
+  }
+
+  const { data } = await query;
 
   return (data ?? []) as unknown as ProductListRow[];
 }

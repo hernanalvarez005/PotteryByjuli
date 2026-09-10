@@ -59,6 +59,15 @@ export const paymentSchema = z.object({
     .min(1, "Requerido")
     .transform((v) => Number(v))
     .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
+  // Siempre explícito — nunca un atajo "si es hoy, se omite y cae el
+  // default now()". created_at = cuándo se cargó en Pottery; paid_at =
+  // cuándo pasó el pago de verdad (docs/business-rules.md § Argentina,
+  // moneda y horario). El action arma el timestamptz real desde esta
+  // fecha vía dateOnlyToArgentinaNoonISO.
+  paid_at: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
   method_id: z
     .string()
     .trim()

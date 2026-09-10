@@ -31,7 +31,7 @@ export default async function ProductDetailPage({
       supabase.from("price_lists").select("id,code,name").order("name"),
       supabase
         .from("product_images")
-        .select("id,storage_path,is_primary")
+        .select("id,storage_path,variant_id,is_primary")
         .eq("product_id", id)
         .order("sort_order"),
       supabase
@@ -67,6 +67,7 @@ export default async function ProductDetailPage({
   const productImages: ProductImage[] = (images ?? []).map((img) => ({
     id: img.id,
     storage_path: img.storage_path,
+    variant_id: img.variant_id,
     is_primary: img.is_primary,
     publicUrl: imagesBucket.getPublicUrl(img.storage_path).data.publicUrl,
   }));
@@ -94,7 +95,12 @@ export default async function ProductDetailPage({
           categories={categories ?? []}
           canEdit={canEdit}
         />
-        <ImagesPanel productId={product.id} images={productImages} canEdit={canEdit} />
+        <ImagesPanel
+          productId={product.id}
+          images={productImages}
+          variants={variants}
+          canEdit={canEdit}
+        />
         <VariantsPanel productId={product.id} variants={variants} canEdit={canEdit} />
         <PricesPanel
           productId={product.id}

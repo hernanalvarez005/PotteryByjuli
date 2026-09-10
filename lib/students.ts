@@ -3,6 +3,7 @@ import { customerDisplayName } from "@/lib/customers";
 import {
   computeDueDisplayStatus,
   computeDueBalance,
+  computeDueSummary,
   currentPeriod,
   lastPaidPeriod,
   type DueDisplayStatus,
@@ -43,7 +44,7 @@ export async function getStudentRoster(period: string = currentPeriod()): Promis
 
   const { data: dueRows } = await supabase
     .from("workshop_dues")
-    .select("enrollment_id,period,amount,status,payments(amount)")
+    .select("enrollment_id,period,amount,status,payments(amount),workshop_due_items(amount,voided_at)")
     .in("enrollment_id", enrollmentIds);
 
   const duesByEnrollment = new Map<string, typeof dueRows>();
@@ -60,12 +61,21 @@ export async function getStudentRoster(period: string = currentPeriod()): Promis
       whatsapp: string | null;
     } | null;
     const group = e.workshop_groups as unknown as { id: string; name: string; monthly_fee: number | null };
-    const dues = (duesByEnrollment.get(e.id) ?? []).map((d) => ({
-      period: d.period as string,
-      status: d.status as "pending" | "cancelled",
-      amount: d.amount as number,
-      paidAmount: ((d.payments ?? []) as { amount: number }[]).reduce((sum, p) => sum + p.amount, 0),
-    }));
+    // computeDueSummary (lib/workshop-dues.ts) es la única fuente de
+    // verdad para el total de una cuota — mismo cálculo que Talleres, la
+    // ficha de alumna y el dashboard/reportes, nunca reimplementado acá.
+    const dues = (duesByEnrollment.get(e.id) ?? []).map((d) => {
+      const status = d.status as "pending" | "cancelled";
+      const payments = (d.payments ?? []) as { amount: number }[];
+      const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
+      const summary = computeDueSummary({ status, amount: d.amount as number }, items, payments);
+      return {
+        period: d.period as string,
+        status,
+        amount: summary.totalDue,
+        paidAmount: summary.paidTotal,
+      };
+    });
 
     const currentDue = dues.find((d) => d.period === period);
     const currentPeriodStatus: DueDisplayStatus | "no_due" = currentDue

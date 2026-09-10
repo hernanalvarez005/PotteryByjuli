@@ -8,6 +8,7 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import {
   computeDueDisplayStatus,
   computeDueBalance,
+  computeDueSummary,
   currentPeriod,
   formatPeriodLabel,
   lastPaidPeriod,
@@ -74,18 +75,30 @@ export default async function CustomerDetailPage({
   const { data: dueRows } = enrollmentIds.length
     ? await supabase
         .from("workshop_dues")
-        .select("enrollment_id,period,amount,status,payments(amount)")
+        .select("enrollment_id,period,amount,status,payments(amount,paid_at),workshop_due_items(amount,voided_at)")
         .in("enrollment_id", enrollmentIds)
     : { data: [] as never[] };
 
-  const duesByEnrollment = new Map<string, { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number }[]>();
+  // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
+  // para el total de una cuota — mismo cálculo que Talleres y el
+  // dashboard/reportes, nunca reimplementado acá. `amount` acá abajo ya
+  // es el total con extras incluidos (totalDue), no sólo la cuota base.
+  const duesByEnrollment = new Map<
+    string,
+    { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number; latestPaymentDate: string | null }[]
+  >();
   for (const d of dueRows ?? []) {
+    const payments = (d.payments ?? []) as { amount: number; paid_at: string }[];
+    const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
+    const latestPaymentDate = payments.length > 0 ? payments.map((p) => p.paid_at).sort().at(-1)! : null;
     const list = duesByEnrollment.get(d.enrollment_id) ?? [];
     list.push({
       period: d.period,
       status: d.status as "pending" | "cancelled",
-      amount: d.amount,
-      paidAmount: ((d.payments ?? []) as { amount: number }[]).reduce((sum, p) => sum + p.amount, 0),
+      amount: summary.totalDue,
+      paidAmount: summary.paidTotal,
+      latestPaymentDate,
     });
     duesByEnrollment.set(d.enrollment_id, list);
   }
@@ -213,6 +226,7 @@ export default async function CustomerDetailPage({
                   : null;
                 const monthlyFee = e.monthly_fee ?? group?.monthly_fee ?? null;
                 const lastPaid = lastPaidPeriod(dues);
+                const lastPaidAt = lastPaid ? dues.find((d) => d.period === lastPaid)?.latestPaymentDate ?? null : null;
                 return (
                   <div key={e.id} className="flex flex-col gap-1 border-b pb-3 text-sm last:border-b-0 last:pb-0">
                     <div className="flex items-center justify-between">
@@ -239,7 +253,10 @@ export default async function CustomerDetailPage({
                             </Badge>
                           )}
                         </span>
-                        <span>Último mes pago: {lastPaid ? formatPeriodLabel(lastPaid) : "—"}</span>
+                        <span>
+                          Último mes pago: {lastPaid ? formatPeriodLabel(lastPaid) : "—"}
+                          {lastPaidAt && ` · pagado el ${formatDate(lastPaidAt)}`}
+                        </span>
                       </div>
                     )}
                   </div>

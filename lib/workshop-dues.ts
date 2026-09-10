@@ -33,6 +33,55 @@ export function computeDueBalance(amount: number, paidAmount: number): number {
   return Math.max(0, amount - paidAmount);
 }
 
+export type DueLike = { status: "pending" | "cancelled"; amount: number };
+export type DueItemLike = { amount: number; voided_at: string | null };
+export type PaymentLike = { amount: number };
+
+export type DueSummary = {
+  baseAmount: number;
+  extrasTotal: number;
+  totalDue: number;
+  paidTotal: number;
+  balance: number;
+  status: DueDisplayStatus;
+};
+
+/**
+ * Única fuente de verdad para el total de una cuota (precisión de la
+ * usuaria en la tanda de mejoras operativas — sección 7): Talleres, la
+ * ficha de alumna, el dashboard y los reportes llaman TODOS a esta misma
+ * función, nunca reimplementan la suma por su cuenta — mismo fixture,
+ * mismo resultado en cualquier consumidor (ver
+ * lib/workshop-dues-consumers.test.ts).
+ *
+ * baseAmount viene de workshop_dues.amount (snapshot histórico de la
+ * cuota mensual); extrasTotal suma los workshop_due_items NO anulados
+ * (sección 6); totalDue es la suma de ambos. El estado se deriva contra
+ * totalDue, no sólo baseAmount — así que agregar un extra a una cuota que
+ * hoy figura "Pagada" la vuelve "Parcial" automáticamente, sin ningún
+ * caso especial: el estado siempre se deriva, nunca se guarda.
+ */
+export function computeDueSummary(
+  due: DueLike,
+  items: DueItemLike[],
+  payments: PaymentLike[]
+): DueSummary {
+  const baseAmount = due.amount;
+  const extrasTotal = items
+    .filter((i) => i.voided_at == null)
+    .reduce((sum, i) => sum + i.amount, 0);
+  const totalDue = baseAmount + extrasTotal;
+  const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0);
+  return {
+    baseAmount,
+    extrasTotal,
+    totalDue,
+    paidTotal,
+    balance: computeDueBalance(totalDue, paidTotal),
+    status: computeDueDisplayStatus(due.status, totalDue, paidTotal),
+  };
+}
+
 /** Current calendar period in the "AAAA-MM" format workshop_dues.period expects. */
 export function currentPeriod(now: Date = new Date()): string {
   const year = now.getFullYear();

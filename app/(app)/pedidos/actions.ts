@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { createOrderSchema, paymentSchema, ORDER_STATUSES } from "@/schemas/orders";
+import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
 
 export type OrderActionState = { error?: string };
 
@@ -102,9 +103,12 @@ export async function addPayment(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("payments")
-    .insert({ ...parsed.data, order_id: orderId, created_by: user.id });
+  const { error } = await supabase.from("payments").insert({
+    ...parsed.data,
+    paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
+    order_id: orderId,
+    created_by: user.id,
+  });
   if (error) return { error: "No se pudo registrar el pago." };
 
   revalidatePath(`/pedidos/${orderId}`);

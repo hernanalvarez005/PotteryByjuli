@@ -5,13 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency } from "@/lib/format";
-import { computeDueDisplayStatus, computeDueBalance } from "@/lib/workshop-dues";
+import { computeDueSummary } from "@/lib/workshop-dues";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/confirm-action";
 import { EnrollDialog } from "./enroll-dialog";
 import { RosterTable, type RosterRow } from "./roster-table";
-import { DuesPanel, type DueRow } from "./dues-panel";
+import { DuesPanel, type DueRow, type DueExtraRow } from "./dues-panel";
 import { EditMonthlyFeeDialog } from "./edit-monthly-fee-dialog";
 import { archiveGroup, deleteGroup } from "./actions";
 
@@ -86,9 +86,41 @@ export default async function GroupDetailPage({
     };
   });
 
+  const dueIds = (dueRows ?? []).map((d) => d.id);
+  const [{ data: dueItemRows }, { data: concepts }] = await Promise.all([
+    dueIds.length
+      ? supabase
+          .from("workshop_due_items")
+          .select("id,due_id,amount,note,voided_at,workshop_due_concepts(name)")
+          .in("due_id", dueIds)
+          .order("created_at")
+      : Promise.resolve({ data: [] as never[] }),
+    supabase.from("workshop_due_concepts").select("id,name").eq("is_active", true).order("sort_order"),
+  ]);
+
+  const itemsByDue = new Map<string, { amount: number; voided_at: string | null }[]>();
+  const extrasByDue = new Map<string, DueExtraRow[]>();
+  for (const item of dueItemRows ?? []) {
+    const concept = item.workshop_due_concepts as unknown as { name: string } | null;
+    if (!itemsByDue.has(item.due_id)) itemsByDue.set(item.due_id, []);
+    itemsByDue.get(item.due_id)!.push({ amount: item.amount, voided_at: item.voided_at });
+    if (!extrasByDue.has(item.due_id)) extrasByDue.set(item.due_id, []);
+    extrasByDue.get(item.due_id)!.push({
+      id: item.id,
+      conceptName: concept?.name ?? "—",
+      amount: item.amount,
+      note: item.note,
+      voided: item.voided_at != null,
+    });
+  }
+
+  // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
+  // para el total de una cuota — Talleres, la ficha de alumna y el
+  // dashboard/reportes calculan exactamente lo mismo, nunca por separado.
   const dueList: DueRow[] = (dueRows ?? []).map((d) => {
-    const paidAmount = ((d.payments ?? []) as { amount: number }[]).reduce((sum, p) => sum + p.amount, 0);
-    const status = d.status as "pending" | "cancelled";
+    const payments = (d.payments ?? []) as { amount: number }[];
+    const items = itemsByDue.get(d.id) ?? [];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
     const enrollment = d.workshop_enrollments as unknown as {
       customers: { first_name: string; last_name: string | null } | null;
     } | null;
@@ -97,11 +129,14 @@ export default async function GroupDetailPage({
       enrollmentId: d.enrollment_id,
       customerName: enrollment?.customers ? customerDisplayName(enrollment.customers) : "—",
       period: d.period,
-      amount: d.amount,
+      baseAmount: summary.baseAmount,
+      extrasTotal: summary.extrasTotal,
+      amount: summary.totalDue,
       due_date: d.due_date,
-      paidAmount,
-      balance: computeDueBalance(d.amount, paidAmount),
-      displayStatus: computeDueDisplayStatus(status, d.amount, paidAmount),
+      paidAmount: summary.paidTotal,
+      balance: summary.balance,
+      displayStatus: summary.status,
+      extras: extrasByDue.get(d.id) ?? [],
     };
   });
 
@@ -194,6 +229,7 @@ export default async function GroupDetailPage({
             dues={dueList}
             enrollments={enrollmentOptions}
             paymentMethods={paymentMethods ?? []}
+            concepts={concepts ?? []}
             canEdit={canEditDues}
           />
         </TabsContent>

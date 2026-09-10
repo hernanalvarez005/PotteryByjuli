@@ -237,11 +237,22 @@ borrar, y sólo `owner` puede invocarlas.
 | `events` (workshops/ferias) | Sí (`delete_event_safe`) | `status = 'archived'` / `'cancelled'` | 0 inscripciones, 0 pedidos, 0 transferencias de stock asociadas |
 | `workshop_enrollments` | Sí (`delete_enrollment_safe`) | `status = 'cancelled'` (baja) | 0 registros de asistencia, 0 cuotas |
 | `event_registrations` | Sí (`delete_registration_safe`) | `status = 'cancelled'` | `payment_status = 'pending'` (nunca se registró un pago) |
-| `products`, `orders`, `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
+| `products` | Sí (`delete_product_safe`, individual; `bulk_delete_products_safe`, en lote) | `is_active = false` | 0 `order_items`, 0 `inventory_movements`, 0 `production_orders` (vía `product_variants`) |
+| `orders`, `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
 
 En todos los casos: eliminar una inscripción/enrollment **nunca** borra al
 `customer` — María puede dejar el taller y seguir existiendo en el CRM con
 sus compras.
+
+**`stock_thresholds` no es historial, es configuración** (un umbral de
+alerta que la usuaria cargó, "avisame cuando quede menos de X") — no
+bloquea el borrado de un producto por sí solo. Como tampoco cascadea desde
+`inventory_items`, `delete_product_safe`/`bulk_delete_products_safe` lo
+limpian explícitamente antes de dejar que el borrado del producto cascadee,
+para no toparse con un error crudo de FK por una fila que no es "historial
+real". `inventory_reservations` no necesita chequeo propio: sólo se crean
+junto a `order_items` al confirmar un pedido, así que `order_items = 0` ya
+garantiza `inventory_reservations = 0` para ese producto.
 
 ## Seguridad del portal mayorista público
 
@@ -272,6 +283,19 @@ policy de lectura para `anon`/`authenticated` de bajo privilegio necesita
 un `REVOKE SELECT ON tabla FROM rol` + `GRANT SELECT (columnas seguras)
 ON tabla TO rol` explícito — nunca asumir que "la app no lo pide" alcanza
 como protección.
+
+**Imagen atada a una variante inactiva (2026-09-10, tanda de mejoras
+operativas)**: `product_images_select_public_wholesale` sólo exigía que el
+producto estuviera activo y fuera público — nunca miraba
+`product_images.variant_id`. Una imagen atada a una variante que después
+se desactiva seguía siendo visible para `anon`, aunque esa variante ya no
+apareciera en ningún selector. Corregido para exigir además que, si
+`variant_id` no es null, esa variante también esté activa (una imagen
+general, `variant_id is null`, nunca se ve afectada). El cambio sólo
+achica acceso — test de regresión en
+`lib/wholesale-image-variant-filter.integration.test.ts` confirma tanto
+el caso nuevo (oculto) como que todo lo que ya era visible sigue
+siéndolo.
 
 ## Seguridad del portal público de workshops (Fase 9.5)
 
@@ -324,6 +348,28 @@ ARS, formato `$ 125.000` (sin decimales en la UI), fechas `DD/MM/YYYY`,
 timezone `America/Argentina/Buenos_Aires`. Los timestamps se guardan en UTC
 (`timestamptz`) y se formatean a hora local sólo en el borde de UI —
 `lib/format.ts` es el único lugar que debería tener esta lógica.
+
+**Fecha real de pago (2026-09-10, tanda de mejoras operativas)**:
+`payments.paid_at` es siempre explícito — el formulario nunca omite el
+campo cuando la fecha es "hoy" (no hay dos caminos: un único contrato
+formulario→`paid_at`→DB). Semántica: `created_at` = cuándo se cargó el
+pago en Pottery; `paid_at` = cuándo ocurrió el pago de verdad — pueden
+diferir (un pago del 04/09 cargado recién el 09/09). Un `<input
+type="date">` sólo captura fecha, sin hora; convertirlo directo a ISO en
+UTC arriesgaría correr el día en cualquier proceso que corra fuera de
+`America/Argentina/Buenos_Aires` (típicamente el caso: el server corre en
+UTC). `dateOnlyToArgentinaNoonISO` (`lib/format.ts`) fija la hora al
+mediodía Argentina (`T12:00:00-03:00`) antes de guardar — sólidamente
+dentro del mismo día calendario tanto en UTC como en la hora Argentina de
+vuelta, así ningún reporte de caja/cobranza puede atribuir un pago al día
+anterior o siguiente por un corrimiento de huso horario. Todo reporte de
+caja/cobranza usa `paid_at`, nunca `created_at` (`getDashboardSummary` en
+`lib/reports.ts` ya lo hacía bien para `collectedThisMonth`/
+`totalCollected`; el `pendingDuesCount` de esa misma función tenía un bug
+real y no relacionado — consultaba `workshop_dues.is_paid`, una columna
+que ya no existe desde la fase de cuotas mensuales — corregido para usar
+`computeDueSummary`, la misma fuente única de verdad que Talleres y la
+ficha de alumna).
 
 ## Importación de datos reales
 
@@ -414,6 +460,80 @@ tienen su propio pago" — es el mismo `payments` de siempre.
 distinguen explícitamente "Sin cuota generada" (todavía no se corrió
 "Generar cuotas" para ese mes) de "Pendiente" (la cuota existe, no se
 cobró) — nunca se asume lo segundo cuando es lo primero.
+
+### Cargos extra sobre una cuota (2026-09-10, tanda de mejoras operativas)
+
+Un cargo puntual como "Arcilla $8.500" se agrega ARRIBA de la cuota
+mensual — nunca se inserta como `payment` (eso restaría del saldo en vez
+de sumarlo). `workshop_due_items` guarda esas líneas: `amount` +
+`concept_id` (catálogo chico en `workshop_due_concepts`, mismo patrón que
+`payment_methods`/`sales_channels`, gestionado desde /configuracion).
+
+**Sólo "anular", nunca hard delete** — decisión deliberada sobre la regla
+condicional que se había sugerido inicialmente ("si no tiene pagos
+asociados, borrar directo"): como los pagos se registran contra el TOTAL
+de una cuota y no contra un cargo puntual, no hay forma de saber desde los
+datos si un pago histórico ya "cubrió" un extra específico. Se usa una
+única política uniforme (anular vía `voided_at`/`voided_by`, nunca borrar)
+— un solo camino de código, coherente con el resto del proyecto
+(historial de estados, movimientos de stock: todo append-only).
+`workshop_due_items` **no tiene ninguna policy de update/delete** — ni
+siquiera para la owner — la única forma de tocar una fila después de
+insertada es la RPC `void_due_item` (`security definer`, igual patrón que
+`mark_wholesale_whatsapp_share_opened`), que sólo puede setear
+`voided_at`/`voided_by`. Es una garantía de base de datos, no sólo
+disciplina de la UI.
+
+**`computeDueSummary` (`lib/workshop-dues.ts`) es la única fuente de
+verdad del total de una cuota** — Talleres, la ficha de alumna y el
+dashboard/reportes la llaman todos, nunca reimplementan la suma de extras
+o pagos por su cuenta (`tests/workshop-due-summary-single-source.test.ts`
+lo confirma estáticamente). El estado ("Pagada"/"Parcial"/etc.) se deriva
+siempre contra `totalDue` (cuota + extras), nunca sólo contra la cuota
+base — así que agregar un extra a una cuota que hoy figura "Pagada" la
+vuelve "Parcial" automáticamente, sin ningún caso especial: el estado
+nunca se guarda, siempre se calcula.
+
+## Dashboard con filtros genuinamente server-side (2026-09-10, tanda de mejoras operativas)
+
+Primera instancia real del patrón "filtros que de verdad empujan
+`.gte()/.lte()/.eq()` a la query" en el proyecto — `/clientes?segment=` y
+`/stock?location=` parecen server-side pero en realidad traen todo y
+filtran en JS. `lib/reports.ts` gana `DashboardFilters` (rango de fechas
++ unidad de negocio + ubicación + canal, todo opcional) que
+`getDashboardSummary`/`getSalesOverTime`/`getTopProducts`/
+`getSalesByBusinessUnit`/`getMixByChannel` aplican de verdad.
+`defaultDashboardFilters()` (mes actual) es el default del dashboard;
+`allTimeDashboardFilters()` (desde 2000, sin más) es lo que usa
+`/reportes`, que dice explícitamente "todo el histórico" — **nunca
+llamar estas funciones sin filtro esperando "todo el histórico" por
+default**, eso rompió `/reportes` en silencio la primera vez que se hizo
+(regresión real, corregida antes de mergear — ver
+`tests/reports-filters-regressions.test.ts`).
+
+**Cuotas de talleres en los totales filtrados**: no tienen
+`business_unit_id`/`location_id`/canal propios (cuelgan de
+`workshop_enrollments → workshop_groups`). Se incluyen en "Cobrado del
+período" sólo cuando el filtro de unidad es "Todas" o específicamente la
+unidad `classes`; si además hay un filtro de ubicación activo, se sigue
+el join hasta `workshop_groups.location_id` (un join anidado de 3
+niveles vía PostgREST, `payments → workshop_dues → workshop_enrollments →
+workshop_groups`, verificado en
+`lib/dashboard-dues-location-filter.integration.test.ts`); un filtro de
+canal activo las excluye siempre (no tienen canal), con un texto
+explícito en la UI para que nunca parezca un bug silencioso.
+
+**Un embed de PostgREST con FK ambigua falla en silencio si no se
+chequea `error`** (hallazgo real durante la verificación manual):
+`orders` tiene dos FKs a `sales_channels` (`origin_channel_id` y
+`closing_channel_id`) — `.select("total,sales_channels(name)")` sin
+nombrar la FK exacta devuelve `PGRST201` ("more than one relationship
+was found"), y como el código sólo desestructura `data` (no `error`,
+mismo patrón que el resto del proyecto), el síntoma era "Sin ventas en
+este período" en el donut de Canal, nunca un error visible. Corregido
+nombrando la FK exacta: `sales_channels!orders_closing_channel_id_fkey(name)`.
+Cualquier embed nuevo hacia una tabla con más de una FK desde el origen
+necesita este mismo cuidado.
 
 ## Stock por ubicación — nunca un número repetido
 
