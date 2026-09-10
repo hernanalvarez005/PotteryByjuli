@@ -23,6 +23,17 @@
 - `schemas/orders.test.ts`, `schemas/wholesale.test.ts`: validación de
   los formularios de pedido y de solicitud mayorista (campos requeridos,
   UUIDs, al menos un ítem, email opcional pero bien formado si está).
+  `wholesale.test.ts` cubre además la regresión del P0 de checkout
+  ("Invalid input: expected string, received null"): un checkout completo
+  con **todos** los opcionales en `null` explícito (no sólo `""`), un
+  Nombre/WhatsApp en `null` rechazado con el mensaje propio del campo (no
+  el genérico de Zod), y un payload con la forma de una fila de cliente
+  existente (columnas opcionales en `null`, nunca `undefined`).
+- `lib/zod-helpers.test.ts`: los builders compartidos que resuelven esa
+  regresión (`optionalString`/`optionalInteger`/`optionalMoneyAmount`/
+  `requiredString`) — `null`, `undefined` y `""` se tratan igual en un
+  campo opcional; un campo requerido falla con su propio mensaje ante
+  cualquiera de las tres formas, nunca con el texto genérico de Zod.
 - `lib/customers.test.ts`: nombre para mostrar y normalización del link
   de WhatsApp (agrega `54` cuando falta, no lo duplica cuando ya está,
   agrega el mensaje prellenado URL-encoded cuando se pasa uno — Fase 9.5).
@@ -182,3 +193,12 @@ destrabar un commit.
     Pagada → se refleja en `/clientes?segment=students` y en la ficha
     ("Último mes pago"). Verificado manualmente contra producción (y
     los datos de prueba, limpiados después); falta automatizar.
+12. **Mayorista público, checkout con reintento** (post-lanzamiento P0 —
+    "Invalid input: expected string, received null"): completar sólo
+    Nombre y WhatsApp (todo lo demás vacío) → enviar → confirmación con
+    `human_code`. Reenviar el mismo `client_request_id` (doble click,
+    timeout, reintento tras un error visual) → debe devolver el mismo
+    `human_code`, nunca crear un segundo pedido. Verificado manualmente
+    contra producción con el fix (formulario anónimo + reintento directo
+    de la RPC con el mismo id), datos de prueba limpiados después; falta
+    automatizar.

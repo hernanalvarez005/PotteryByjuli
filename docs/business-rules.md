@@ -79,6 +79,41 @@ mínimos, salvo que Juli lo habilite explícitamente por configuración.
 Cambios a precios, stock, pagos, estado de pedidos y configuración
 mayorista quedan registrados (quién, qué, cuándo, valor anterior/nuevo).
 
+## Checkout mayorista: campos obligatorios vs. opcionales
+
+De los datos de contacto del formulario público, sólo **Nombre** y
+**WhatsApp** son obligatorios — son los únicos datos con los que Pottery
+puede identificar y contactar a quien pide. Todo lo demás (Apellido,
+Comercio, CUIT, Instagram, Web, Ciudad, Provincia, Email, Observaciones) es
+opcional. Un campo obligatorio ausente nunca debe fallar con un error
+técnico genérico: el schema (`schemas/wholesale.ts`) muestra un mensaje
+específico ("Falta el nombre.", "Falta un WhatsApp de contacto.").
+
+**Convención null/undefined/"" en el límite del formulario** (fijada por el
+P0 del 2026-09-09/10, "Invalid input: expected string, received null"):
+`FormData.get()` devuelve `null` — nunca `undefined` — para un campo
+ausente del formulario, y una fila de Supabase también devuelve `null`
+para una columna opcional sin valor. Todo campo opcional del checkout debe
+tolerar las tres formas (`null`, `undefined`, `""`) de "sin valor" de forma
+idéntica, normalizando a `""` en el formulario y `NULL` en la base. Nunca
+se resuelve esto haciendo `.optional()` a secas ni repitiendo `valor ?? ""`
+suelto en cada componente: se usan los builders compartidos de
+`lib/zod-helpers.ts` (`optionalString`, `optionalInteger`,
+`optionalMoneyAmount` para lo opcional; `requiredString` para lo
+obligatorio, de forma que un `null` en un campo requerido también dispare
+el mensaje propio del campo en vez del error genérico de Zod).
+
+## Checkout mayorista: protección contra pedidos duplicados
+
+El formulario genera un `client_request_id` (UUID) una única vez por
+intento de checkout y lo reenvía en cada submit — incluido un reintento
+por error visual, timeout o doble click. `submit_wholesale_request` revisa
+ese id antes de crear nada: si ya existe un pedido con ese
+`client_request_id`, devuelve el mismo `human_code` en vez de duplicar el
+pedido (`orders.client_request_id`, índice único parcial). El id sólo se
+renueva cuando el checkout anterior terminó en éxito y el carrito se
+vació — nunca en un reintento del mismo intento.
+
 ## Nunca borrado físico con historial relacionado
 
 `is_active` / `archived_at` en vez de `DELETE`, siempre que exista una
