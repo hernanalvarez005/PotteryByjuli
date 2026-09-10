@@ -33,7 +33,7 @@ import { ConfirmAction } from "@/components/confirm-action";
 import { Plus, Receipt } from "lucide-react";
 import { formatCurrency, formatDate, todayInArgentina } from "@/lib/format";
 import { DUE_STATUS_LABELS, type DueDisplayStatus } from "@/lib/workshop-dues";
-import { createDue, registerDuePayment, cancelDue, addDueExtra, voidDueExtra } from "./actions";
+import { createDue, registerDuePayment, updateDuePayment, cancelDue, addDueExtra, voidDueExtra } from "./actions";
 
 export type DueExtraRow = {
   id: string;
@@ -41,6 +41,14 @@ export type DueExtraRow = {
   amount: number;
   note: string | null;
   voided: boolean;
+};
+
+export type DuePaymentRow = {
+  id: string;
+  amount: number;
+  paid_at: string;
+  method_id: string | null;
+  reference: string | null;
 };
 
 export type DueRow = {
@@ -59,6 +67,7 @@ export type DueRow = {
   balance: number;
   displayStatus: DueDisplayStatus;
   extras: DueExtraRow[];
+  payments: DuePaymentRow[];
 };
 
 const STATUS_BADGE_VARIANT: Record<DueDisplayStatus, "secondary" | "outline" | "destructive"> = {
@@ -144,13 +153,16 @@ export function DuesPanel({
                           concepts={concepts}
                         />
                       )}
-                      {due.displayStatus !== "paid" && due.displayStatus !== "cancelled" && (
+                      {(due.payments.length > 0 ||
+                        (due.displayStatus !== "paid" && due.displayStatus !== "cancelled")) && (
                         <RegisterPaymentDialog
                           groupId={groupId}
                           dueId={due.id}
                           customerName={due.customerName}
                           balance={due.balance}
                           paymentMethods={paymentMethods}
+                          payments={due.payments}
+                          allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
                         />
                       )}
                       {due.displayStatus === "pending" && (
@@ -187,6 +199,10 @@ function NewDueDialog({
   const [enrollmentId, setEnrollmentId] = useState("");
   const boundAction = createDue.bind(null, groupId, enrollmentId);
   const [state, formAction, isPending] = useActionState(boundAction, {});
+  // Passed as Select's `items` prop so the trigger can resolve a label
+  // for the selected enrollment — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of the student's name.
+  const enrollmentLabels = Object.fromEntries(enrollments.map((e) => [e.id, e.customerName]));
 
   const wasPending = useRef(false);
   useEffect(() => {
@@ -207,7 +223,7 @@ function NewDueDialog({
         <form action={formAction} className="flex flex-col gap-4">
           <div className="space-y-2">
             <Label htmlFor="enrollment">Alumno/a</Label>
-            <Select value={enrollmentId} onValueChange={(v) => v && setEnrollmentId(v)}>
+            <Select items={enrollmentLabels} value={enrollmentId} onValueChange={(v) => v && setEnrollmentId(v)}>
               <SelectTrigger id="enrollment" className="w-full">
                 <SelectValue placeholder="Elegir alumno/a" />
               </SelectTrigger>
@@ -252,16 +268,28 @@ export function RegisterPaymentDialog({
   customerName,
   balance,
   paymentMethods,
+  payments,
+  allowNewPayment = true,
 }: {
   groupId: string;
   dueId: string;
   customerName: string;
   balance: number;
   paymentMethods: { id: string; name: string }[];
+  payments: DuePaymentRow[];
+  /** false para una cuota ya "Pagada"/"Cancelada" — el diálogo sigue
+   * abriéndose para ver/corregir pagos existentes, pero no ofrece
+   * cargar uno nuevo. */
+  allowNewPayment?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const boundAction = registerDuePayment.bind(null, groupId, dueId);
   const [state, formAction, isPending] = useActionState(boundAction, {});
+  const [methodId, setMethodId] = useState("");
+  // Passed as Select's `items` prop so the trigger can resolve a label
+  // for the selected method — without it, Base UI's <Select.Value> falls
+  // back to showing the raw id instead of the method's name.
+  const methodLabels = Object.fromEntries(paymentMethods.map((m) => [m.id, m.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
@@ -271,12 +299,31 @@ export function RegisterPaymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm" variant="ghost" />}>Registrar pago</DialogTrigger>
-      <DialogContent>
+      <DialogTrigger render={<Button size="sm" variant="ghost" />}>
+        {allowNewPayment ? "Registrar pago" : "Ver pagos"}
+      </DialogTrigger>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Registrar pago — {customerName}</DialogTitle>
+          <DialogTitle>Pagos — {customerName}</DialogTitle>
         </DialogHeader>
+
+        {payments.length > 0 && (
+          <ul className="flex flex-col gap-2 border-b pb-4">
+            {payments.map((p) => (
+              <PaymentRow
+                key={p.id}
+                groupId={groupId}
+                dueId={dueId}
+                payment={p}
+                paymentMethods={paymentMethods}
+              />
+            ))}
+          </ul>
+        )}
+
+        {allowNewPayment && (
         <form action={formAction} className="flex flex-col gap-4">
+          <p className="text-sm font-medium">Registrar pago nuevo</p>
           <div className="space-y-2">
             <Label htmlFor="amount">Importe (saldo: {formatCurrency(balance)})</Label>
             <Input
@@ -295,7 +342,8 @@ export function RegisterPaymentDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="method_id">Medio de pago</Label>
-            <Select name="method_id">
+            <input type="hidden" name="method_id" value={methodId} />
+            <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
               <SelectTrigger id="method_id" className="w-full">
                 <SelectValue placeholder="Elegir (opcional)" />
               </SelectTrigger>
@@ -315,8 +363,127 @@ export function RegisterPaymentDialog({
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Un pago ya cargado, con un botón "Editar" que revela un formulario
+ * corto (importe/fecha/medio/referencia) para corregirlo en el lugar —
+ * a diferencia de los cargos extra (workshop_due_items, append-only a
+ * propósito), `payments` sí admite corregirse directamente: un pago mal
+ * cargado no necesita anularse y recargarse.
+ */
+function PaymentRow({
+  groupId,
+  dueId,
+  payment,
+  paymentMethods,
+}: {
+  groupId: string;
+  dueId: string;
+  payment: DuePaymentRow;
+  paymentMethods: { id: string; name: string }[];
+}) {
+  const [editing, setEditing] = useState(false);
+  const boundAction = updateDuePayment.bind(null, groupId, dueId, payment.id);
+  const [state, formAction, isPending] = useActionState(boundAction, {});
+  const [methodId, setMethodId] = useState(payment.method_id ?? "");
+  const methodLabels = Object.fromEntries(paymentMethods.map((m) => [m.id, m.name]));
+  const methodName = payment.method_id
+    ? (paymentMethods.find((m) => m.id === payment.method_id)?.name ?? null)
+    : null;
+
+  const wasPending = useRef(false);
+  useEffect(() => {
+    if (wasPending.current && !isPending && !state.error) setEditing(false);
+    wasPending.current = isPending;
+  }, [isPending, state.error]);
+
+  if (!editing) {
+    return (
+      <li className="flex items-center justify-between gap-3 text-sm">
+        <span>
+          {formatCurrency(payment.amount)}
+          {methodName && <span className="text-muted-foreground"> · {methodName}</span>}
+          {payment.reference && <span className="text-muted-foreground"> · {payment.reference}</span>}
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">{formatDate(payment.paid_at)}</span>
+          <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(true)}>
+            Editar
+          </Button>
+        </span>
+      </li>
+    );
+  }
+
+  return (
+    <li className="rounded-md border p-3">
+      <form action={formAction} className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor={`edit-amount-${payment.id}`} className="text-xs text-muted-foreground">
+              Importe
+            </Label>
+            <Input
+              id={`edit-amount-${payment.id}`}
+              name="amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              defaultValue={payment.amount}
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`edit-paid_at-${payment.id}`} className="text-xs text-muted-foreground">
+              Fecha del pago
+            </Label>
+            <Input
+              id={`edit-paid_at-${payment.id}`}
+              name="paid_at"
+              type="date"
+              defaultValue={payment.paid_at.slice(0, 10)}
+              required
+            />
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Medio de pago</Label>
+          <input type="hidden" name="method_id" value={methodId} />
+          <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Elegir (opcional)" />
+            </SelectTrigger>
+            <SelectContent>
+              {paymentMethods.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`edit-reference-${payment.id}`} className="text-xs text-muted-foreground">
+            Referencia
+          </Label>
+          <Input id={`edit-reference-${payment.id}`} name="reference" defaultValue={payment.reference ?? ""} />
+        </div>
+        {state.error && <p className="text-xs text-destructive">{state.error}</p>}
+        <div className="flex gap-2">
+          <Button type="submit" size="sm" disabled={isPending}>
+            {isPending ? "Guardando..." : "Guardar"}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
+            Cancelar
+          </Button>
+        </div>
+      </form>
+    </li>
   );
 }
 

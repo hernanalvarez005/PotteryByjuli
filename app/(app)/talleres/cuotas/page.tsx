@@ -61,7 +61,7 @@ export default async function CuotasPage({
     supabase
       .from("workshop_dues")
       .select(
-        "id,enrollment_id,period,amount,due_date,status,payments(amount),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
+        "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,reference),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
       )
       .eq("period", period)
       .order("created_at"),
@@ -72,7 +72,13 @@ export default async function CuotasPage({
   // para el total de una cuota — mismo cálculo que Talleres, la ficha de
   // alumna y el dashboard/reportes, nunca reimplementado acá.
   const dues = (dueRows ?? []).map((d) => {
-    const payments = (d.payments ?? []) as { amount: number }[];
+    const payments = (d.payments ?? []) as {
+      id: string;
+      amount: number;
+      paid_at: string;
+      method_id: string | null;
+      reference: string | null;
+    }[];
     const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
     const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
     const enrollment = d.workshop_enrollments as unknown as {
@@ -90,6 +96,7 @@ export default async function CuotasPage({
       paidAmount: summary.paidTotal,
       balance: summary.balance,
       displayStatus: summary.status,
+      payments,
     };
   });
 
@@ -182,13 +189,16 @@ export default async function CuotasPage({
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">
-                  {due.displayStatus !== "paid" && due.displayStatus !== "cancelled" && (
+                  {(due.payments.length > 0 ||
+                    (due.displayStatus !== "paid" && due.displayStatus !== "cancelled")) && (
                     <RegisterPaymentDialog
                       groupId={due.groupId}
                       dueId={due.id}
                       customerName={due.customerName}
                       balance={due.balance}
                       paymentMethods={paymentMethods ?? []}
+                      payments={due.payments}
+                      allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
                     />
                   )}
                 </TableCell>

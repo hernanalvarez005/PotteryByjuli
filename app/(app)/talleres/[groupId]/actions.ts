@@ -162,6 +162,48 @@ export async function registerDuePayment(
 }
 
 /**
+ * Corrige un pago de cuota ya cargado — a diferencia de workshop_due_items
+ * (append-only a propósito, ver addDueExtra/voidDueExtra), `payments` sí
+ * admite update directo (misma policy "for all" desde Fase 3) y no hay
+ * ninguna regla de negocio que lo prohíba: un pago mal cargado (importe,
+ * fecha o medio equivocado) se corrige en el lugar, no se anula y
+ * recarga. Escopeado a `dueId` además de `paymentId` — nunca confía en
+ * que el id que llega del cliente realmente pertenezca a esta cuota.
+ */
+export async function updateDuePayment(
+  groupId: string,
+  dueId: string,
+  paymentId: string,
+  _prevState: WorkshopDetailState,
+  formData: FormData
+): Promise<WorkshopDetailState> {
+  await assertCanManageDues();
+
+  const parsed = duePaymentSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("payments")
+    .update({
+      amount: parsed.data.amount,
+      paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
+      method_id: parsed.data.method_id,
+      account_id: parsed.data.account_id,
+      reference: parsed.data.reference,
+    })
+    .eq("id", paymentId)
+    .eq("workshop_due_id", dueId);
+  if (error) return { error: "No se pudo actualizar el pago." };
+
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres/cuotas");
+  return {};
+}
+
+/**
  * Cargo extra sobre una cuota (sección 6) — una línea aparte que AUMENTA
  * lo que se debe, nunca un payment. `workshop_due_items` es append-only:
  * insertar acá es la única escritura directa que la RLS de esa tabla

@@ -70,4 +70,24 @@ describe("duePaymentSchema", () => {
     expect(duePaymentSchema.safeParse({ amount: "1000", paid_at: "10/09/2026" }).success).toBe(false);
     expect(duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10T12:00:00Z" }).success).toBe(false);
   });
+
+  // Real bug found alongside the order-form one (2026-09-10): dues-panel.tsx's
+  // RegisterPaymentDialog never renders a "Cuenta" input at all — so
+  // formData.get("account_id") is always a bare `null`, never "". The old
+  // `.optional().or(z.literal(""))` pattern doesn't tolerate that; only
+  // optionalUuid() (lib/zod-helpers.ts) does.
+  it("accepts account_id as a bare null — the field the real form never renders", () => {
+    const result = duePaymentSchema.safeParse({
+      amount: "1000",
+      paid_at: "2026-09-10",
+      method_id: null,
+      account_id: null,
+      reference: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.account_id).toBeNull();
+      expect(result.data.method_id).toBeNull();
+    }
+  });
 });

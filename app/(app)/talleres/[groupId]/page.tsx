@@ -53,7 +53,7 @@ export default async function GroupDetailPage({
       ? supabase
           .from("workshop_dues")
           .select(
-            "id,enrollment_id,period,amount,due_date,status,payments(amount),workshop_enrollments(customers(first_name,last_name))"
+            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,reference),workshop_enrollments(customers(first_name,last_name))"
           )
           .in("enrollment_id", enrollmentIds)
           .order("period", { ascending: false })
@@ -118,7 +118,13 @@ export default async function GroupDetailPage({
   // para el total de una cuota — Talleres, la ficha de alumna y el
   // dashboard/reportes calculan exactamente lo mismo, nunca por separado.
   const dueList: DueRow[] = (dueRows ?? []).map((d) => {
-    const payments = (d.payments ?? []) as { amount: number }[];
+    const payments = (d.payments ?? []) as {
+      id: string;
+      amount: number;
+      paid_at: string;
+      method_id: string | null;
+      reference: string | null;
+    }[];
     const items = itemsByDue.get(d.id) ?? [];
     const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
     const enrollment = d.workshop_enrollments as unknown as {
@@ -137,6 +143,7 @@ export default async function GroupDetailPage({
       balance: summary.balance,
       displayStatus: summary.status,
       extras: extrasByDue.get(d.id) ?? [],
+      payments,
     };
   });
 
