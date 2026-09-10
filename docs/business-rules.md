@@ -108,6 +108,28 @@ necesarias para armar el pedido, y crear una solicitud válida. Nunca puede
 leer clientes, pedidos ajenos, stock interno, costos ni reportes. Esto se
 refuerza en RLS, no sólo ocultando UI.
 
+**RLS se evalúa también dentro de las policies, no sólo en la tabla
+consultada** — un bug real (2026-09-09, P0 producción) lo probó: la
+policy de `price_list_items` para `anon` hace un `EXISTS` que hace JOIN
+contra `price_lists`; como `price_lists` no tenía ninguna policy de
+`anon`, ese JOIN siempre volvía vacío y la policy de `price_list_items`
+quedaba imposible de cumplir — el catálogo público se veía vacío aunque
+products/variants/wholesale_product_rules estuvieran perfectamente
+configurados. Regla para cualquier policy nueva que haga `EXISTS`/`JOIN`
+contra otra tabla: esa otra tabla necesita su propia policy para el
+mismo rol, o la policy que depende de ella nunca podrá cumplirse.
+
+**RLS filtra filas, nunca columnas.** El mismo incidente encontró que
+`products.cost_estimate` era legible por `anon` pidiéndolo explícito vía
+API, aunque `lib/wholesale.ts` nunca selecciona esa columna — el GRANT de
+tabla completa que Supabase le da a `anon` por default alcanza cualquier
+columna sin importar qué pida la propia app. Cualquier tabla con una
+columna sensible (costo, margen, notas internas) que además tenga una
+policy de lectura para `anon`/`authenticated` de bajo privilegio necesita
+un `REVOKE SELECT ON tabla FROM rol` + `GRANT SELECT (columnas seguras)
+ON tabla TO rol` explícito — nunca asumir que "la app no lo pide" alcanza
+como protección.
+
 ## Seguridad del portal público de workshops (Fase 9.5)
 
 Mismo criterio que el portal mayorista, pero sin RLS directa sobre

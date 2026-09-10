@@ -74,6 +74,16 @@
 - `schemas/workshops.test.ts`: `monthly_fee` opcional en el grupo,
   formato `AAAA-MM` exigido en el período de una cuota, un pago de
   cuota requiere importe positivo.
+- `lib/wholesale-anon-access.integration.test.ts` (P0 — catálogo
+  mayorista vacío para `anon`): corre contra el proyecto Supabase real
+  (no uno de test — no existe todavía) usando sólo la anon key, nunca
+  escribe nada. Confirma el camino completo end-to-end (`anon` lee la
+  lista `wholesale`, un `wholesale_product_rules.is_public`, y el precio
+  real correspondiente), que `retail` sigue bloqueada, y los negativos de
+  seguridad (`customers`/`payments`/`orders`/`inventory_movements`
+  vacíos; `cost_estimate` rechazado con `42501`, no sólo `null`). Se
+  salta automáticamente (`describe.skipIf`) si no hay credenciales
+  disponibles en el entorno.
 
 ## Cobertura pendiente (necesita una base de test, no sólo Vitest)
 

@@ -325,6 +325,17 @@ Migración `20260909214351_price_bulk_adjustments.sql`:
   (Fase 2, "quién tocó este precio por última vez") — lo complementa
   ("qué operación masiva fue la que lo tocó").
 
+Migración `20260909224444_fix_wholesale_anon_price_lists.sql` (P0 —
+catálogo mayorista vacío para `anon`, ver `docs/business-rules.md` §
+Seguridad del portal mayorista público para la causa raíz completa):
+
+- `price_lists_select_anon_wholesale` — nueva policy, `anon` sólo puede
+  leer la fila `code = 'wholesale'` (nunca `retail`).
+- `products`: `REVOKE SELECT ... FROM anon` + `GRANT SELECT (id,
+  category_id, name, description, is_active, external_source,
+  external_id, created_at, updated_at) ... TO anon` — `cost_estimate`
+  queda fuera del grant. `authenticated` no se toca.
+
 ## Fases siguientes — diseño previsto (a confirmar/ajustar en cada fase)
 
 Se documenta la intención para que cada fase no reinvente relaciones ya
