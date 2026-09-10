@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { computeDueSummary } from "@/lib/workshop-dues";
 
 function startOfMonthIso(): string {
   const d = new Date();
@@ -24,7 +25,7 @@ export async function getDashboardSummary() {
     { count: overdueOrdersCount },
     { count: pendingProductionCount },
     { count: newWholesaleCount },
-    { count: pendingDuesCount },
+    { data: allDueRows },
     { data: upcomingEvents },
   ] = await Promise.all([
     supabase.from("orders").select("total").neq("status", "cancelled").gte("created_at", monthStart),
@@ -55,7 +56,10 @@ export async function getDashboardSummary() {
       .select("id,business_units!inner(code)", { count: "exact", head: true })
       .eq("business_units.code", "wholesale")
       .eq("status", "pending"),
-    supabase.from("workshop_dues").select("id", { count: "exact", head: true }).eq("is_paid", false),
+    // is_paid ya no existe (Fase workshop_monthly_dues la reemplazó por
+    // un estado siempre derivado) — computeDueSummary abajo es la única
+    // fuente de verdad, igual que en Talleres/ficha de alumna.
+    supabase.from("workshop_dues").select("amount,status,payments(amount),workshop_due_items(amount,voided_at)"),
     supabase
       .from("events")
       .select("id,human_code,name,event_date,event_type")
@@ -70,6 +74,18 @@ export async function getDashboardSummary() {
   const totalInvoiced = (allOrders ?? []).reduce((sum, o) => sum + o.total, 0);
   const totalCollected = (allPayments ?? []).reduce((sum, p) => sum + p.amount, 0);
 
+  // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
+  // para el estado de una cuota — Talleres, la ficha de alumna y esto
+  // calculan exactamente lo mismo, nunca una columna is_paid separada.
+  const pendingDuesCount = (allDueRows ?? []).filter((d) => {
+    const summary = computeDueSummary(
+      { status: d.status as "pending" | "cancelled", amount: d.amount },
+      (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[],
+      (d.payments ?? []) as { amount: number }[]
+    );
+    return summary.status === "pending" || summary.status === "partial";
+  }).length;
+
   return {
     salesThisMonth,
     collectedThisMonth,
@@ -78,7 +94,7 @@ export async function getDashboardSummary() {
     overdueOrdersCount: overdueOrdersCount ?? 0,
     pendingProductionCount: pendingProductionCount ?? 0,
     newWholesaleCount: newWholesaleCount ?? 0,
-    pendingDuesCount: pendingDuesCount ?? 0,
+    pendingDuesCount,
     upcomingEvents: upcomingEvents ?? [],
   };
 }

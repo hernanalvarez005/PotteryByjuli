@@ -43,14 +43,31 @@ describe("dueSchema.period", () => {
 
 describe("duePaymentSchema", () => {
   it("requires a positive amount — a 0 payment isn't a real payment", () => {
-    expect(duePaymentSchema.safeParse({ amount: "0" }).success).toBe(false);
-    expect(duePaymentSchema.safeParse({ amount: "1000" }).success).toBe(true);
+    expect(duePaymentSchema.safeParse({ amount: "0", paid_at: "2026-09-10" }).success).toBe(false);
+    expect(duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10" }).success).toBe(true);
   });
 
   it("method and account are optional", () => {
-    const result = duePaymentSchema.safeParse({ amount: "1000", method_id: "", account_id: "" });
+    const result = duePaymentSchema.safeParse({
+      amount: "1000",
+      paid_at: "2026-09-10",
+      method_id: "",
+      account_id: "",
+    });
     if (!result.success) throw new Error("expected success");
     expect(result.data.method_id).toBeNull();
     expect(result.data.account_id).toBeNull();
+  });
+
+  // paid_at siempre explícito, nunca un atajo "si es hoy, se omite y cae
+  // el default now()" (precisión de la usuaria en la tanda de mejoras
+  // operativas) — un único contrato formulario→paid_at→DB.
+  it("requires paid_at explicitly — no two-path shortcut for 'today'", () => {
+    expect(duePaymentSchema.safeParse({ amount: "1000" }).success).toBe(false);
+  });
+
+  it("rejects a paid_at that isn't a plain YYYY-MM-DD date", () => {
+    expect(duePaymentSchema.safeParse({ amount: "1000", paid_at: "10/09/2026" }).success).toBe(false);
+    expect(duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10T12:00:00Z" }).success).toBe(false);
   });
 });

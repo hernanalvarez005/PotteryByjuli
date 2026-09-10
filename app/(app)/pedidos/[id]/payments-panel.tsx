@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency, formatDateTime } from "@/lib/format";
+import { formatCurrency, formatDateTime, todayInArgentina } from "@/lib/format";
 import { addPayment } from "../actions";
 
 export type Payment = {
@@ -69,6 +69,10 @@ export function PaymentsPanel({
             <div className="space-y-1">
               <Label htmlFor="amount">Importe</Label>
               <Input id="amount" name="amount" type="number" min="0" step="0.01" required />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="paid_at">Fecha del pago</Label>
+              <Input id="paid_at" name="paid_at" type="date" defaultValue={todayInArgentina()} required />
             </div>
             <div className="space-y-1">
               <Label htmlFor="method_id">Método</Label>

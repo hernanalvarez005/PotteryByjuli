@@ -39,3 +39,28 @@ export function formatDate(value: string | Date): string {
 export function formatDateTime(value: string | Date): string {
   return dateTimeFormatter.format(new Date(value));
 }
+
+const isoDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: APP_TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** Today's date (YYYY-MM-DD) in Argentina time — the default a payment-date input should start on. */
+export function todayInArgentina(): string {
+  return isoDateFormatter.format(new Date());
+}
+
+/**
+ * A date-only input (YYYY-MM-DD, no time) needs to become a real
+ * `timestamptz` without ever risking a UTC day-shift. Fixing the time at
+ * noon Argentina (UTC-3) keeps it solidly inside the same calendar day no
+ * matter which timezone reads it back — midnight would be the one time
+ * of day a naive local→UTC conversion could push to the previous or next
+ * day. Used wherever a form only asks for a date (never a time) but the
+ * column underneath is a timestamptz — e.g. `payments.paid_at`.
+ */
+export function dateOnlyToArgentinaNoonISO(dateOnly: string): string {
+  return `${dateOnly}T12:00:00-03:00`;
+}

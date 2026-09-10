@@ -123,6 +123,11 @@ export const duePaymentSchema = z.object({
     .min(1, "Requerido")
     .transform((v) => Number(v))
     .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
+  // Siempre explícito — mismo contrato que schemas/orders.ts paymentSchema.
+  paid_at: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
   method_id: z
     .string()
     .trim()

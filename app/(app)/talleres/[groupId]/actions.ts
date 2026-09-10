@@ -11,6 +11,7 @@ import {
   groupMonthlyFeeSchema,
   dueExtraSchema,
 } from "@/schemas/workshops";
+import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
 
 export type WorkshopDetailState = { error?: string };
 
@@ -147,6 +148,7 @@ export async function registerDuePayment(
   const { error } = await supabase.from("payments").insert({
     workshop_due_id: dueId,
     amount: parsed.data.amount,
+    paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
     method_id: parsed.data.method_id,
     account_id: parsed.data.account_id,
     reference: parsed.data.reference,

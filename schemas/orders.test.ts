@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createOrderSchema, orderItemInputSchema } from "./orders";
+import { createOrderSchema, orderItemInputSchema, paymentSchema } from "./orders";
 
 const validItem = {
   product_variant_id: "11111111-1111-4111-8111-111111111111",
@@ -56,5 +56,23 @@ describe("createOrderSchema", () => {
     expect(result.data.location_id).toBeNull();
     expect(result.data.delivery_method).toBeNull();
     expect(result.data.notes).toBeNull();
+  });
+});
+
+// paid_at siempre explícito, nunca un atajo "si es hoy, se omite y cae el
+// default now()" (precisión de la usuaria en la tanda de mejoras
+// operativas) — un único contrato formulario→paid_at→DB.
+describe("paymentSchema.paid_at", () => {
+  it("is required — no two-path shortcut for 'today'", () => {
+    expect(paymentSchema.safeParse({ amount: "1000" }).success).toBe(false);
+  });
+
+  it("accepts a plain YYYY-MM-DD date", () => {
+    expect(paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10" }).success).toBe(true);
+  });
+
+  it("rejects anything that isn't a plain date", () => {
+    expect(paymentSchema.safeParse({ amount: "1000", paid_at: "10/09/2026" }).success).toBe(false);
+    expect(paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10T12:00:00Z" }).success).toBe(false);
   });
 });

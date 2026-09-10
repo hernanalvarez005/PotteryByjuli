@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { ConfirmAction } from "@/components/confirm-action";
 import { Plus, Receipt } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, todayInArgentina } from "@/lib/format";
 import { DUE_STATUS_LABELS, type DueDisplayStatus } from "@/lib/workshop-dues";
 import { createDue, registerDuePayment, cancelDue, addDueExtra, voidDueExtra } from "./actions";
 
@@ -288,6 +288,10 @@ export function RegisterPaymentDialog({
               defaultValue={balance}
               required
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="paid_at">Fecha del pago</Label>
+            <Input id="paid_at" name="paid_at" type="date" defaultValue={todayInArgentina()} required />
           </div>
           <div className="space-y-2">
             <Label htmlFor="method_id">Medio de pago</Label>

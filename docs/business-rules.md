@@ -349,6 +349,28 @@ timezone `America/Argentina/Buenos_Aires`. Los timestamps se guardan en UTC
 (`timestamptz`) y se formatean a hora local sólo en el borde de UI —
 `lib/format.ts` es el único lugar que debería tener esta lógica.
 
+**Fecha real de pago (2026-09-10, tanda de mejoras operativas)**:
+`payments.paid_at` es siempre explícito — el formulario nunca omite el
+campo cuando la fecha es "hoy" (no hay dos caminos: un único contrato
+formulario→`paid_at`→DB). Semántica: `created_at` = cuándo se cargó el
+pago en Pottery; `paid_at` = cuándo ocurrió el pago de verdad — pueden
+diferir (un pago del 04/09 cargado recién el 09/09). Un `<input
+type="date">` sólo captura fecha, sin hora; convertirlo directo a ISO en
+UTC arriesgaría correr el día en cualquier proceso que corra fuera de
+`America/Argentina/Buenos_Aires` (típicamente el caso: el server corre en
+UTC). `dateOnlyToArgentinaNoonISO` (`lib/format.ts`) fija la hora al
+mediodía Argentina (`T12:00:00-03:00`) antes de guardar — sólidamente
+dentro del mismo día calendario tanto en UTC como en la hora Argentina de
+vuelta, así ningún reporte de caja/cobranza puede atribuir un pago al día
+anterior o siguiente por un corrimiento de huso horario. Todo reporte de
+caja/cobranza usa `paid_at`, nunca `created_at` (`getDashboardSummary` en
+`lib/reports.ts` ya lo hacía bien para `collectedThisMonth`/
+`totalCollected`; el `pendingDuesCount` de esa misma función tenía un bug
+real y no relacionado — consultaba `workshop_dues.is_paid`, una columna
+que ya no existe desde la fase de cuotas mensuales — corregido para usar
+`computeDueSummary`, la misma fuente única de verdad que Talleres y la
+ficha de alumna).
+
 ## Importación de datos reales
 
 `scripts/import-tiendanube.ts` y `scripts/import-current-students.ts`
