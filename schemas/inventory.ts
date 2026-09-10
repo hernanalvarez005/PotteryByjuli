@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalString } from "@/lib/zod-helpers";
 
 export const adjustmentSchema = z.object({
   inventory_item_id: z.string().trim().uuid(),
@@ -21,13 +22,7 @@ export const createTransferSchema = z
   .object({
     from_location_id: z.string().trim().uuid(),
     to_location_id: z.string().trim().uuid(),
-    notes: z
-      .string()
-      .trim()
-      .max(500)
-      .optional()
-      .or(z.literal(""))
-      .transform((v) => (v ? v : null)),
+    notes: optionalString(500),
     items: z.array(transferItemSchema).min(1, "Agregá al menos un producto."),
   })
   .refine((data) => data.from_location_id !== data.to_location_id, {

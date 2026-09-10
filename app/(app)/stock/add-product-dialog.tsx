@@ -43,12 +43,21 @@ export function AddProductDialog({
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createAdjustment, {});
   const formRef = useRef<HTMLFormElement>(null);
+  const [inventoryItemId, setInventoryItemId] = useState("");
+  const [locationId, setLocationId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for the selected value — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its label.
+  const productLabels = Object.fromEntries(products.map((p) => [p.id, p.name]));
+  const locationLabels = Object.fromEntries(locations.map((l) => [l.id, l.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
     if (wasPending.current && !isPending && !state.error) {
       setOpen(false);
       formRef.current?.reset();
+      setInventoryItemId("");
+      setLocationId("");
     }
     wasPending.current = isPending;
   }, [isPending, state.error]);
@@ -66,7 +75,8 @@ export function AddProductDialog({
         <form ref={formRef} action={formAction} className="flex flex-col gap-4">
           <div className="space-y-2">
             <Label htmlFor="inventory_item_id">Producto</Label>
-            <Select name="inventory_item_id" required>
+            <input type="hidden" name="inventory_item_id" value={inventoryItemId} />
+            <Select items={productLabels} value={inventoryItemId} onValueChange={(v) => setInventoryItemId(v ?? "")}>
               <SelectTrigger id="inventory_item_id" className="w-full">
                 <SelectValue placeholder="Elegir producto existente" />
               </SelectTrigger>
@@ -88,7 +98,8 @@ export function AddProductDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="location_id">Ubicación</Label>
-            <Select name="location_id" required>
+            <input type="hidden" name="location_id" value={locationId} />
+            <Select items={locationLabels} value={locationId} onValueChange={(v) => setLocationId(v ?? "")}>
               <SelectTrigger id="location_id" className="w-full">
                 <SelectValue placeholder="Elegir ubicación" />
               </SelectTrigger>
@@ -111,7 +122,7 @@ export function AddProductDialog({
           </div>
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" disabled={isPending || !inventoryItemId || !locationId}>
               {isPending ? "Guardando..." : "Agregar"}
             </Button>
           </DialogFooter>

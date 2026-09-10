@@ -1,12 +1,5 @@
 import { z } from "zod";
-
-const optionalUuid = z
-  .string()
-  .trim()
-  .uuid()
-  .optional()
-  .or(z.literal(""))
-  .transform((v) => (v ? v : null));
+import { optionalString, optionalUuid } from "@/lib/zod-helpers";
 
 export const orderItemInputSchema = z.object({
   product_variant_id: z.string().trim().uuid(),
@@ -16,37 +9,32 @@ export const orderItemInputSchema = z.object({
 
 export type OrderItemInput = z.infer<typeof orderItemInputSchema>;
 
+// delivery_method/delivery_address use the same null-safe preprocessing as
+// optionalString/optionalUuid (lib/zod-helpers.ts) — delivery_address in
+// particular is only rendered in the form when delivery_method is
+// "shipping" (order-form.tsx), so formData.get("delivery_address") is a
+// bare `null`, not `""`, whenever "Retiro"/"Otro" is picked. The old
+// `.optional().or(z.literal(""))` pattern doesn't tolerate that bare
+// `null` and fails with Zod's generic "Invalid input" — which is exactly
+// what broke order creation in production for every non-shipping order
+// (2026-09-10, found via a real user report).
+const optionalDeliveryMethod = z
+  .preprocess(
+    (v) => (v === null || v === undefined || v === "" ? undefined : v),
+    z.enum(["pickup", "shipping", "other"]).optional()
+  )
+  .transform((v) => v ?? null);
+
 export const createOrderSchema = z.object({
   business_unit_id: z.string().trim().uuid(),
   customer_id: z.string().trim().uuid(),
-  location_id: optionalUuid,
-  origin_channel_id: optionalUuid,
-  closing_channel_id: optionalUuid,
-  delivery_method: z
-    .enum(["pickup", "shipping", "other"])
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  delivery_address: z
-    .string()
-    .trim()
-    .max(300)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  estimated_date: z
-    .string()
-    .trim()
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  notes: z
-    .string()
-    .trim()
-    .max(2000)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
+  location_id: optionalUuid(),
+  origin_channel_id: optionalUuid(),
+  closing_channel_id: optionalUuid(),
+  delivery_method: optionalDeliveryMethod,
+  delivery_address: optionalString(300),
+  estimated_date: optionalString(10),
+  notes: optionalString(2000),
   items: z.array(orderItemInputSchema).min(1, "Agregá al menos un producto."),
 });
 
@@ -68,34 +56,10 @@ export const paymentSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
-  method_id: z
-    .string()
-    .trim()
-    .uuid()
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  account_id: z
-    .string()
-    .trim()
-    .uuid()
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  reference: z
-    .string()
-    .trim()
-    .max(120)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
-  notes: z
-    .string()
-    .trim()
-    .max(500)
-    .optional()
-    .or(z.literal(""))
-    .transform((v) => (v ? v : null)),
+  method_id: optionalUuid(),
+  account_id: optionalUuid(),
+  reference: optionalString(120),
+  notes: optionalString(500),
 });
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {

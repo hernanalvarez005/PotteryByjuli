@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { optionalString, optionalInteger, optionalMoneyAmount, requiredString } from "./zod-helpers";
+import { optionalString, optionalUuid, optionalInteger, optionalMoneyAmount, requiredString } from "./zod-helpers";
 
 // These builders exist specifically to prevent the 2026-09-09/10 wholesale
 // checkout P0 ("Invalid input: expected string, received null") from
@@ -26,6 +26,35 @@ describe("optionalString", () => {
   it("enforces the max length on a real value", () => {
     expect(schema.safeParse({ field: "a".repeat(81) }).success).toBe(false);
     expect(schema.safeParse({ field: "a".repeat(80) }).success).toBe(true);
+  });
+});
+
+// 2026-09-10: the same bug class recurred in schemas/orders.ts
+// (delivery_address, only rendered in the form when delivery_method is
+// "shipping" — formData.get() returns bare `null` for "Retiro"/"Otro",
+// breaking order creation entirely) and schemas/workshops.ts
+// (duePaymentSchema.account_id, never rendered by the payment form at
+// all) — both still using the old `.optional().or(z.literal(""))`
+// pattern this file's own helpers exist to replace. optionalUuid()
+// closes that same gap for uuid fields specifically.
+describe("optionalUuid", () => {
+  const schema = z.object({ field: optionalUuid() });
+
+  it("accepts null, undefined and empty string as absent, normalizing to null", () => {
+    expect(schema.safeParse({ field: null }).success).toBe(true);
+    expect(schema.safeParse({ field: undefined }).success).toBe(true);
+    expect(schema.safeParse({}).success).toBe(true);
+    expect(schema.safeParse({ field: "" }).data?.field).toBeNull();
+    expect(schema.safeParse({ field: null }).data?.field).toBeNull();
+  });
+
+  it("accepts and trims a real uuid", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(schema.safeParse({ field: `  ${id}  ` }).data?.field).toBe(id);
+  });
+
+  it("rejects a non-uuid string", () => {
+    expect(schema.safeParse({ field: "not-a-uuid" }).success).toBe(false);
   });
 });
 

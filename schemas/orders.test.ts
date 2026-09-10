@@ -57,6 +57,34 @@ describe("createOrderSchema", () => {
     expect(result.data.delivery_method).toBeNull();
     expect(result.data.notes).toBeNull();
   });
+
+  // Real production bug (2026-09-10): order-form.tsx only renders the
+  // "Dirección de envío" input when delivery_method is "shipping" —
+  // formData.get("delivery_address") is a bare `null` (not `""`) for
+  // every other delivery method, which broke order creation entirely for
+  // "Retiro"/"Otro" (Zod's generic "Invalid input" from
+  // .optional().or(z.literal(""))` not tolerating a raw `null`). This
+  // reproduces exactly the FormData shape a real submission produces —
+  // unlike `baseOrder` above, which always used `""` and so never
+  // exercised the actual bug.
+  it("accepts a pickup order where the never-rendered delivery_address field is a bare null, not ''", () => {
+    const asSubmittedByTheRealForm = {
+      ...baseOrder,
+      location_id: null,
+      origin_channel_id: null,
+      closing_channel_id: null,
+      delivery_method: "pickup",
+      delivery_address: null, // never rendered for pickup/other — this is what FormData.get() returns
+      estimated_date: null,
+      notes: null,
+    };
+    const result = createOrderSchema.safeParse(asSubmittedByTheRealForm);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.delivery_address).toBeNull();
+      expect(result.data.delivery_method).toBe("pickup");
+    }
+  });
 });
 
 // paid_at siempre explícito, nunca un atajo "si es hoy, se omite y cae el

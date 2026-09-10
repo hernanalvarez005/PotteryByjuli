@@ -30,10 +30,18 @@ export function NewProductDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createProduct, {});
+  const [categoryId, setCategoryId] = useState("");
+  // Passed as Select's `items` prop so the trigger can resolve a label
+  // for the selected category — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its name.
+  const categoryLabels = Object.fromEntries(categories.map((c) => [c.id, c.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setOpen(false);
+    if (wasPending.current && !isPending && !state.error) {
+      setOpen(false);
+      setCategoryId("");
+    }
     wasPending.current = isPending;
   }, [isPending, state.error]);
 
@@ -54,7 +62,8 @@ export function NewProductDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="category_id">Categoría</Label>
-            <Select name="category_id">
+            <input type="hidden" name="category_id" value={categoryId} />
+            <Select items={categoryLabels} value={categoryId} onValueChange={(v) => setCategoryId(v ?? "")}>
               <SelectTrigger id="category_id" className="w-full">
                 <SelectValue placeholder="Sin categoría" />
               </SelectTrigger>

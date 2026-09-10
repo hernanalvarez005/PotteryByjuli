@@ -33,10 +33,23 @@ export function NewGroupDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createGroup, {});
+  const [programId, setProgramId] = useState("");
+  const [weekday, setWeekday] = useState("");
+  const [locationId, setLocationId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for the selected value — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id/number instead of its label.
+  const programLabels = Object.fromEntries(programs.map((p) => [p.id, p.name]));
+  const locationLabels = Object.fromEntries(locations.map((l) => [l.id, l.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setOpen(false);
+    if (wasPending.current && !isPending && !state.error) {
+      setOpen(false);
+      setProgramId("");
+      setWeekday("");
+      setLocationId("");
+    }
     wasPending.current = isPending;
   }, [isPending, state.error]);
 
@@ -53,7 +66,8 @@ export function NewGroupDialog({
         <form action={formAction} className="flex flex-col gap-4">
           <div className="space-y-2">
             <Label htmlFor="program_id">Programa</Label>
-            <Select name="program_id" required>
+            <input type="hidden" name="program_id" value={programId} />
+            <Select items={programLabels} value={programId} onValueChange={(v) => setProgramId(v ?? "")}>
               <SelectTrigger id="program_id" className="w-full">
                 <SelectValue placeholder="Elegir programa" />
               </SelectTrigger>
@@ -84,7 +98,8 @@ export function NewGroupDialog({
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label htmlFor="weekday">Día</Label>
-              <Select name="weekday">
+              <input type="hidden" name="weekday" value={weekday} />
+              <Select items={WEEKDAY_LABELS} value={weekday} onValueChange={(v) => setWeekday(v ?? "")}>
                 <SelectTrigger id="weekday" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -118,7 +133,8 @@ export function NewGroupDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="location_id">Ubicación</Label>
-            <Select name="location_id">
+            <input type="hidden" name="location_id" value={locationId} />
+            <Select items={locationLabels} value={locationId} onValueChange={(v) => setLocationId(v ?? "")}>
               <SelectTrigger id="location_id" className="w-full">
                 <SelectValue placeholder="Elegir ubicación" />
               </SelectTrigger>
@@ -133,7 +149,7 @@ export function NewGroupDialog({
           </div>
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" disabled={isPending || !programId}>
               {isPending ? "Creando..." : "Crear grupo"}
             </Button>
           </DialogFooter>

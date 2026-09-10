@@ -38,12 +38,21 @@ export function TransferForm({
   const [items, setItems] = useState<ItemRow[]>([
     { key: crypto.randomUUID(), inventory_item_id: "", quantity: 1 },
   ]);
+  const [fromLocationId, setFromLocationId] = useState("");
+  const [toLocationId, setToLocationId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for the selected value — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its label.
+  const locationLabels = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+  const productLabels = Object.fromEntries(products.map((p) => [p.id, p.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
     if (wasPending.current && !isPending && !state.error) {
       setOpen(false);
       setItems([{ key: crypto.randomUUID(), inventory_item_id: "", quantity: 1 }]);
+      setFromLocationId("");
+      setToLocationId("");
     }
     wasPending.current = isPending;
   }, [isPending, state.error]);
@@ -78,7 +87,8 @@ export function TransferForm({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label htmlFor="from_location_id">Origen</Label>
-              <Select name="from_location_id" required>
+              <input type="hidden" name="from_location_id" value={fromLocationId} />
+              <Select items={locationLabels} value={fromLocationId} onValueChange={(v) => setFromLocationId(v ?? "")}>
                 <SelectTrigger id="from_location_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -93,7 +103,8 @@ export function TransferForm({
             </div>
             <div className="space-y-1">
               <Label htmlFor="to_location_id">Destino</Label>
-              <Select name="to_location_id" required>
+              <input type="hidden" name="to_location_id" value={toLocationId} />
+              <Select items={locationLabels} value={toLocationId} onValueChange={(v) => setToLocationId(v ?? "")}>
                 <SelectTrigger id="to_location_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -114,6 +125,7 @@ export function TransferForm({
                 <div className="flex-1 space-y-1">
                   <Label className="text-xs text-muted-foreground">Producto</Label>
                   <Select
+                    items={productLabels}
                     value={item.inventory_item_id}
                     onValueChange={(value) =>
                       value && updateItem(item.key, { inventory_item_id: value })
@@ -179,7 +191,7 @@ export function TransferForm({
 
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
-            <Button type="submit" disabled={isPending || validItems.length === 0}>
+            <Button type="submit" disabled={isPending || validItems.length === 0 || !fromLocationId || !toLocationId}>
               {isPending ? "Creando..." : "Crear transferencia"}
             </Button>
           </DialogFooter>

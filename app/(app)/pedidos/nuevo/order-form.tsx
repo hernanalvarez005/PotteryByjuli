@@ -26,6 +26,12 @@ type VariantOption = {
 
 type ItemRow = { key: string; product_variant_id: string; quantity: number; unit_price: number };
 
+const DELIVERY_LABELS: Record<string, string> = {
+  pickup: "Retiro",
+  shipping: "Envío",
+  other: "Otro",
+};
+
 export function OrderForm({
   customers,
   businessUnits,
@@ -40,12 +46,29 @@ export function OrderForm({
   variants: VariantOption[];
 }) {
   const [state, formAction, isPending] = useActionState(createOrder, {});
-  const [deliveryMethod, setDeliveryMethod] = useState<string | null>(null);
+  const [customerId, setCustomerId] = useState("");
+  const [businessUnitId, setBusinessUnitId] = useState("");
+  const [originChannelId, setOriginChannelId] = useState("");
+  const [closingChannelId, setClosingChannelId] = useState("");
+  const [locationId, setLocationId] = useState("");
+  const [deliveryMethod, setDeliveryMethod] = useState("");
   const [items, setItems] = useState<ItemRow[]>([
     { key: crypto.randomUUID(), product_variant_id: "", quantity: 1, unit_price: 0 },
   ]);
 
   const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for a value that's already selected before the popup has ever
+  // registered its <Select.Item>s — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id/enum value instead of its label
+  // (same root cause already fixed in the bulk-price dialog, the
+  // /mayorista product-card variant selector, and the workshop due-extras
+  // dialog — this form was the one place it never got applied).
+  const customerLabels = useMemo(() => Object.fromEntries(customers.map((c) => [c.id, c.name])), [customers]);
+  const businessUnitLabels = useMemo(() => Object.fromEntries(businessUnits.map((b) => [b.id, b.name])), [businessUnits]);
+  const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.id, c.name])), [channels]);
+  const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
+  const variantLabels = useMemo(() => Object.fromEntries(variants.map((v) => [v.id, v.label])), [variants]);
 
   function updateItem(key: string, patch: Partial<ItemRow>) {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
@@ -78,6 +101,12 @@ export function OrderForm({
           }))
         )}
       />
+      <input type="hidden" name="customer_id" value={customerId} />
+      <input type="hidden" name="business_unit_id" value={businessUnitId} />
+      <input type="hidden" name="origin_channel_id" value={originChannelId} />
+      <input type="hidden" name="closing_channel_id" value={closingChannelId} />
+      <input type="hidden" name="location_id" value={locationId} />
+      <input type="hidden" name="delivery_method" value={deliveryMethod} />
 
       <Card>
         <CardHeader>
@@ -85,9 +114,9 @@ export function OrderForm({
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="customer_id">Cliente</Label>
-            <Select name="customer_id" required>
-              <SelectTrigger id="customer_id" className="w-full">
+            <Label htmlFor="customer_id_select">Cliente</Label>
+            <Select items={customerLabels} value={customerId} onValueChange={(v) => v && setCustomerId(v)}>
+              <SelectTrigger id="customer_id_select" className="w-full">
                 <SelectValue placeholder="Elegir cliente" />
               </SelectTrigger>
               <SelectContent>
@@ -100,9 +129,9 @@ export function OrderForm({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="business_unit_id">Unidad de negocio</Label>
-            <Select name="business_unit_id" required>
-              <SelectTrigger id="business_unit_id" className="w-full">
+            <Label htmlFor="business_unit_id_select">Unidad de negocio</Label>
+            <Select items={businessUnitLabels} value={businessUnitId} onValueChange={(v) => v && setBusinessUnitId(v)}>
+              <SelectTrigger id="business_unit_id_select" className="w-full">
                 <SelectValue placeholder="Elegir unidad" />
               </SelectTrigger>
               <SelectContent>
@@ -115,9 +144,9 @@ export function OrderForm({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="origin_channel_id">Origen comercial</Label>
-            <Select name="origin_channel_id">
-              <SelectTrigger id="origin_channel_id" className="w-full">
+            <Label htmlFor="origin_channel_id_select">Origen comercial</Label>
+            <Select items={channelLabels} value={originChannelId} onValueChange={(v) => v && setOriginChannelId(v)}>
+              <SelectTrigger id="origin_channel_id_select" className="w-full">
                 <SelectValue placeholder="¿Dónde conoció Pottery?" />
               </SelectTrigger>
               <SelectContent>
@@ -130,9 +159,9 @@ export function OrderForm({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="closing_channel_id">Canal de cierre</Label>
-            <Select name="closing_channel_id">
-              <SelectTrigger id="closing_channel_id" className="w-full">
+            <Label htmlFor="closing_channel_id_select">Canal de cierre</Label>
+            <Select items={channelLabels} value={closingChannelId} onValueChange={(v) => v && setClosingChannelId(v)}>
+              <SelectTrigger id="closing_channel_id_select" className="w-full">
                 <SelectValue placeholder="¿Dónde se cerró?" />
               </SelectTrigger>
               <SelectContent>
@@ -145,9 +174,9 @@ export function OrderForm({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="location_id">Ubicación</Label>
-            <Select name="location_id">
-              <SelectTrigger id="location_id" className="w-full">
+            <Label htmlFor="location_id_select">Ubicación</Label>
+            <Select items={locationLabels} value={locationId} onValueChange={(v) => v && setLocationId(v)}>
+              <SelectTrigger id="location_id_select" className="w-full">
                 <SelectValue placeholder="Elegir ubicación" />
               </SelectTrigger>
               <SelectContent>
@@ -160,9 +189,9 @@ export function OrderForm({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="delivery_method">Entrega</Label>
-            <Select name="delivery_method" onValueChange={setDeliveryMethod}>
-              <SelectTrigger id="delivery_method" className="w-full">
+            <Label htmlFor="delivery_method_select">Entrega</Label>
+            <Select items={DELIVERY_LABELS} value={deliveryMethod} onValueChange={(v) => v && setDeliveryMethod(v)}>
+              <SelectTrigger id="delivery_method_select" className="w-full">
                 <SelectValue placeholder="Elegir modalidad" />
               </SelectTrigger>
               <SelectContent>
@@ -199,6 +228,7 @@ export function OrderForm({
               <div className="flex-1 space-y-1">
                 <Label className="text-xs text-muted-foreground">Producto</Label>
                 <Select
+                  items={variantLabels}
                   value={item.product_variant_id}
                   onValueChange={(value) => {
                     if (!value) return;
@@ -269,7 +299,11 @@ export function OrderForm({
 
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}
 
-      <Button type="submit" disabled={isPending || validItems.length === 0} className="self-start">
+      <Button
+        type="submit"
+        disabled={isPending || validItems.length === 0 || !customerId || !businessUnitId}
+        className="self-start"
+      >
         {isPending ? "Creando pedido..." : "Crear pedido"}
       </Button>
     </form>

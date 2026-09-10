@@ -38,10 +38,27 @@ export function NewExpenseDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(createExpense, {});
+  const [categoryId, setCategoryId] = useState("");
+  const [methodId, setMethodId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [businessUnitId, setBusinessUnitId] = useState("");
+  // Passed as each Select's `items` prop so the trigger can resolve a
+  // label for the selected value — without it, Base UI's <Select.Value>
+  // falls back to showing the raw id instead of its label.
+  const categoryLabels = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const methodLabels = Object.fromEntries(methods.map((m) => [m.id, m.name]));
+  const accountLabels = Object.fromEntries(accounts.map((a) => [a.id, a.name]));
+  const businessUnitLabels = Object.fromEntries(businessUnits.map((b) => [b.id, b.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setOpen(false);
+    if (wasPending.current && !isPending && !state.error) {
+      setOpen(false);
+      setCategoryId("");
+      setMethodId("");
+      setAccountId("");
+      setBusinessUnitId("");
+    }
     wasPending.current = isPending;
   }, [isPending, state.error]);
 
@@ -75,7 +92,8 @@ export function NewExpenseDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="category_id">Categoría</Label>
-              <Select name="category_id">
+              <input type="hidden" name="category_id" value={categoryId} />
+              <Select items={categoryLabels} value={categoryId} onValueChange={(v) => setCategoryId(v ?? "")}>
                 <SelectTrigger id="category_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -96,7 +114,8 @@ export function NewExpenseDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="method_id">Medio</Label>
-              <Select name="method_id">
+              <input type="hidden" name="method_id" value={methodId} />
+              <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
                 <SelectTrigger id="method_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -111,7 +130,8 @@ export function NewExpenseDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="account_id">Cuenta</Label>
-              <Select name="account_id">
+              <input type="hidden" name="account_id" value={accountId} />
+              <Select items={accountLabels} value={accountId} onValueChange={(v) => setAccountId(v ?? "")}>
                 <SelectTrigger id="account_id" className="w-full">
                   <SelectValue placeholder="Elegir" />
                 </SelectTrigger>
@@ -127,7 +147,8 @@ export function NewExpenseDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="business_unit_id">Unidad de negocio</Label>
-            <Select name="business_unit_id">
+            <input type="hidden" name="business_unit_id" value={businessUnitId} />
+            <Select items={businessUnitLabels} value={businessUnitId} onValueChange={(v) => setBusinessUnitId(v ?? "")}>
               <SelectTrigger id="business_unit_id" className="w-full">
                 <SelectValue placeholder="Elegir (opcional)" />
               </SelectTrigger>
