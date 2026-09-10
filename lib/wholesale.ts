@@ -43,8 +43,16 @@ export async function getWholesaleCatalog() {
     supabase
       .from("products")
       .select(
-        "id,name,description,category_id,product_variants(id,name),product_images(storage_path,is_primary,sort_order),wholesale_product_rules(min_quantity,multiple_of,lead_time_days)"
+        "id,name,description,category_id,product_variants(id,name,is_active),product_images(storage_path,is_primary,sort_order),wholesale_product_rules(min_quantity,multiple_of,lead_time_days)"
       )
+      // The anon-scoped RLS policies (Fase 5) already enforce is_active/
+      // is_public at the database level — an inactive product/variant can
+      // never reach this query's result set even without this filter.
+      // Kept here anyway as defense-in-depth: if a future RLS policy
+      // change ever regresses, this app-level filter still holds the
+      // line (see docs/business-rules.md § Seguridad del portal
+      // mayorista público).
+      .eq("is_active", true)
       .order("name"),
     supabase.from("wholesale_settings").select("*").limit(1).maybeSingle(),
   ]);
@@ -87,7 +95,11 @@ export async function getWholesaleCatalog() {
       minQuantity: rules?.min_quantity ?? null,
       multipleOf: rules?.multiple_of ?? null,
       leadTimeDays: rules?.lead_time_days ?? null,
-      variants: (p.product_variants as { id: string; name: string }[])
+      variants: (p.product_variants as { id: string; name: string; is_active: boolean }[])
+        // Defense-in-depth alongside product_variants_select_public_wholesale
+        // (RLS already excludes inactive variants from anon's result set) —
+        // same rationale as the products.is_active filter above.
+        .filter((v) => v.is_active)
         .map((v) => ({ id: v.id, name: v.name, unitPrice: priceByVariant.get(v.id) ?? 0 }))
         .filter((v) => v.unitPrice > 0),
     };
