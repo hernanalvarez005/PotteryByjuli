@@ -81,13 +81,16 @@ mayorista quedan registrados (quién, qué, cuándo, valor anterior/nuevo).
 
 ## Checkout mayorista: campos obligatorios vs. opcionales
 
-De los datos de contacto del formulario público, sólo **Nombre** y
-**WhatsApp** son obligatorios — son los únicos datos con los que Pottery
-puede identificar y contactar a quien pide. Todo lo demás (Apellido,
-Comercio, CUIT, Instagram, Web, Ciudad, Provincia, Email, Observaciones) es
-opcional. Un campo obligatorio ausente nunca debe fallar con un error
-técnico genérico: el schema (`schemas/wholesale.ts`) muestra un mensaje
-específico ("Falta el nombre.", "Falta un WhatsApp de contacto.").
+**Actualizado** — el checkout ahora pide datos completos del comprador
+(persona de contacto + datos comerciales + ubicación) antes de un paso de
+revisión, no sólo nombre y WhatsApp. Obligatorios: **Nombre, Apellido,
+WhatsApp, Email, Razón social/Nombre del comercio, Ciudad, Provincia**.
+Opcionales: CUIT, Instagram, Sitio web, Dirección, Código postal,
+Observaciones. Un campo obligatorio ausente nunca debe fallar con un error
+técnico genérico: tanto el schema (`schemas/wholesale.ts`) como la RPC
+(`submit_wholesale_request`, como backstop si algo llama la función
+directamente) muestran un mensaje específico por campo ("Falta el
+nombre.", "Falta la razón social o el nombre del comercio.").
 
 **Convención null/undefined/"" en el límite del formulario** (fijada por el
 P0 del 2026-09-09/10, "Invalid input: expected string, received null"):
@@ -113,6 +116,111 @@ ese id antes de crear nada: si ya existe un pedido con ese
 pedido (`orders.client_request_id`, índice único parcial). El id sólo se
 renueva cuando el checkout anterior terminó en éxito y el carrito se
 vació — nunca en un reintento del mismo intento.
+
+## Checkout mayorista: normalización de teléfono
+
+El WhatsApp del checkout se normaliza server-side (`lib/phone.ts`, con
+`libphonenumber-js`) antes de guardarlo y antes de deduplicar. Corrige el
+caso típico argentino: un número dado sin el marcador móvil ("11
+2233-4455") resuelve como fijo según el plan de numeración oficial, pero
+nadie lo dice así y WhatsApp lo exige — como este campo existe
+específicamente para contactar por WhatsApp, se corrige a la forma móvil
+cuando el país detectado es Argentina. Números de otros países se respetan
+tal cual (nunca asumir que todo comprador es argentino). El formato
+canónico guardado mantiene la misma forma que ya usaba `customers.whatsapp`
+(dígitos, código de país sin "+"), así el dedup contra filas existentes
+sigue funcionando sin backfill. **Limitación conocida, aceptada
+deliberadamente**: filas de clientes previas a esta normalización pueden
+tener un formato menos preciso (sin el "9" faltante) — no hay backfill
+masivo de datos históricos en esta pasada.
+
+## Checkout mayorista: deduplicación de clientes y conflictos de identidad
+
+Antes de crear un cliente nuevo, `submit_wholesale_request` busca
+coincidencias por whatsapp normalizado, email y CUIT, cada uno por
+separado (nunca un `OR` combinado):
+
+- **0 señales encontradas** → crea un cliente nuevo.
+- **Todas las señales apuntan al mismo cliente** → lo reusa, completando
+  sólo los campos que hoy están en `NULL` (`coalesce(existente, nuevo)`) —
+  nunca pisa un valor ya cargado.
+- **Señales distintas apuntan a clientes existentes distintos** (ej.
+  WhatsApp de esta solicitud coincide con el Cliente A, pero el email
+  coincide con el Cliente B) → **nunca se fusiona ni se modifica** A ni B.
+  Se crea un cliente nuevo para esta solicitud puntual (la arquitectura
+  exige un `customer_id`) y el conflicto queda registrado en
+  `customer_identity_conflicts` para revisión manual — el backoffice
+  muestra un aviso "⚠ Posible identidad duplicada" en la ficha de ese
+  cliente y en el pedido mientras el conflicto siga sin resolver
+  (`resolved_at is null`). No existe hoy una función de fusión automática
+  de clientes — la reconciliación es manual.
+
+## Checkout mayorista: el PDF es 100% histórico
+
+El documento generado en el checkout (o regenerado después desde el
+backoffice si la generación original falló) se arma exclusivamente con
+datos ya congelados en el pedido: `order_items.unit_price` y cantidades,
+`orders.wholesale_terms_snapshot` (condiciones), y
+`orders.wholesale_buyer_snapshot` (los datos del comprador **tal como se
+enviaron en esa solicitud puntual** — nunca un join en vivo a `customers`,
+porque esa fila puede cambiar después por otro pedido, un merge
+fill-null-only, o una edición manual en el CRM). Lo único que sí se lee en
+vivo es lo puramente institucional (logo, nombre de Pottery) — nunca
+precio, mínimos, plazos, condiciones o datos del comprador actuales. Si
+Juli cambia precios o condiciones después, el documento original no se
+reescribe; representa "la solicitud original" tal cual se pidió.
+
+## Checkout mayorista: documento privado y signed URLs
+
+El PDF se guarda en el bucket privado `order-attachments`
+(`{order_id}/{human_code}.pdf` — el UUID del pedido es la barrera real de
+seguridad, el código humano es sólo el nombre de archivo) — nunca público,
+nunca con una ruta adivinable. El link que viaja en el mensaje de WhatsApp
+del comprador es una signed URL de 72 horas (preferencia explícita:
+"24–72hs si es operacionalmente suficiente" — documentado acá como el
+tradeoff usabilidad/privacidad elegido). Esto no es un problema si Juli
+tarda más en revisar: el backoffice genera su propia signed URL corta
+(~60s) bajo demanda cada vez que abre "Ver PDF", con su sesión autenticada
+normal — no hace falta el service role para esa lectura, la policy de
+`order_attachments_staff_read` ya permite `select` a cualquier usuario
+`authenticated`.
+
+Subir el PDF y firmar la URL del comprador sí requiere el service role,
+porque el Server Action del checkout corre como `anon` a propósito (sin
+sesión) pero necesita hacer esa operación puntual y confiable de servidor
+— análogo a por qué la RPC de escritura ya corre como `security definer`.
+Ese cliente admin vive en `lib/supabase/admin-server-only.ts`, deliberada y
+explícitamente separado de `scripts/_supabase-admin.ts` (ese archivo nunca
+se importa desde `app/`; éste es la única excepción, y no exporta el
+cliente crudo — sólo tres funciones puntuales).
+
+## Checkout mayorista: un fallo de PDF nunca esconde ni duplica un pedido
+
+La RPC (transacción atómica) crea cliente+pedido+items primero e
+independientemente. La generación del PDF y su subida pasan después, en el
+mismo Server Action, envueltas en `try/catch` que nunca hace fallar la
+respuesta — si el PDF falla, `humanCode`/`orderId` igual se devuelven,
+`documentUrl` queda `null`, y la pantalla de éxito funciona igual sin el
+link (nunca se muestra un error que sugiera reintentar, que sí podría
+terminar en un pedido duplicado). La ausencia de una fila en
+`order_attachments` para ese pedido es la señal — no hace falta una
+columna de estado nueva. Desde el backoffice, un pedido sin documento
+muestra "Generar resumen PDF" (usa los mismos datos ya congelados del
+pedido); un pedido que ya tiene uno muestra "Ver PDF" — nunca "regenerar"
+un documento existente, para no reescribir silenciosamente la solicitud
+original.
+
+## Checkout mayorista: WhatsApp de Pottery y "se abrió" vs. "se envió"
+
+El número al que apunta el botón "Enviar pedido por WhatsApp" del
+catálogo público (`wholesale_settings.business_whatsapp`, editable sólo
+por la owner desde Configuración) nunca está hardcodeado en un componente.
+Si no está configurado, ese botón simplemente no se muestra — nunca un
+link roto. Al hacer click se registra `orders.whatsapp_share_opened_at`
+vía una RPC chica (`mark_wholesale_whatsapp_share_opened`, porque `anon`
+no tiene policy de update sobre `orders`) — esto **nunca** significa que
+el mensaje se envió de verdad, sólo que el botón se abrió; la app no puede
+saber con certeza si el comprador completó el envío en WhatsApp.
 
 ## Nunca borrado físico con historial relacionado
 

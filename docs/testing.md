@@ -9,8 +9,12 @@
   `complete_stock_transfer`) — esas son las que realmente mueven stock,
   dinero y cupos, y probarlas de verdad requiere una base Supabase de test
   (integración), no un mock. Ver "Cobertura pendiente" abajo.
-- **E2E**: Playwright — todavía no instalado; se suma cuando haya que
-  probar un flujo de punta a punta contra una base de test real.
+- **E2E**: Playwright (`npm run test:e2e`), instalado en la extensión del
+  checkout mayorista (comprador/PDF/WhatsApp). Corre **exclusivamente
+  contra Supabase local** (`supabase start`), nunca contra producción —
+  decisión explícita de la usuaria, incluso con datos ficticios limpiados
+  después (a diferencia de la verificación manual de los P0 anteriores,
+  que sí se hizo contra producción). Ver "Entorno E2E local" más abajo.
 
 ## Qué está cubierto hoy
 
@@ -95,6 +99,52 @@
   vacíos; `cost_estimate` rechazado con `42501`, no sólo `null`). Se
   salta automáticamente (`describe.skipIf`) si no hay credenciales
   disponibles en el entorno.
+- `lib/phone.test.ts`: normalización de WhatsApp para el checkout mayorista
+  — agrega el "9" móvil argentino cuando falta (con o sin el prefijo
+  puesto, distintos códigos de área), respeta números de otros países tal
+  cual, nunca tira excepción ante un input inválido/vacío/con letras.
+- `lib/wholesale-pdf.test.ts`: el documento generado contiene el código de
+  pedido, comprador, productos y el total correctos, y el rótulo
+  "SOLICITUD PENDIENTE DE CONFIRMACIÓN"; omite un campo opcional sin valor
+  en vez de imprimir una línea vacía; y el test histórico obligatorio —
+  generar dos documentos con precios/condiciones distintos nunca contamina
+  el primero ya renderizado (el checkout mayorista es 100% histórico, ver
+  `docs/business-rules.md`).
+- `schemas/wholesale.test.ts` (extendido): los nuevos campos obligatorios
+  (apellido, email, razón social, ciudad, provincia) cada uno rechazado
+  con su mensaje propio ante `null` o `""`; `address`/`postal_code`
+  opcionales en sus tres formas.
+- `lib/wholesale-pdf-storage-security.integration.test.ts`: mismo patrón
+  que `wholesale-anon-access` (read-only, seguro sin gatear) — `anon` no
+  puede listar el bucket `order-attachments` (Storage filtra filas igual
+  que RLS: 200 con lista vacía, nunca un objeto real) ni leer un path
+  adivinado sin signed URL.
+- `e2e/wholesale-checkout.spec.ts` (Playwright, ver "Entorno E2E local"):
+  flujo completo anónimo con verificación de datos (cliente, comercio,
+  items, total, PDF, WhatsApp con el código correcto) y el caso de campo
+  obligatorio faltante.
+
+## Entorno E2E local
+
+El checkout mayorista completo (crea cliente + pedido + PDF real en
+Storage) no es seguro de correr repetidamente contra producción, ni
+siquiera limpiando después — quema números de secuencia `MAY-000XXX` que
+no se recuperan. En vez de eso, corre contra un Postgres local efímero:
+
+```bash
+supabase start        # levanta Postgres/Auth/Storage local vía Docker
+                       # (o colima si no hay Docker Desktop instalado)
+npm run test:e2e       # reusa un `next dev` en :4400 si ya está corriendo,
+                       # o levanta uno nuevo con .env.development.local
+```
+
+`supabase/seed.sql` carga automáticamente (en `supabase start` y en
+`supabase db reset`) un catálogo mayorista mínimo — nunca se aplica a
+producción, el CLI no lo incluye en `db push`. `.env.development.local`
+(gitignored) debe tener las credenciales que imprime `supabase start`
+(`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`) — Next.js las prioriza automáticamente sobre
+`.env.local` en modo desarrollo, sin tocar las credenciales de producción.
 
 ## Cobertura pendiente (necesita una base de test, no sólo Vitest)
 
@@ -159,9 +209,11 @@ destrabar un commit.
 ## Flujos E2E críticos (Playwright), en el orden en que van a existir
 
 1. **Minorista**: crear cliente → crear pedido → cobrar → descuenta stock.
-2. **Mayorista público, camino feliz**: abrir `/mayorista` → agregar
-   productos → cumplir mínimos → completar datos → enviar solicitud →
-   aparece en el backoffice con el snapshot correcto.
+2. **Mayorista público, camino feliz** ✅ implementado
+   (`e2e/wholesale-checkout.spec.ts`, contra Supabase local): abrir
+   `/mayorista` → agregar productos → cumplir mínimos → completar datos →
+   revisar → enviar solicitud → confirmación con código, WhatsApp y PDF →
+   verificado también a nivel de datos (cliente, pedido, items, snapshot).
 3. **Mayorista público, camino inválido**: carrito por debajo del mínimo →
    el sistema bloquea el envío y explica qué falta.
 4. **Stock**: transferir La Plata → Tres Lomas → ambos stocks quedan

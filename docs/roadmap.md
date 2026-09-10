@@ -328,6 +328,50 @@ sin querer (7 cuotas + 2 pagos falsos de una alumna real; una imagen de
 test en un producto real) — ambas veces detectado y limpiado
 inmediatamente, verificado que la base volvió al estado previo exacto.
 
+## Checkout mayorista: comprador, revisión, PDF y WhatsApp (2026-09-10) ✅
+
+Completa el flujo comercial de `/mayorista` de punta a punta — hasta acá
+el checkout sólo pedía Nombre+WhatsApp, sin paso de revisión, sin
+documento, sin cierre por WhatsApp. Ver `docs/business-rules.md` §
+Checkout mayorista para el detalle de cada regla.
+
+- [x] **Datos completos del comprador** — Nombre, Apellido, WhatsApp,
+      Email, Razón social/Comercio, Ciudad y Provincia pasan a
+      obligatorios (antes sólo Nombre+WhatsApp); Dirección y Código postal
+      nuevos, opcionales.
+- [x] **Normalización de teléfono** (`lib/phone.ts`, `libphonenumber-js`)
+      — corrige el WhatsApp argentino sin el "9" móvil; respeta números de
+      otros países.
+- [x] **Deduplicación con detección de conflicto** — nunca fusiona dos
+      clientes existentes por error; un conflicto de identidad (señales
+      distintas → clientes distintos) queda registrado y visible en el
+      backoffice para revisión manual, nunca resuelto en silencio.
+- [x] **Paso de revisión** antes del envío definitivo (`cart-sheet.tsx`
+      pasa a formulario controlado) — comprador, comercio, ubicación,
+      productos, totales y condiciones vigentes, con vuelta atrás sin
+      perder lo cargado.
+- [x] **PDF de la solicitud** (`@react-pdf/renderer`, logo y paleta
+      reales) — 100% histórico (nunca precios/condiciones en vivo),
+      guardado en el bucket privado `order-attachments`, servido sólo por
+      signed URL — nunca público, nunca con ruta adivinable.
+- [x] **WhatsApp de cierre** — `business_whatsapp` configurable desde
+      Configuración (nunca hardcodeado); mensaje armado dinámicamente con
+      código, comprador, total y el link al PDF; "se abrió el botón" se
+      registra por separado de "se envió" (la app no puede saber esto
+      último con certeza).
+- [x] **Backoffice**: comercio/condiciones/documento en el detalle del
+      pedido, aviso de conflicto de identidad en cliente y pedido,
+      "Generar resumen PDF" cuando la generación original falló.
+- [x] **E2E con Playwright** — primera vez que se instala, corriendo
+      exclusivamente contra Supabase local (`supabase start` +
+      `supabase/seed.sql`), nunca contra producción — decisión explícita
+      para no quemar numeración real ni escribir datos ficticios en vivo.
+
+**Resultado**: una persona anónima completa el checkout entero — datos,
+revisión, envío, PDF, WhatsApp — sin login, y Pottery recibe cliente
+(sin duplicar), datos comerciales, pedido, items y documento de una sola
+vez. ✅
+
 ## Fase 10 — Optimización ⏳ (en progreso)
 
 - [x] **Auditoría de seguridad** — revisión completa de las políticas RLS
@@ -355,9 +399,12 @@ inmediatamente, verificado que la base volvió al estado previo exacto.
 - [ ] **Pendiente**: paginación en listados grandes (`/clientes`,
       `/productos`, `/pedidos`, `/pagos` traen todo sin límite —
       aceptable al volumen actual, revisar cuando crezca), auditoría de
-      accesibilidad, tests E2E con Playwright contra una base de test
-      real, revisión de índices adicionales si aparecen queries lentas
-      con datos reales.
+      accesibilidad, extender la cobertura E2E con Playwright (instalado
+      y corriendo contra Supabase local desde "Checkout mayorista:
+      comprador, revisión, PDF y WhatsApp" — sólo cubre ese flujo por
+      ahora) a los demás flujos críticos listados en `docs/testing.md`,
+      revisión de índices adicionales si aparecen queries lentas con
+      datos reales.
 
 ## Simplificaciones deliberadas para el MVP
 
