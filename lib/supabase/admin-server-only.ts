@@ -37,20 +37,75 @@ function createAdminClient() {
 
 const ORDER_ATTACHMENTS_BUCKET = "order-attachments";
 
-/**
- * Looks up an order's id by its human-readable code. The wholesale
- * checkout Server Action runs as `anon`, which has no select policy on
- * `orders` — this is the one place that lookup happens, via the service
- * role, immediately after `submit_wholesale_request` succeeds (that RPC
- * only returns `human_code`, on purpose — see the migration comment for
- * why its signature isn't touched again just for this).
- */
-export async function findWholesaleOrderIdByHumanCode(humanCode: string): Promise<string | null> {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase.from("orders").select("id").eq("human_code", humanCode).single();
+export type WholesaleOrderForDocument = {
+  orderId: string;
+  createdAt: string;
+  buyer: {
+    first_name: string;
+    last_name: string | null;
+    company_name: string | null;
+    cuit: string | null;
+    instagram: string | null;
+    website: string | null;
+    city: string | null;
+    province: string | null;
+    address: string | null;
+    postal_code: string | null;
+    whatsapp: string;
+    email: string | null;
+  };
+  terms: {
+    min_order_amount: number | null;
+    min_total_units: number | null;
+    lead_time_min_days: number | null;
+    lead_time_max_days: number | null;
+    payment_terms: string | null;
+    shipping_terms: string | null;
+  };
+  items: { productName: string; variantName: string; quantity: number; unitPrice: number }[];
+};
 
-  if (error || !data) return null;
-  return data.id as string;
+/**
+ * Reads everything the PDF (and the storage path, which is keyed by
+ * `orderId`) needs for a given order, by its human-readable code. The
+ * wholesale checkout Server Action runs as `anon`, which has no select
+ * policy on `orders` — this is the one place that read happens, via the
+ * service role, immediately after `submit_wholesale_request` succeeds
+ * (that RPC only returns `human_code`, on purpose — see the migration
+ * comment for why its signature isn't touched again just for this).
+ *
+ * Reads `wholesale_buyer_snapshot` / `wholesale_terms_snapshot` — never
+ * live `customers`/`wholesale_settings` — and `order_items.unit_price`
+ * (already historical) joined only for product/variant *names* (the one
+ * piece of display data this table doesn't itself snapshot; see
+ * docs/business-rules.md for why that's an accepted, narrow exception).
+ */
+export async function getWholesaleOrderForDocument(humanCode: string): Promise<WholesaleOrderForDocument | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select(
+      "id, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, order_items(quantity, unit_price, product_variants(name, products(name)))"
+    )
+    .eq("human_code", humanCode)
+    .single();
+
+  if (error || !data || !data.wholesale_buyer_snapshot || !data.wholesale_terms_snapshot) return null;
+
+  const buyer = data.wholesale_buyer_snapshot as WholesaleOrderForDocument["buyer"];
+  const terms = data.wholesale_terms_snapshot as WholesaleOrderForDocument["terms"];
+  const items = (data.order_items as unknown as {
+    quantity: number;
+    unit_price: number;
+    product_variants: { name: string; products: { name: string } } | null;
+  }[]).map((item) => ({
+    productName: item.product_variants?.products.name ?? "",
+    variantName: item.product_variants?.name ?? "",
+    quantity: item.quantity,
+    unitPrice: item.unit_price,
+  }));
+
+  return { orderId: data.id as string, createdAt: data.created_at as string, buyer, terms, items };
 }
 
 /**

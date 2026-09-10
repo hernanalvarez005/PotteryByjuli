@@ -3,10 +3,18 @@
 import { createClient } from "@/lib/supabase/server";
 import { wholesaleRequestFormSchema } from "@/schemas/wholesale";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { renderWholesaleOrderPdf } from "@/lib/wholesale-pdf";
+import {
+  getWholesaleOrderForDocument,
+  uploadWholesaleOrderPdf,
+  createWholesalePdfSignedUrl,
+} from "@/lib/supabase/admin-server-only";
 
 export type WholesaleRequestState = {
   error?: string;
   humanCode?: string;
+  orderId?: string;
+  documentUrl?: string | null;
 };
 
 const GENERIC_ERROR = "No pudimos enviar tu solicitud. Revisá los datos ingresados e intentá nuevamente.";
@@ -113,5 +121,49 @@ export async function submitWholesaleRequest(
     return { error: error.code === "P0001" ? error.message : GENERIC_ERROR };
   }
 
-  return { humanCode: data as string };
+  const humanCode = data as string;
+
+  // El pedido ya está creado y a salvo en este punto (transacción atómica
+  // de la RPC, ya resuelta). Todo lo que sigue es "mejor esfuerzo": si el
+  // PDF falla, la solicitud sigue existiendo y la pantalla de éxito debe
+  // funcionar igual, sin link al documento -- nunca mostramos un error acá
+  // que sugiera reintentar (eso sí podría terminar en un pedido duplicado,
+  // exactamente lo que esta función existe para evitar).
+  let orderId: string | undefined;
+  let documentUrl: string | null = null;
+  try {
+    const order = await getWholesaleOrderForDocument(humanCode);
+    if (order) {
+      orderId = order.orderId;
+      const pdfBytes = await renderWholesaleOrderPdf({
+        humanCode,
+        createdAt: new Date(order.createdAt),
+        buyer: order.buyer,
+        items: order.items,
+        terms: order.terms,
+      });
+      const storagePath = await uploadWholesaleOrderPdf(order.orderId, humanCode, pdfBytes);
+      documentUrl = await createWholesalePdfSignedUrl(storagePath);
+    }
+  } catch (pdfError) {
+    console.error(`submitWholesaleRequest: PDF generation/upload failed for ${humanCode} (non-fatal)`, pdfError);
+  }
+
+  return { humanCode, orderId, documentUrl };
+}
+
+/**
+ * "Se abrió el botón de WhatsApp" — nunca "se envió el mensaje", eso la
+ * app no lo puede saber con certeza (sección 26). `orders` no tiene
+ * policy de select/update para `anon`, así que esto pasa por su propia
+ * RPC (`mark_wholesale_whatsapp_share_opened`) en vez de un update
+ * directo. Fire-and-forget desde la UI: nunca debe bloquear ni romper el
+ * link de WhatsApp en sí.
+ */
+export async function markWhatsappShareOpened(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("mark_wholesale_whatsapp_share_opened", { p_order_id: orderId });
+  if (error) {
+    console.error("markWhatsappShareOpened failed (non-fatal)", error);
+  }
 }
