@@ -18,6 +18,7 @@ import {
 import { StatusSelect } from "./status-select";
 import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
+import { AssociateCustomerDialog } from "./associate-customer-dialog";
 
 export default async function OrderDetailPage({
   params,
@@ -43,7 +44,7 @@ export default async function OrderDetailPage({
   const businessUnit = order.business_units as unknown as { code: string; name: string } | null;
   const isWholesaleOrder = businessUnit?.code === "wholesale";
 
-  const [{ data: items }, { data: payments }, { data: history }, { data: methods }, { data: accounts }] =
+  const [{ data: items }, { data: payments }, { data: history }, { data: methods }, { data: accounts }, { data: customers }] =
     await Promise.all([
       supabase
         .from("order_items")
@@ -61,6 +62,7 @@ export default async function OrderDetailPage({
         .order("changed_at", { ascending: false }),
       supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),
       supabase.from("payment_accounts").select("id,name").eq("is_active", true).order("code"),
+      supabase.from("customers").select("id,first_name,last_name").eq("is_active", true).order("first_name"),
     ]);
 
   const paid = (payments ?? []).reduce((sum, p) => sum + p.amount, 0);
@@ -120,7 +122,7 @@ export default async function OrderDetailPage({
           <h1 className="text-2xl font-semibold tracking-tight">{order.human_code}</h1>
           <StatusSelect orderId={order.id} status={order.status} canEdit={canEdit} />
         </div>
-        {customer && (
+        {customer ? (
           <p className="mt-1 text-sm text-muted-foreground">
             <Link href={`/clientes/${customer.id}`} className="hover:underline">
               {customerDisplayName(customer)}
@@ -137,6 +139,16 @@ export default async function OrderDetailPage({
               </a>
             )}
           </p>
+        ) : (
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-sm text-muted-foreground">Sin cliente asociado</p>
+            {canEdit && (
+              <AssociateCustomerDialog
+                orderId={order.id}
+                customers={(customers ?? []).map((c) => ({ id: c.id, name: customerDisplayName(c) }))}
+              />
+            )}
+          </div>
         )}
         {identityConflict && (
           <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">

@@ -31,12 +31,20 @@ export default async function PedidosPage() {
           </p>
         </div>
         {canEdit && (
-          <Link href="/pedidos/nuevo">
-            <Button size="sm">
-              <Plus className="size-4" />
-              Nuevo pedido
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link href="/pedidos/venta-rapida">
+              <Button size="sm">
+                <Plus className="size-4" />
+                Nueva venta minorista
+              </Button>
+            </Link>
+            <Link href="/pedidos/nuevo">
+              <Button size="sm" variant="outline">
+                <Plus className="size-4" />
+                Nuevo pedido
+              </Button>
+            </Link>
+          </div>
         )}
       </div>
 

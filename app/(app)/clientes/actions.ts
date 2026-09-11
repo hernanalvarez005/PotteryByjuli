@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { customerSchema, customerNoteSchema } from "@/schemas/customers";
 
-export type CustomerActionState = { error?: string };
+export type CustomerActionState = { error?: string; customerId?: string };
 
 async function assertCanManageCustomers() {
   const user = await requireUser();
@@ -28,11 +28,15 @@ export async function createCustomer(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("customers").insert(parsed.data);
-  if (error) return { error: "No se pudo crear el cliente." };
+  const { data: created, error } = await supabase
+    .from("customers")
+    .insert(parsed.data)
+    .select("id")
+    .single();
+  if (error || !created) return { error: "No se pudo crear el cliente." };
 
   revalidatePath("/clientes");
-  return {};
+  return { customerId: created.id };
 }
 
 export async function updateCustomer(
