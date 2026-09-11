@@ -90,6 +90,20 @@ export async function changeOrderStatus(orderId: string, status: string) {
   revalidatePath("/stock");
 }
 
+export async function associateOrderCustomer(orderId: string, customerId: string) {
+  await assertCanManageOrders();
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("orders")
+    .update({ customer_id: customerId })
+    .eq("id", orderId);
+  if (error) throw new Error("No se pudo asociar el cliente.");
+
+  revalidatePath(`/pedidos/${orderId}`);
+  revalidatePath("/pedidos");
+}
+
 export async function addPayment(
   orderId: string,
   _prevState: OrderActionState,
