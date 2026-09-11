@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ import { Minus, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { createCustomer } from "@/app/(app)/clientes/actions";
 import { createQuickSale } from "./actions";
+import { quickSaleSessionReducer } from "@/lib/quick-sale-session";
 
 type Option = { id: string; name: string };
 type Channel = { id: string; name: string; code: string };
@@ -94,7 +95,21 @@ export function QuickSaleForm({
   const [editingChannel, setEditingChannel] = useState(false);
   const [editingTotal, setEditingTotal] = useState(false);
   const [totalOverride, setTotalOverride] = useState<number | null>(null);
-  const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID());
+
+  // Estado de sesión separado del que devuelve useActionState — ver
+  // lib/quick-sale-session.ts para el porqué (bug real: "Nueva venta" no
+  // hacía nada porque la pantalla de éxito se guiaba por el resultado de
+  // la action, que nunca se limpia solo).
+  const [session, dispatchSession] = useReducer(quickSaleSessionReducer, null, () => ({
+    clientRequestId: crypto.randomUUID(),
+    success: null,
+  }));
+
+  useEffect(() => {
+    if (state.result) {
+      dispatchSession({ type: "sale_succeeded", result: state.result });
+    }
+  }, [state.result]);
 
   useEffect(() => {
     // Leer localStorage sólo puede pasar después del montaje (no hay
@@ -173,7 +188,14 @@ export function QuickSaleForm({
     setEditingTotal(false);
     setTotalOverride(null);
     setPaidAt(new Date().toISOString().slice(0, 10));
-    setClientRequestId(crypto.randomUUID());
+    // Forma de pago se resetea — a diferencia de la ubicación, no es un
+    // default útil entre ventas (puede variar de una a la siguiente).
+    setPaymentMethodId("");
+    setPaymentAccountId("");
+    // Limpia la pantalla de éxito y asigna un client_request_id nuevo —
+    // la ubicación (locationId) es el único default que se mantiene a
+    // propósito, no se toca acá.
+    dispatchSession({ type: "start_new_sale", nextClientRequestId: crypto.randomUUID() });
   }
 
   function handleLocationChange(id: string) {
@@ -185,18 +207,18 @@ export function QuickSaleForm({
     }
   }
 
-  if (state.result) {
+  if (session.success) {
     const methodName = methodLabels[paymentMethodId] ?? "";
     return (
       <Card className="max-w-md">
         <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
           <p className="text-lg font-medium">✓ Venta registrada</p>
-          <p className="text-2xl font-semibold">{formatCurrency(state.result.total)}</p>
+          <p className="text-2xl font-semibold">{formatCurrency(session.success.total)}</p>
           {methodName && <p className="text-muted-foreground">{methodName}</p>}
           <p className="text-sm text-muted-foreground">Stock actualizado</p>
           <div className="mt-4 flex gap-2">
             <Button onClick={resetForNewSale}>Nueva venta</Button>
-            <Link href={`/pedidos/${state.result.orderId}`}>
+            <Link href={`/pedidos/${session.success.orderId}`}>
               <Button variant="outline">Ver detalle</Button>
             </Link>
           </div>
@@ -228,7 +250,7 @@ export function QuickSaleForm({
       <input type="hidden" name="customer_id" value={customerId} />
       <input type="hidden" name="channel_id" value={channelId} />
       <input type="hidden" name="discount_total" value={discountTotal > 0 ? String(discountTotal) : ""} />
-      <input type="hidden" name="client_request_id" value={clientRequestId} />
+      <input type="hidden" name="client_request_id" value={session.clientRequestId} />
 
       {/* Buscador de producto */}
       <div className="space-y-2">
