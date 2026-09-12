@@ -339,6 +339,19 @@ export async function getTopProducts(filters: DashboardFilters = defaultDashboar
   return [...byVariant.values()].sort((a, b) => b.unitsSold - a.unitsSold).slice(0, limit);
 }
 
+/**
+ * Mix de ingresos por unidad/fuente (auditoría "Próxima evolución
+ * operativa", bloque 1) — a diferencia de getMixByChannel, ESTE mix sí
+ * incorpora Talleres: las cuotas de talleres son un ingreso real de un
+ * "negocio" propio aunque nunca vivan en `orders`. Se suman como una
+ * fuente más, con el mismo criterio de inclusión ya establecido para el
+ * KPI "Cobrado del período" (getDashboardSummary): sólo cuando el filtro
+ * de unidad es "Todas" o específicamente "classes", y sólo si no hay un
+ * filtro de canal activo (las cuotas no tienen canal — nunca se les
+ * asigna uno artificial, se excluyen en cambio). Mix POR CANAL
+ * (getMixByChannel, más abajo) nunca incluye Talleres — ver su propio
+ * comentario.
+ */
 export async function getSalesByBusinessUnit(filters: DashboardFilters = defaultDashboardFilters()) {
   const supabase = await createClient();
   const { fromIso, toIso } = dateRange(filters);
@@ -351,14 +364,48 @@ export async function getSalesByBusinessUnit(filters: DashboardFilters = default
   if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
-  const { data } = await query;
+
+  const { data: classesUnit } = await supabase.from("business_units").select("id,name").eq("code", "classes").maybeSingle();
+  const includeWorkshops =
+    (filters.businessUnitIds == null || (classesUnit != null && filters.businessUnitIds.includes(classesUnit.id))) &&
+    filters.channelId == null;
+
+  const [{ data }, workshopsTotal] = await Promise.all([
+    query,
+    includeWorkshops ? getWorkshopDuePaymentsTotal(supabase, fromIso, toIso, filters.locationId) : Promise.resolve(0),
+  ]);
 
   const byUnit = new Map<string, number>();
   for (const row of data ?? []) {
     const unit = (row.business_units as unknown as { name: string } | null)?.name ?? "Sin unidad";
     byUnit.set(unit, (byUnit.get(unit) ?? 0) + row.total);
   }
+  if (includeWorkshops && workshopsTotal > 0) {
+    const label = classesUnit?.name ?? "Talleres";
+    byUnit.set(label, (byUnit.get(label) ?? 0) + workshopsTotal);
+  }
   return [...byUnit.entries()].map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
+}
+
+/** Cuotas de talleres cobradas en el rango — mismo join de 3 niveles ya
+ * usado en getDashboardSummary para el filtro de ubicación. */
+async function getWorkshopDuePaymentsTotal(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  fromIso: string,
+  toIso: string,
+  locationId: string | null
+): Promise<number> {
+  let dueQuery = supabase
+    .from("payments")
+    .select("amount,workshop_dues!inner(workshop_enrollments!inner(workshop_groups!inner(location_id)))")
+    .not("workshop_due_id", "is", null)
+    .gte("paid_at", fromIso)
+    .lte("paid_at", toIso);
+  if (locationId) {
+    dueQuery = dueQuery.eq("workshop_dues.workshop_enrollments.workshop_groups.location_id", locationId);
+  }
+  const { data } = await dueQuery;
+  return (data ?? []).reduce((sum: number, p: { amount: number }) => sum + p.amount, 0);
 }
 
 /**
@@ -367,6 +414,13 @@ export async function getSalesByBusinessUnit(filters: DashboardFilters = default
  * DOS FKs a `sales_channels` (origin_channel_id y closing_channel_id) —
  * PostgREST rechaza un embed `sales_channels(name)` ambiguo
  * (PGRST201) si no se nombra la FK exacta.
+ *
+ * A diferencia de getSalesByBusinessUnit, este mix NUNCA incorpora
+ * Talleres (ni, más adelante, Otros ingresos) — ninguno de los dos tiene
+ * un canal real. "Por canal" es semánticamente distinto de "por unidad/
+ * fuente" (auditoría "Próxima evolución operativa", bloque 1): mezclar
+ * ambos asignándole un canal artificial a las cuotas ensuciaría esta
+ * vista con datos que no representan un canal de cierre real.
  */
 export async function getMixByChannel(filters: DashboardFilters = defaultDashboardFilters()) {
   const supabase = await createClient();
@@ -396,16 +450,25 @@ export type SalesOverTimePoint = { bucket: string; total: number };
  * Ventas en el tiempo — bucket diario si el rango es corto (≤62 días,
  * cómodo de leer en un gráfico de barras), mensual si es más largo (un
  * año entero en barras diarias sería ilegible).
+ *
+ * Agrupa por `sold_at` (auditoría "Próxima evolución operativa", bloque
+ * 1) — nunca por `created_at`. Un pedido cargado un día y entregado
+ * otro tiene que aparecer en el día real de la venta, no en el día en
+ * que se cargó al sistema. Como consecuencia, sólo entran acá pedidos
+ * que ya tienen `sold_at` (es decir, que llegaron a `delivered`) — un
+ * pedido todavía en curso no es una venta todavía, así que no debe
+ * sumar en "Ventas en el tiempo".
  */
 export async function getSalesOverTime(filters: DashboardFilters = defaultDashboardFilters()): Promise<SalesOverTimePoint[]> {
   const supabase = await createClient();
   const { fromIso, toIso } = dateRange(filters);
   let query = supabase
     .from("orders")
-    .select("total,created_at")
+    .select("total,sold_at")
     .neq("status", "cancelled")
-    .gte("created_at", fromIso)
-    .lte("created_at", toIso);
+    .not("sold_at", "is", null)
+    .gte("sold_at", fromIso)
+    .lte("sold_at", toIso);
   if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
@@ -428,7 +491,8 @@ export async function getSalesOverTime(filters: DashboardFilters = defaultDashbo
 
   const totals = new Map<string, number>();
   for (const row of data ?? []) {
-    const bucket = bucketOf(row.created_at);
+    if (!row.sold_at) continue;
+    const bucket = bucketOf(row.sold_at);
     totals.set(bucket, (totals.get(bucket) ?? 0) + row.total);
   }
   return [...totals.entries()].map(([bucket, total]) => ({ bucket, total })).sort((a, b) => a.bucket.localeCompare(b.bucket));
