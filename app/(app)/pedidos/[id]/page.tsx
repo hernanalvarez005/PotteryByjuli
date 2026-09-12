@@ -18,6 +18,7 @@ import {
 import { StatusSelect } from "./status-select";
 import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
+import { generateWholesaleDocumentForOrder, generateOrderSummaryPdf } from "./document-actions";
 import { AssociateCustomerDialog } from "./associate-customer-dialog";
 
 export default async function OrderDetailPage({
@@ -87,13 +88,25 @@ export default async function OrderDetailPage({
   // Sólo relevante para pedidos mayoristas: documento generado en el
   // checkout, y un posible conflicto de identidad sin resolver del cliente
   // asociado (ver docs/business-rules.md § Checkout mayorista — dedup).
-  const [{ data: attachment }, { data: identityConflict }] = await Promise.all([
+  const [{ data: attachment }, { data: summaryAttachment }, { data: identityConflict }] = await Promise.all([
     isWholesaleOrder
       ? supabase
           .from("order_attachments")
           .select("storage_path")
           .eq("order_id", id)
           .eq("kind", "wholesale_request_pdf")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    // "Resumen PDF del pedido" (sección 10/11) — cualquier pedido que no
+    // sea una solicitud mayorista (esa ya tiene su propio documento).
+    !isWholesaleOrder
+      ? supabase
+          .from("order_attachments")
+          .select("storage_path")
+          .eq("order_id", id)
+          .eq("kind", "order_summary_pdf")
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle()
@@ -353,7 +366,31 @@ export default async function OrderDetailPage({
               <CardTitle className="text-base">Documento</CardTitle>
             </CardHeader>
             <CardContent>
-              <DocumentPanel orderId={order.id} storagePath={attachment?.storage_path ?? null} canEdit={canEdit} />
+              <DocumentPanel
+                orderId={order.id}
+                storagePath={attachment?.storage_path ?? null}
+                canEdit={canEdit}
+                generateAction={generateWholesaleDocumentForOrder}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {!isWholesaleOrder && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Resumen PDF</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DocumentPanel
+                orderId={order.id}
+                storagePath={summaryAttachment?.storage_path ?? null}
+                canEdit={canEdit}
+                generateAction={generateOrderSummaryPdf}
+                missingLabel="Todavía no se generó el resumen PDF de este pedido."
+                generateLabel="Generar resumen PDF"
+                allowRegenerate
+              />
             </CardContent>
           </Card>
         )}

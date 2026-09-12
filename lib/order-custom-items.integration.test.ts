@@ -149,7 +149,14 @@ describe.skipIf(!hasCredentials)("create_order — custom/non-stock items (local
   });
 
   it("a custom item never creates a row in products/product_variants", async () => {
-    const { count: before } = await admin.from("products").select("id", { count: "exact", head: true });
+    // Comparar un conteo global de `products` antes/después es una
+    // condición de carrera real cuando otros archivos de test corren en
+    // paralelo contra el mismo Supabase local y crean productos propios
+    // (mismo problema ya resuelto en quick-retail-sale.integration.test.ts).
+    // En cambio, buscar por el nombre exacto del ítem custom es
+    // determinístico: si create_order alguna vez creara un producto por
+    // error, lo más probable es que lo nombre igual que el custom_name.
+    const uniqueCustomName = `Pieza única ${crypto.randomUUID()}`;
     const { data: orderId } = await owner.rpc("create_order", {
       p_business_unit_id: customUnitId,
       p_customer_id: customerId,
@@ -160,10 +167,13 @@ describe.skipIf(!hasCredentials)("create_order — custom/non-stock items (local
       p_delivery_address: null,
       p_estimated_date: null,
       p_notes: null,
-      p_items: [{ custom_name: "Pieza única", quantity: 1, unit_price: 30000 }],
+      p_items: [{ custom_name: uniqueCustomName, quantity: 1, unit_price: 30000 }],
     });
     createdOrderIds.push(orderId as string);
-    const { count: after } = await admin.from("products").select("id", { count: "exact", head: true });
-    expect(after).toBe(before);
+    const { count: matchingProducts } = await admin
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .eq("name", uniqueCustomName);
+    expect(matchingProducts).toBe(0);
   });
 });
