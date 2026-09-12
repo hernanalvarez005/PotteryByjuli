@@ -3,6 +3,7 @@ import {
   Home,
   Calendar,
   ShoppingCart,
+  ShoppingBag,
   Users,
   Store,
   Package,
@@ -45,6 +46,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Comercial",
     items: [
+      { label: "Ventas", href: "/ventas", icon: ShoppingBag, phase: 9.5 },
       { label: "Pedidos", href: "/pedidos", icon: ShoppingCart, phase: 3 },
       { label: "Clientes", href: "/clientes", icon: Users, phase: 2 },
       { label: "Mayoristas", href: "/mayoristas", icon: Store, phase: 5 },

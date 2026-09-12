@@ -9,7 +9,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 // (misma política que el resto de esta sesión). Usa el cliente admin para
 // el setup y un cliente anon logueado como el usuario owner de prueba para
 // llamar el RPC exactamente como lo llamaría la app (createQuickSale en
-// app/(app)/pedidos/venta-rapida/actions.ts).
+// app/(app)/ventas/nueva/actions.ts).
 //
 // Precisiones de la usuaria que estos tests existen específicamente para
 // blindar (ExitPlanMode, 2026-09-11): el precio nunca lo decide el
@@ -169,13 +169,16 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
 
     const { data: order } = await admin
       .from("orders")
-      .select("status,total,customer_id,location_id")
+      .select("status,total,customer_id,location_id,operation_type")
       .eq("id", result.order_id)
       .single();
     expect(order?.status).toBe("delivered");
     expect(order?.total).toBe(4000);
     expect(order?.customer_id).toBeNull();
     expect(order?.location_id).toBe(locationId);
+    // Bloque 2: create_quick_retail_sale siempre marca retail_sale — nunca
+    // se distingue de un pedido común por status/business_unit_id.
+    expect(order?.operation_type).toBe("retail_sale");
 
     const { data: payment } = await admin.from("payments").select("amount").eq("order_id", result.order_id).single();
     expect(payment?.amount).toBe(4000);

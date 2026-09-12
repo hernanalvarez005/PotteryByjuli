@@ -92,8 +92,11 @@ describe.skipIf(!hasCredentials)("create_order — custom/non-stock items (local
     expect(item?.custom_name).toBe("30 tazas personalizadas");
     expect(item?.quantity).toBe(30);
 
-    const { data: order } = await admin.from("orders").select("total").eq("id", orderId).single();
+    const { data: order } = await admin.from("orders").select("total,operation_type").eq("id", orderId).single();
     expect(order?.total).toBe(540000);
+    // Bloque 2: create_order siempre marca 'order' — nunca 'retail_sale',
+    // sin importar la unidad de negocio o si el ítem es custom.
+    expect(order?.operation_type).toBe("order");
   });
 
   it("rejects an item with neither product_variant_id nor custom_name", async () => {
