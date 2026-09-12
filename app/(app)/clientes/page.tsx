@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { NewCustomerDialog } from "./new-customer-dialog";
+import { CustomerSearchBar } from "./customer-search-bar";
 
 const SEGMENTS = [
   { value: "all", label: "Todos" },
@@ -33,20 +34,29 @@ const STATUS_BADGE_VARIANT: Record<DueDisplayStatus | "no_due", "secondary" | "o
 export default async function ClientesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ segment?: string }>;
+  searchParams: Promise<{ segment?: string; q?: string }>;
 }) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
-  const { segment = "all" } = await searchParams;
+  const { segment = "all", q = "" } = await searchParams;
 
-  const customers = await getCustomers();
+  const customers = await getCustomers(q);
   const filteredCustomers =
     segment === "wholesale"
       ? customers.filter((c) => c.customer_tag_links.some((l) => l.customer_tags.code === "wholesale"))
       : customers;
 
   const period = currentPeriod();
-  const roster = segment === "students" ? await getStudentRoster(period) : [];
+  // El roster de alumnas viene de una query enrollment-first (no
+  // customer-first) — filtrar server-side necesitaría un `.ilike()`
+  // anidado sobre el embed de customers. Dado que el universo de
+  // inscripciones activas es chico (nunca "el listado puede crecer" sin
+  // límite como el de clientes en general), se filtra acá en memoria
+  // después de traerlo — sigue combinándose con ?segment=students igual.
+  const fullRoster = segment === "students" ? await getStudentRoster(period) : [];
+  const roster = q.trim()
+    ? fullRoster.filter((r) => r.customerName.toLowerCase().includes(q.trim().toLowerCase()))
+    : fullRoster;
 
   return (
     <div className="flex flex-col gap-6">
@@ -62,14 +72,22 @@ export default async function ClientesPage({
       </div>
 
       <div className="flex flex-wrap gap-1">
-        {SEGMENTS.map((s) => (
-          <Link key={s.value} href={s.value === "all" ? "/clientes" : `/clientes?segment=${s.value}`}>
-            <Badge variant={segment === s.value ? "secondary" : "outline"} className="cursor-pointer">
-              {s.label}
-            </Badge>
-          </Link>
-        ))}
+        {SEGMENTS.map((s) => {
+          const params = new URLSearchParams();
+          if (s.value !== "all") params.set("segment", s.value);
+          if (q.trim()) params.set("q", q.trim());
+          const href = params.toString() ? `/clientes?${params.toString()}` : "/clientes";
+          return (
+            <Link key={s.value} href={href}>
+              <Badge variant={segment === s.value ? "secondary" : "outline"} className="cursor-pointer">
+                {s.label}
+              </Badge>
+            </Link>
+          );
+        })}
       </div>
+
+      <CustomerSearchBar defaultValue={q} />
 
       {segment === "students" ? (
         roster.length === 0 ? (
