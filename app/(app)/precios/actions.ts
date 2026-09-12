@@ -30,5 +30,10 @@ export async function upsertPrice(
 
   revalidatePath("/precios");
   revalidatePath("/productos");
+  // Un precio mayorista editado acá es exactamente lo que /mayorista
+  // muestra al público — sin esto, un cambio de precio podía quedar
+  // sirviendo una respuesta cacheada hasta la próxima revalidación
+  // natural de esa ruta (auditoría de la tanda de usabilidad, ítem 26).
+  revalidatePath("/mayorista");
   return {};
 }
