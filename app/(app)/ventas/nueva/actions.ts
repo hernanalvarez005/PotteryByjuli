@@ -89,7 +89,7 @@ export async function createQuickSale(
     return { error: error?.message ?? "No se pudo registrar la venta." };
   }
 
-  revalidatePath("/pedidos");
+  revalidatePath("/ventas");
   revalidatePath("/dashboard");
   revalidatePath("/reportes");
   revalidatePath("/stock");

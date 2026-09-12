@@ -4,7 +4,6 @@ import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { getOrders } from "@/lib/orders";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { ORDER_STATUS_LABELS } from "@/schemas/orders";
 import {
   Table,
   TableBody,
@@ -13,39 +12,36 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-export default async function PedidosPage() {
+export default async function VentasPage() {
   const user = await requireUser();
-  const canEdit = isOwner(user) || hasRole(user, "operations");
-  const { orders, paidByOrder } = await getOrders({ operationType: "order" });
+  const canSell = isOwner(user) || hasRole(user, "operations");
+  const { orders, paidByOrder } = await getOrders({ operationType: "retail_sale" });
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Pedidos</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Ventas</h1>
           <p className="text-muted-foreground">
-            Encargos y personalizados — mayoristas se suman en la Fase 5. Las
-            ventas minoristas viven en Ventas.
+            Ventas minoristas rápidas — encargos y personalizados viven en
+            Pedidos.
           </p>
         </div>
-        {canEdit && (
-          <div className="flex gap-2">
-            <Link href="/pedidos/nuevo">
-              <Button size="sm">
-                <Plus className="size-4" />
-                Nuevo pedido
-              </Button>
-            </Link>
-          </div>
+        {canSell && (
+          <Link href="/ventas/nueva">
+            <Button size="sm">
+              <Plus className="size-4" />
+              Nueva venta minorista
+            </Button>
+          </Link>
         )}
       </div>
 
       {orders.length === 0 ? (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-          Todavía no hay pedidos cargados.
+          Todavía no hay ventas registradas.
         </p>
       ) : (
         <Table>
@@ -54,7 +50,6 @@ export default async function PedidosPage() {
               <TableHead>Código</TableHead>
               <TableHead>Cliente</TableHead>
               <TableHead>Unidad</TableHead>
-              <TableHead>Estado</TableHead>
               <TableHead>Total</TableHead>
               <TableHead>Saldo</TableHead>
               <TableHead>Fecha</TableHead>
@@ -79,9 +74,6 @@ export default async function PedidosPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {order.business_units?.name ?? "—"}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{ORDER_STATUS_LABELS[order.status]}</Badge>
                   </TableCell>
                   <TableCell>{formatCurrency(order.total)}</TableCell>
                   <TableCell className={balance > 0 ? "text-amber-600" : "text-muted-foreground"}>
