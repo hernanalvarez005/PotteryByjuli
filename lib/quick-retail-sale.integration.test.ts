@@ -269,21 +269,28 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
   it("insufficient stock across two items rolls back everything — zero new rows anywhere, names the short product", async () => {
     const ok = await makeVariant("Alcanza", 1000, 10);
     const short = await makeVariant("No alcanza", 1000, 1);
-
-    const { data: ordersBefore } = await admin.from("orders").select("id");
-    const beforeCount = ordersBefore?.length ?? 0;
+    // Un client_request_id propio de este intento — así "cero pedidos
+    // nuevos" se puede confirmar de forma exacta (contando sólo pedidos
+    // con ESTE id) en vez de comparar el conteo total de `orders` antes/
+    // después, que es una condición de carrera real cuando otros
+    // archivos de test corren en paralelo contra la misma base local.
+    const requestId = crypto.randomUUID();
 
     const { error } = await callSale({
       p_items: [
         { product_variant_id: ok.variantId, quantity: 1 },
         { product_variant_id: short.variantId, quantity: 5 },
       ],
+      p_client_request_id: requestId,
     });
     expect(error).not.toBeNull();
     expect(error!.message).toContain("No alcanza");
 
-    const { data: ordersAfter } = await admin.from("orders").select("id");
-    expect(ordersAfter?.length ?? 0).toBe(beforeCount);
+    const { count: ordersWithThisRequestId } = await admin
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("client_request_id", requestId);
+    expect(ordersWithThisRequestId).toBe(0);
     // Ninguno de los dos ítems se tocó — ni siquiera el que sí alcanzaba.
     expect(await physicalStock(ok.variantId)).toBe(10);
     expect(await physicalStock(short.variantId)).toBe(1);
