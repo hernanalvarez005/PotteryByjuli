@@ -11,7 +11,7 @@ export default async function NewOrderPage() {
   const canEdit = isOwner(user) || hasRole(user, "operations");
 
   const supabase = await createClient();
-  const [{ data: customers }, { data: businessUnits }, { data: channels }, { data: locations }, products] =
+  const [{ data: customers }, { data: businessUnits }, { data: channels }, { data: locations }, { data: methods }, { data: accounts }, products] =
     await Promise.all([
       supabase
         .from("customers")
@@ -21,6 +21,8 @@ export default async function NewOrderPage() {
       supabase.from("business_units").select("id,name").eq("is_active", true).order("sort_order"),
       supabase.from("sales_channels").select("id,name").eq("is_active", true).order("sort_order"),
       supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
+      supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),
+      supabase.from("payment_accounts").select("id,name").eq("is_active", true).order("code"),
       getProductsWithVariants(),
     ]);
 
@@ -65,6 +67,8 @@ export default async function NewOrderPage() {
           channels={channels ?? []}
           locations={locations ?? []}
           variants={variantOptions}
+          paymentMethods={methods ?? []}
+          paymentAccounts={accounts ?? []}
         />
       )}
     </div>

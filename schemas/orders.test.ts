@@ -87,6 +87,40 @@ describe("createOrderSchema", () => {
   });
 });
 
+// Pago opcional al crear el pedido (tanda de usabilidad, sección 3) —
+// nunca obligatorio. register_payment es un checkbox: ausente del
+// FormData real es `null`, nunca "on"/"off".
+describe("createOrderSchema.register_payment", () => {
+  it("defaults to false when the checkbox is absent (null), not just missing", () => {
+    const result = createOrderSchema.safeParse({ ...baseOrder, register_payment: null });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.register_payment).toBe(false);
+  });
+
+  it("is true only when the value is exactly 'on'", () => {
+    const result = createOrderSchema.safeParse({ ...baseOrder, register_payment: "on" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.register_payment).toBe(true);
+  });
+
+  it("accepts payment_amount/payment_method_id/payment_account_id/payment_paid_at as bare nulls when the payment section was never opened", () => {
+    const result = createOrderSchema.safeParse({
+      ...baseOrder,
+      register_payment: null,
+      payment_amount: null,
+      payment_method_id: null,
+      payment_account_id: null,
+      payment_paid_at: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.payment_amount).toBeNull();
+      expect(result.data.payment_method_id).toBeNull();
+      expect(result.data.payment_paid_at).toBeNull();
+    }
+  });
+});
+
 // paid_at siempre explícito, nunca un atajo "si es hoy, se omite y cae el
 // default now()" (precisión de la usuaria en la tanda de mejoras
 // operativas) — un único contrato formulario→paid_at→DB.

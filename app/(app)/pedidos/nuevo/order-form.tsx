@@ -13,9 +13,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Trash2, Plus, UserPlus } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { createOrder } from "../actions";
+import { CustomerQuickCreate } from "@/app/(app)/clientes/customer-quick-create";
 
 type Option = { id: string; name: string };
 type VariantOption = {
@@ -38,15 +46,24 @@ export function OrderForm({
   channels,
   locations,
   variants,
+  paymentMethods,
+  paymentAccounts,
 }: {
   customers: Option[];
   businessUnits: Option[];
   channels: Option[];
   locations: Option[];
   variants: VariantOption[];
+  paymentMethods: Option[];
+  paymentAccounts: Option[];
 }) {
   const [state, formAction, isPending] = useActionState(createOrder, {});
+  const [customerList, setCustomerList] = useState(customers);
   const [customerId, setCustomerId] = useState("");
+  const [newCustomerDialogOpen, setNewCustomerDialogOpen] = useState(false);
+  const [registerPayment, setRegisterPayment] = useState(false);
+  const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [paymentAccountId, setPaymentAccountId] = useState("");
   const [businessUnitId, setBusinessUnitId] = useState("");
   const [originChannelId, setOriginChannelId] = useState("");
   const [closingChannelId, setClosingChannelId] = useState("");
@@ -64,11 +81,13 @@ export function OrderForm({
   // (same root cause already fixed in the bulk-price dialog, the
   // /mayorista product-card variant selector, and the workshop due-extras
   // dialog — this form was the one place it never got applied).
-  const customerLabels = useMemo(() => Object.fromEntries(customers.map((c) => [c.id, c.name])), [customers]);
+  const customerLabels = useMemo(() => Object.fromEntries(customerList.map((c) => [c.id, c.name])), [customerList]);
   const businessUnitLabels = useMemo(() => Object.fromEntries(businessUnits.map((b) => [b.id, b.name])), [businessUnits]);
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.id, c.name])), [channels]);
   const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
   const variantLabels = useMemo(() => Object.fromEntries(variants.map((v) => [v.id, v.label])), [variants]);
+  const methodLabels = useMemo(() => Object.fromEntries(paymentMethods.map((m) => [m.id, m.name])), [paymentMethods]);
+  const accountLabels = useMemo(() => Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name])), [paymentAccounts]);
 
   function updateItem(key: string, patch: Partial<ItemRow>) {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
@@ -120,13 +139,32 @@ export function OrderForm({
                 <SelectValue placeholder="Elegir cliente" />
               </SelectTrigger>
               <SelectContent>
-                {customers.map((c) => (
+                {customerList.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <Dialog open={newCustomerDialogOpen} onOpenChange={setNewCustomerDialogOpen}>
+              <DialogTrigger render={<Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs font-normal" />}>
+                <UserPlus className="size-3.5" />
+                Crear cliente nuevo
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Crear cliente nuevo</DialogTitle>
+                </DialogHeader>
+                <CustomerQuickCreate
+                  onCreated={(id, name) => {
+                    setCustomerList((prev) => (prev.some((c) => c.id === id) ? prev : [...prev, { id, name }]));
+                    setCustomerId(id);
+                    setNewCustomerDialogOpen(false);
+                  }}
+                  onCancel={() => setNewCustomerDialogOpen(false)}
+                />
+              </DialogContent>
+            </Dialog>
           </div>
           <div className="space-y-2">
             <Label htmlFor="business_unit_id_select">Unidad de negocio</Label>
@@ -294,6 +332,68 @@ export function OrderForm({
           <div className="flex justify-end border-t pt-3 text-sm font-medium">
             Subtotal: {formatCurrency(subtotal)}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Pago</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="register_payment"
+              className="size-4"
+              checked={registerPayment}
+              onChange={(e) => setRegisterPayment(e.target.checked)}
+            />
+            Pago recibido
+          </label>
+          {registerPayment && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="payment_amount">Importe</Label>
+                <Input id="payment_amount" name="payment_amount" type="number" min="0" step="0.01" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="payment_paid_at">Fecha real de pago</Label>
+                <Input id="payment_paid_at" name="payment_paid_at" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="payment_method_select">Método</Label>
+                <input type="hidden" name="payment_method_id" value={paymentMethodId} />
+                <Select items={methodLabels} value={paymentMethodId} onValueChange={(v) => setPaymentMethodId(v ?? "")}>
+                  <SelectTrigger id="payment_method_select" className="w-full">
+                    <SelectValue placeholder="Elegir método" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="payment_account_select">Cuenta</Label>
+                <input type="hidden" name="payment_account_id" value={paymentAccountId} />
+                <Select items={accountLabels} value={paymentAccountId} onValueChange={(v) => setPaymentAccountId(v ?? "")}>
+                  <SelectTrigger id="payment_account_select" className="w-full">
+                    <SelectValue placeholder="Elegir cuenta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentAccounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
