@@ -11,16 +11,33 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PriceCell } from "./price-cell";
+import { PriceConditionManager } from "./price-condition-manager";
 
 export default async function PreciosPage() {
   const user = await requireUser();
   const canEdit = isOwner(user);
 
   const supabase = await createClient();
-  const [{ data: priceLists }, products] = await Promise.all([
+  const [{ data: priceLists }, products, { data: conditionRows }, { data: allMethods }] = await Promise.all([
     supabase.from("price_lists").select("id,code,name").order("name"),
     getProductsWithVariants(),
+    supabase
+      .from("price_conditions")
+      .select("id,code,name,is_active,price_condition_payment_methods(payment_methods(id,name))")
+      .order("sort_order")
+      .order("name"),
+    supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),
   ]);
+
+  const conditions = (conditionRows ?? []).map((c) => ({
+    id: c.id,
+    code: c.code,
+    name: c.name,
+    is_active: c.is_active,
+    methods: (c.price_condition_payment_methods as unknown as { payment_methods: { id: string; name: string } | null }[])
+      .map((link) => link.payment_methods)
+      .filter((m): m is { id: string; name: string } => m !== null),
+  }));
 
   const activeProducts = products.filter((p) => p.is_active);
   const variantIds = activeProducts.flatMap((p) => p.product_variants.map((v) => v.id));
@@ -46,6 +63,8 @@ export default async function PreciosPage() {
           reescribe pedidos ya hechos, esos guardan el precio del momento.
         </p>
       </div>
+
+      {canEdit && <PriceConditionManager conditions={conditions} allMethods={allMethods ?? []} />}
 
       {activeProducts.length === 0 ? (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">

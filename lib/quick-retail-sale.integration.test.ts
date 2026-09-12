@@ -49,6 +49,7 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
   let locationId: string;
   let otherLocationId: string;
   let bankTransferMethodId: string;
+  let generalConditionId: string;
   const createdProductIds: string[] = [];
 
   /** Producto con su variante única (auto-creada), precio minorista
@@ -112,6 +113,7 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
       p_payment_account_id: null,
       p_discount_total: 0,
       p_client_request_id: null,
+      p_price_condition_id: generalConditionId,
       ...overrides,
     });
   }
@@ -149,6 +151,8 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     otherLocationId = tresLomas!.id;
     const { data: bankTransfer } = await admin.from("payment_methods").select("id").eq("code", "bank_transfer").single();
     bankTransferMethodId = bankTransfer!.id;
+    const { data: generalCondition } = await admin.from("price_conditions").select("id").eq("code", "general").single();
+    generalConditionId = generalCondition!.id;
   });
 
   afterAll(async () => {
@@ -169,7 +173,7 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
 
     const { data: order } = await admin
       .from("orders")
-      .select("status,total,customer_id,location_id,operation_type")
+      .select("status,total,customer_id,location_id,operation_type,price_condition_id")
       .eq("id", result.order_id)
       .single();
     expect(order?.status).toBe("delivered");
@@ -179,6 +183,9 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     // Bloque 2: create_quick_retail_sale siempre marca retail_sale — nunca
     // se distingue de un pedido común por status/business_unit_id.
     expect(order?.operation_type).toBe("retail_sale");
+    // Bloque 3: la condición de precio elegida queda snapshoteada en el
+    // pedido — nunca se le adivina ni queda vacía.
+    expect(order?.price_condition_id).toBe(generalConditionId);
 
     const { data: payment } = await admin.from("payments").select("amount").eq("order_id", result.order_id).single();
     expect(payment?.amount).toBe(4000);
@@ -359,5 +366,47 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     expect(error).toBeNull();
     expect(await physicalStock(variantId, locationId)).toBe(1);
     expect(await physicalStock(variantId, otherLocationId)).toBe(10);
+  });
+
+  // Bloque 3: la condición de precio ya no es opcional ni hardcodeada a
+  // 'retail' — el RPC la exige y la valida él mismo, nunca confía en que
+  // el cliente mande una válida.
+  it("rejects a sale with no price_condition_id at all", async () => {
+    const { variantId } = await makeVariant("Sin condición", 1000, 5);
+    const { error } = await callSale({
+      p_items: [{ product_variant_id: variantId, quantity: 1 }],
+      p_price_condition_id: null,
+    });
+    expect(error).not.toBeNull();
+    expect(error!.message).toContain("condición de precio");
+    expect(await physicalStock(variantId)).toBe(5);
+  });
+
+  it("rejects a sale with a price_condition_id that doesn't exist", async () => {
+    const { variantId } = await makeVariant("Condición inexistente", 1000, 5);
+    const { error } = await callSale({
+      p_items: [{ product_variant_id: variantId, quantity: 1 }],
+      p_price_condition_id: crypto.randomUUID(),
+    });
+    expect(error).not.toBeNull();
+    expect(await physicalStock(variantId)).toBe(5);
+  });
+
+  it("rejects a sale under a price_condition_id that exists but is inactive", async () => {
+    const { variantId } = await makeVariant("Condición inactiva", 1000, 5);
+    const { data: created } = await admin.rpc("create_price_condition", {
+      p_code: `inactive-test-${Date.now()}`,
+      p_name: "Inactiva (test)",
+      p_payment_method_ids: [],
+    });
+    const inactiveConditionId = created as string;
+    await admin.from("price_conditions").update({ is_active: false }).eq("id", inactiveConditionId);
+
+    const { error } = await callSale({
+      p_items: [{ product_variant_id: variantId, quantity: 1 }],
+      p_price_condition_id: inactiveConditionId,
+    });
+    expect(error).not.toBeNull();
+    expect(await physicalStock(variantId)).toBe(5);
   });
 });
