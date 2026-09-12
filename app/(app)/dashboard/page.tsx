@@ -29,7 +29,7 @@ const ROLE_LABELS: Record<string, string> = {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; unit?: string; location?: string; channel?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; business_units?: string; location?: string; channel?: string }>;
 }) {
   const user = await requireUser();
   const hasAnyRole = user.roles.length > 0;
@@ -37,10 +37,16 @@ export default async function DashboardPage({
 
   const params = await searchParams;
   const defaults = defaultDashboardFilters();
+  // Multi-select de unidades de negocio (sección 31-33) — ?business_units=
+  // es una lista separada por comas; ausente o vacía = "Todas" (null),
+  // nunca una lista hardcodeada que pueda quedar vieja.
+  const businessUnitIds = params.business_units
+    ? params.business_units.split(",").filter(Boolean)
+    : null;
   const filters: DashboardFilters = {
     from: params.from && /^\d{4}-\d{2}-\d{2}$/.test(params.from) ? params.from : defaults.from,
     to: params.to && /^\d{4}-\d{2}-\d{2}$/.test(params.to) ? params.to : defaults.to,
-    businessUnitId: params.unit ?? null,
+    businessUnitIds: businessUnitIds && businessUnitIds.length > 0 ? businessUnitIds : null,
     locationId: params.location ?? null,
     channelId: params.channel ?? null,
   };

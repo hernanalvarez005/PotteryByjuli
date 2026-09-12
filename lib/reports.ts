@@ -52,7 +52,11 @@ function todayIso(): string {
 export type DashboardFilters = {
   from: string;
   to: string;
-  businessUnitId: string | null;
+  /** null = "Todas" (sección 33: nunca una lista hardcodeada de ids que
+   * pueda quedar vieja si se agrega una unidad de negocio nueva) — un
+   * array de 1+ ids es un multi-select real (sección 31-32), nunca
+   * "traer todo y filtrar en React". */
+  businessUnitIds: string[] | null;
   locationId: string | null;
   channelId: string | null;
 };
@@ -66,7 +70,7 @@ export function defaultDashboardFilters(): DashboardFilters {
   })
     .format(now)
     .concat("-01");
-  return { from: monthStart, to: todayInArgentina(), businessUnitId: null, locationId: null, channelId: null };
+  return { from: monthStart, to: todayInArgentina(), businessUnitIds: null, locationId: null, channelId: null };
 }
 
 /**
@@ -76,7 +80,7 @@ export function defaultDashboardFilters(): DashboardFilters {
  * dashboard sirven para el histórico completo con este único filtro.
  */
 export function allTimeDashboardFilters(): DashboardFilters {
-  return { from: "2000-01-01", to: todayInArgentina(), businessUnitId: null, locationId: null, channelId: null };
+  return { from: "2000-01-01", to: todayInArgentina(), businessUnitIds: null, locationId: null, channelId: null };
 }
 
 function dateRange(filters: Pick<DashboardFilters, "from" | "to">) {
@@ -113,7 +117,8 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   // Las cuotas de talleres no tienen business_unit_id propio — sólo
   // corresponde incluirlas cuando el filtro es "Todas" o específicamente
   // "classes" (decisión de arquitectura de esta tanda).
-  const includeDuesInFilter = filters.businessUnitId == null || filters.businessUnitId === classesUnitId;
+  const includeDuesInFilter =
+    filters.businessUnitIds == null || (classesUnitId != null && filters.businessUnitIds.includes(classesUnitId));
   // Tampoco tienen canal — un filtro de canal activo las excluye siempre
   // (se avisa explícitamente en la UI, nunca parece un bug silencioso).
   const includeDuePayments = includeDuesInFilter && filters.channelId == null;
@@ -124,7 +129,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     .neq("status", "cancelled")
     .gte("created_at", fromIso)
     .lte("created_at", toIso);
-  if (filters.businessUnitId) filteredOrdersQuery = filteredOrdersQuery.eq("business_unit_id", filters.businessUnitId);
+  if (filters.businessUnitIds) filteredOrdersQuery = filteredOrdersQuery.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) filteredOrdersQuery = filteredOrdersQuery.eq("location_id", filters.locationId);
   if (filters.channelId) filteredOrdersQuery = filteredOrdersQuery.eq("closing_channel_id", filters.channelId);
 
@@ -135,7 +140,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     .neq("orders.status", "cancelled")
     .gte("paid_at", fromIso)
     .lte("paid_at", toIso);
-  if (filters.businessUnitId) filteredOrderPaymentsQuery = filteredOrderPaymentsQuery.eq("orders.business_unit_id", filters.businessUnitId);
+  if (filters.businessUnitIds) filteredOrderPaymentsQuery = filteredOrderPaymentsQuery.in("orders.business_unit_id", filters.businessUnitIds);
   if (filters.locationId) filteredOrderPaymentsQuery = filteredOrderPaymentsQuery.eq("orders.location_id", filters.locationId);
   if (filters.channelId) filteredOrderPaymentsQuery = filteredOrderPaymentsQuery.eq("orders.closing_channel_id", filters.channelId);
 
@@ -312,7 +317,7 @@ export async function getTopProducts(filters: DashboardFilters = defaultDashboar
     .neq("orders.status", "cancelled")
     .gte("orders.created_at", fromIso)
     .lte("orders.created_at", toIso);
-  if (filters.businessUnitId) query = query.eq("orders.business_unit_id", filters.businessUnitId);
+  if (filters.businessUnitIds) query = query.in("orders.business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("orders.location_id", filters.locationId);
   if (filters.channelId) query = query.eq("orders.closing_channel_id", filters.channelId);
   const { data } = await query;
@@ -343,7 +348,7 @@ export async function getSalesByBusinessUnit(filters: DashboardFilters = default
     .neq("status", "cancelled")
     .gte("created_at", fromIso)
     .lte("created_at", toIso);
-  if (filters.businessUnitId) query = query.eq("business_unit_id", filters.businessUnitId);
+  if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
   const { data } = await query;
@@ -372,7 +377,7 @@ export async function getMixByChannel(filters: DashboardFilters = defaultDashboa
     .neq("status", "cancelled")
     .gte("created_at", fromIso)
     .lte("created_at", toIso);
-  if (filters.businessUnitId) query = query.eq("business_unit_id", filters.businessUnitId);
+  if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
   const { data } = await query;
@@ -401,7 +406,7 @@ export async function getSalesOverTime(filters: DashboardFilters = defaultDashbo
     .neq("status", "cancelled")
     .gte("created_at", fromIso)
     .lte("created_at", toIso);
-  if (filters.businessUnitId) query = query.eq("business_unit_id", filters.businessUnitId);
+  if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
   const { data } = await query;

@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { todayInArgentina } from "@/lib/format";
+import { BusinessUnitMultiSelect } from "./business-unit-multi-select";
 
 const ALL_VALUE = "__all__";
 
@@ -45,7 +46,7 @@ export function DashboardFilters({
 
   const from = searchParams.get("from") ?? defaultFrom;
   const to = searchParams.get("to") ?? defaultTo;
-  const unit = searchParams.get("unit") ?? ALL_VALUE;
+  const selectedUnitIds = (searchParams.get("business_units") ?? "").split(",").filter(Boolean);
   const location = searchParams.get("location") ?? ALL_VALUE;
   const channel = searchParams.get("channel") ?? ALL_VALUE;
 
@@ -132,11 +133,10 @@ export function DashboardFilters({
         />
       </div>
 
-      <FilterSelect
-        label="Unidad de negocio"
-        value={unit}
+      <BusinessUnitMultiSelect
         options={businessUnits}
-        onChange={(v) => pushParams({ unit: v })}
+        selectedIds={selectedUnitIds}
+        onChange={(ids) => pushParams({ business_units: ids.length > 0 ? ids.join(",") : null })}
       />
       <FilterSelect
         label="Ubicación"
