@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Trash2, Plus, UserPlus } from "lucide-react";
+import { Trash2, Plus, UserPlus, Sparkles } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { createOrder } from "../actions";
 import { CustomerQuickCreate } from "@/app/(app)/clientes/customer-quick-create";
@@ -32,7 +32,13 @@ type VariantOption = {
   retailPrice: number | null;
 };
 
-type ItemRow = { key: string; product_variant_id: string; quantity: number; unit_price: number };
+// Un pedido puede tener ítems de catálogo o ítems no inventariados/
+// personalizados — "custom_name" en vez de "product_variant_id" (ver
+// schemas/orders.ts). Un ítem custom nunca descuenta stock ni crea un
+// producto permanente en /productos — participa del total nomás.
+type CatalogItemRow = { key: string; kind: "catalog"; product_variant_id: string; quantity: number; unit_price: number };
+type CustomItemRow = { key: string; kind: "custom"; custom_name: string; custom_description: string; quantity: number; unit_price: number };
+type ItemRow = CatalogItemRow | CustomItemRow;
 
 const DELIVERY_LABELS: Record<string, string> = {
   pickup: "Retiro",
@@ -70,7 +76,7 @@ export function OrderForm({
   const [locationId, setLocationId] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState("");
   const [items, setItems] = useState<ItemRow[]>([
-    { key: crypto.randomUUID(), product_variant_id: "", quantity: 1, unit_price: 0 },
+    { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", quantity: 1, unit_price: 0 },
   ]);
 
   const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
@@ -89,14 +95,25 @@ export function OrderForm({
   const methodLabels = useMemo(() => Object.fromEntries(paymentMethods.map((m) => [m.id, m.name])), [paymentMethods]);
   const accountLabels = useMemo(() => Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name])), [paymentAccounts]);
 
-  function updateItem(key: string, patch: Partial<ItemRow>) {
-    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  function updateCatalogItem(key: string, patch: Partial<CatalogItemRow>) {
+    setItems((prev) => prev.map((it) => (it.key === key && it.kind === "catalog" ? { ...it, ...patch } : it)));
+  }
+
+  function updateCustomItem(key: string, patch: Partial<CustomItemRow>) {
+    setItems((prev) => prev.map((it) => (it.key === key && it.kind === "custom" ? { ...it, ...patch } : it)));
   }
 
   function addRow() {
     setItems((prev) => [
       ...prev,
-      { key: crypto.randomUUID(), product_variant_id: "", quantity: 1, unit_price: 0 },
+      { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", quantity: 1, unit_price: 0 },
+    ]);
+  }
+
+  function addCustomRow() {
+    setItems((prev) => [
+      ...prev,
+      { key: crypto.randomUUID(), kind: "custom", custom_name: "", custom_description: "", quantity: 1, unit_price: 0 },
     ]);
   }
 
@@ -104,7 +121,9 @@ export function OrderForm({
     setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.key !== key) : prev));
   }
 
-  const validItems = items.filter((it) => it.product_variant_id && it.quantity > 0);
+  const validItems = items.filter((it) =>
+    it.kind === "catalog" ? it.product_variant_id && it.quantity > 0 : it.custom_name.trim() && it.quantity > 0
+  );
   const subtotal = validItems.reduce((sum, it) => sum + it.quantity * it.unit_price, 0);
 
   return (
@@ -113,11 +132,11 @@ export function OrderForm({
         type="hidden"
         name="items"
         value={JSON.stringify(
-          validItems.map((it) => ({
-            product_variant_id: it.product_variant_id,
-            quantity: it.quantity,
-            unit_price: it.unit_price,
-          }))
+          validItems.map((it) =>
+            it.kind === "catalog"
+              ? { product_variant_id: it.product_variant_id, quantity: it.quantity, unit_price: it.unit_price }
+              : { custom_name: it.custom_name, custom_description: it.custom_description || undefined, quantity: it.quantity, unit_price: it.unit_price }
+          )
         )}
       />
       <input type="hidden" name="customer_id" value={customerId} />
@@ -261,73 +280,130 @@ export function OrderForm({
           <CardTitle className="text-base">Productos</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {items.map((item) => (
-            <div key={item.key} className="flex items-end gap-2">
-              <div className="flex-1 space-y-1">
-                <Label className="text-xs text-muted-foreground">Producto</Label>
-                <Select
-                  items={variantLabels}
-                  value={item.product_variant_id}
-                  onValueChange={(value) => {
-                    if (!value) return;
-                    const variant = variantById.get(value);
-                    updateItem(item.key, {
-                      product_variant_id: value,
-                      unit_price: variant?.retailPrice ?? 0,
-                    });
-                  }}
+          {items.map((item) =>
+            item.kind === "catalog" ? (
+              <div key={item.key} className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs text-muted-foreground">Producto</Label>
+                  <Select
+                    items={variantLabels}
+                    value={item.product_variant_id}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      const variant = variantById.get(value);
+                      updateCatalogItem(item.key, {
+                        product_variant_id: value,
+                        unit_price: variant?.retailPrice ?? 0,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Elegir producto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {variants.map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="w-20 space-y-1">
+                  <Label className="text-xs text-muted-foreground">Cant.</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={item.quantity}
+                    onChange={(e) => updateCatalogItem(item.key, { quantity: Number(e.target.value) || 1 })}
+                  />
+                </div>
+                <div className="w-28 space-y-1">
+                  <Label className="text-xs text-muted-foreground">Precio unit.</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={item.unit_price}
+                    onChange={(e) => updateCatalogItem(item.key, { unit_price: Number(e.target.value) || 0 })}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeRow(item.key)}
+                  disabled={items.length === 1}
                 >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Elegir producto" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {variants.map((v) => (
-                      <SelectItem key={v.id} value={v.id}>
-                        {v.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <Trash2 className="size-4" />
+                </Button>
               </div>
-              <div className="w-20 space-y-1">
-                <Label className="text-xs text-muted-foreground">Cant.</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={item.quantity}
-                  onChange={(e) =>
-                    updateItem(item.key, { quantity: Number(e.target.value) || 1 })
-                  }
-                />
+            ) : (
+              <div key={item.key} className="flex flex-col gap-2 rounded-md border border-dashed p-3">
+                <div className="flex items-end gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-xs text-muted-foreground">Nombre / descripción del ítem *</Label>
+                    <Input
+                      placeholder="Ej: 30 tazas personalizadas"
+                      value={item.custom_name}
+                      onChange={(e) => updateCustomItem(item.key, { custom_name: e.target.value })}
+                    />
+                  </div>
+                  <div className="w-20 space-y-1">
+                    <Label className="text-xs text-muted-foreground">Cant.</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(e) => updateCustomItem(item.key, { quantity: Number(e.target.value) || 1 })}
+                    />
+                  </div>
+                  <div className="w-28 space-y-1">
+                    <Label className="text-xs text-muted-foreground">Precio unit.</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={item.unit_price}
+                      onChange={(e) => updateCustomItem(item.key, { unit_price: Number(e.target.value) || 0 })}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeRow(item.key)}
+                    disabled={items.length === 1}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Notas / especificaciones</Label>
+                  <Textarea
+                    rows={2}
+                    placeholder="Ej: Logo empresa X, azul petróleo"
+                    value={item.custom_description}
+                    onChange={(e) => updateCustomItem(item.key, { custom_description: e.target.value })}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  No inventariado — no descuenta stock ni crea un producto permanente en /productos.
+                </p>
               </div>
-              <div className="w-28 space-y-1">
-                <Label className="text-xs text-muted-foreground">Precio unit.</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={item.unit_price}
-                  onChange={(e) =>
-                    updateItem(item.key, { unit_price: Number(e.target.value) || 0 })
-                  }
-                />
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => removeRow(item.key)}
-                disabled={items.length === 1}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          ))}
+            )
+          )}
 
-          <Button type="button" variant="outline" size="sm" onClick={addRow} className="self-start">
-            <Plus className="size-4" />
-            Agregar producto
-          </Button>
+          <div className="flex gap-2 self-start">
+            <Button type="button" variant="outline" size="sm" onClick={addRow}>
+              <Plus className="size-4" />
+              Agregar producto
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={addCustomRow}>
+              <Sparkles className="size-4" />
+              Agregar producto personalizado
+            </Button>
+          </div>
 
           <div className="flex justify-end border-t pt-3 text-sm font-medium">
             Subtotal: {formatCurrency(subtotal)}

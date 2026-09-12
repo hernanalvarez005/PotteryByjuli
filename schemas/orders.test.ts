@@ -34,6 +34,36 @@ describe("orderItemInputSchema", () => {
   });
 });
 
+// Ítem no inventariado/personalizado (tanda de usabilidad, sección 8) — un
+// pedido puede tener ítems de catálogo O ítems custom, nunca los dos a la
+// vez ni ninguno de los dos.
+describe("orderItemInputSchema — custom/non-stock item", () => {
+  const validCustomItem = { custom_name: "30 tazas personalizadas", custom_description: "Logo empresa X, azul petróleo", quantity: 30, unit_price: 18000 };
+
+  it("accepts a custom item with no product_variant_id at all", () => {
+    const result = orderItemInputSchema.safeParse(validCustomItem);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a custom item with a blank/absent description", () => {
+    const result = orderItemInputSchema.safeParse({ custom_name: "Encargo especial", quantity: 1, unit_price: 5000 });
+    expect(result.success).toBe(true);
+    if (result.success && "custom_description" in result.data) {
+      expect(result.data.custom_description).toBeNull();
+    }
+  });
+
+  it("rejects an item with neither product_variant_id nor custom_name", () => {
+    const result = orderItemInputSchema.safeParse({ quantity: 1, unit_price: 1000 });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a custom item with an empty name", () => {
+    const result = orderItemInputSchema.safeParse({ ...validCustomItem, custom_name: "  " });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("createOrderSchema", () => {
   it("accepts a well-formed order with one item", () => {
     const result = createOrderSchema.safeParse(baseOrder);
