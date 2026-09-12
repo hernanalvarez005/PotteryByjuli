@@ -13,6 +13,7 @@ import { EnrollDialog } from "./enroll-dialog";
 import { RosterTable, type RosterRow } from "./roster-table";
 import { DuesPanel, type DueRow, type DueExtraRow } from "./dues-panel";
 import { EditMonthlyFeeDialog } from "./edit-monthly-fee-dialog";
+import { EditCapacityDialog } from "./edit-capacity-dialog";
 import { archiveGroup, deleteGroup } from "./actions";
 
 export default async function GroupDetailPage({
@@ -85,6 +86,8 @@ export default async function GroupDetailPage({
       todayAttendance: attendanceByEnrollment.get(e.id) ?? null,
     };
   });
+
+  const activeEnrollmentCount = rosterRows.filter((r) => r.status === "active").length;
 
   const dueIds = (dueRows ?? []).map((d) => d.id);
   const [{ data: dueItemRows }, { data: concepts }] = await Promise.all([
@@ -216,6 +219,14 @@ export default async function GroupDetailPage({
             {group.monthly_fee != null ? formatCurrency(group.monthly_fee) : "sin configurar"}
           </span>
           {canEditDues && <EditMonthlyFeeDialog groupId={groupId} currentFee={group.monthly_fee} />}
+        </p>
+        <p className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+          <span>
+            Cupos: {activeEnrollmentCount}/{group.capacity}
+          </span>
+          {canEditRoster && (
+            <EditCapacityDialog groupId={groupId} currentCapacity={group.capacity} activeCount={activeEnrollmentCount} />
+          )}
         </p>
       </div>
 

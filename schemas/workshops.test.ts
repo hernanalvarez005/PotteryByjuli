@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupSchema, dueSchema, duePaymentSchema } from "./workshops";
+import { groupSchema, dueSchema, duePaymentSchema, groupCapacitySchema } from "./workshops";
 
 const baseGroup = {
   program_id: "11111111-1111-4111-8111-111111111111",
@@ -27,6 +27,20 @@ describe("groupSchema.monthly_fee", () => {
 
   it("rejects a negative fee", () => {
     expect(groupSchema.safeParse({ ...baseGroup, monthly_fee: "-100" }).success).toBe(false);
+  });
+});
+
+describe("groupCapacitySchema", () => {
+  it("accepts a positive integer", () => {
+    const result = groupCapacitySchema.safeParse({ capacity: "8" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.capacity).toBe(8);
+  });
+
+  it("rejects zero, negative or non-integer values", () => {
+    expect(groupCapacitySchema.safeParse({ capacity: "0" }).success).toBe(false);
+    expect(groupCapacitySchema.safeParse({ capacity: "-1" }).success).toBe(false);
+    expect(groupCapacitySchema.safeParse({ capacity: "3.5" }).success).toBe(false);
   });
 });
 
