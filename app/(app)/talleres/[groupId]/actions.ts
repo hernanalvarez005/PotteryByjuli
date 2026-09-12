@@ -9,6 +9,7 @@ import {
   dueSchema,
   duePaymentSchema,
   groupMonthlyFeeSchema,
+  groupCapacitySchema,
   dueExtraSchema,
 } from "@/schemas/workshops";
 import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
@@ -158,6 +159,7 @@ export async function registerDuePayment(
 
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
+  revalidatePath("/dashboard");
   return {};
 }
 
@@ -193,6 +195,7 @@ export async function updateDuePayment(
       method_id: parsed.data.method_id,
       account_id: parsed.data.account_id,
       reference: parsed.data.reference,
+      notes: parsed.data.notes,
     })
     .eq("id", paymentId)
     .eq("workshop_due_id", dueId);
@@ -200,6 +203,7 @@ export async function updateDuePayment(
 
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
+  revalidatePath("/dashboard");
   return {};
 }
 
@@ -289,6 +293,52 @@ export async function updateGroupMonthlyFee(
   if (error) return { error: "No se pudo actualizar." };
 
   revalidatePath(`/talleres/${groupId}`);
+  return {};
+}
+
+/**
+ * Cupos/capacidad editable (sección 18) — bloquea con el mensaje exacto
+ * del pedido si se intenta bajar de las alumnas activas inscriptas. La
+ * misma regla también está en un trigger de la DB (defensa de fondo);
+ * este chequeo acá es sólo para el mensaje amigable con el número real
+ * antes de intentar el update.
+ */
+export async function updateGroupCapacity(
+  groupId: string,
+  _prevState: WorkshopDetailState,
+  formData: FormData
+): Promise<WorkshopDetailState> {
+  const user = await requireUser();
+  if (!isOwner(user) && !hasRole(user, "operations")) {
+    return { error: "No tenés permiso para editar los cupos." };
+  }
+
+  const parsed = groupCapacitySchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { count: activeCount } = await supabase
+    .from("workshop_enrollments")
+    .select("id", { count: "exact", head: true })
+    .eq("group_id", groupId)
+    .eq("status", "active");
+
+  if (activeCount != null && parsed.data.capacity < activeCount) {
+    return {
+      error: `Hay ${activeCount} alumna${activeCount !== 1 ? "s" : ""} inscripta${activeCount !== 1 ? "s" : ""}. La capacidad no puede reducirse a ${parsed.data.capacity}.`,
+    };
+  }
+
+  const { error } = await supabase
+    .from("workshop_groups")
+    .update({ capacity: parsed.data.capacity })
+    .eq("id", groupId);
+  if (error) return { error: error.message || "No se pudo actualizar." };
+
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres");
   return {};
 }
 

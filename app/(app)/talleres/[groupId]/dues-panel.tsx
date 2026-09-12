@@ -48,7 +48,9 @@ export type DuePaymentRow = {
   amount: number;
   paid_at: string;
   method_id: string | null;
+  account_id: string | null;
   reference: string | null;
+  notes: string | null;
 };
 
 export type DueRow = {
@@ -82,6 +84,7 @@ export function DuesPanel({
   dues,
   enrollments,
   paymentMethods,
+  paymentAccounts,
   concepts,
   canEdit,
 }: {
@@ -89,6 +92,7 @@ export function DuesPanel({
   dues: DueRow[];
   enrollments: { id: string; customerName: string }[];
   paymentMethods: { id: string; name: string }[];
+  paymentAccounts: { id: string; name: string }[];
   concepts: { id: string; name: string }[];
   canEdit: boolean;
 }) {
@@ -161,6 +165,7 @@ export function DuesPanel({
                           customerName={due.customerName}
                           balance={due.balance}
                           paymentMethods={paymentMethods}
+                          paymentAccounts={paymentAccounts}
                           payments={due.payments}
                           allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
                         />
@@ -268,6 +273,7 @@ export function RegisterPaymentDialog({
   customerName,
   balance,
   paymentMethods,
+  paymentAccounts,
   payments,
   allowNewPayment = true,
 }: {
@@ -276,6 +282,7 @@ export function RegisterPaymentDialog({
   customerName: string;
   balance: number;
   paymentMethods: { id: string; name: string }[];
+  paymentAccounts: { id: string; name: string }[];
   payments: DuePaymentRow[];
   /** false para una cuota ya "Pagada"/"Cancelada" — el diálogo sigue
    * abriéndose para ver/corregir pagos existentes, pero no ofrece
@@ -286,10 +293,12 @@ export function RegisterPaymentDialog({
   const boundAction = registerDuePayment.bind(null, groupId, dueId);
   const [state, formAction, isPending] = useActionState(boundAction, {});
   const [methodId, setMethodId] = useState("");
+  const [accountId, setAccountId] = useState("");
   // Passed as Select's `items` prop so the trigger can resolve a label
   // for the selected method — without it, Base UI's <Select.Value> falls
   // back to showing the raw id instead of the method's name.
   const methodLabels = Object.fromEntries(paymentMethods.map((m) => [m.id, m.name]));
+  const accountLabels = Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name]));
 
   const wasPending = useRef(false);
   useEffect(() => {
@@ -316,6 +325,7 @@ export function RegisterPaymentDialog({
                 dueId={dueId}
                 payment={p}
                 paymentMethods={paymentMethods}
+                paymentAccounts={paymentAccounts}
               />
             ))}
           </ul>
@@ -340,21 +350,39 @@ export function RegisterPaymentDialog({
             <Label htmlFor="paid_at">Fecha del pago</Label>
             <Input id="paid_at" name="paid_at" type="date" defaultValue={todayInArgentina()} required />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="method_id">Medio de pago</Label>
-            <input type="hidden" name="method_id" value={methodId} />
-            <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
-              <SelectTrigger id="method_id" className="w-full">
-                <SelectValue placeholder="Elegir (opcional)" />
-              </SelectTrigger>
-              <SelectContent>
-                {paymentMethods.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="method_id">Medio de pago</Label>
+              <input type="hidden" name="method_id" value={methodId} />
+              <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
+                <SelectTrigger id="method_id" className="w-full">
+                  <SelectValue placeholder="Elegir (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {paymentMethods.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="account_id">Cuenta</Label>
+              <input type="hidden" name="account_id" value={accountId} />
+              <Select items={accountLabels} value={accountId} onValueChange={(v) => setAccountId(v ?? "")}>
+                <SelectTrigger id="account_id" className="w-full">
+                  <SelectValue placeholder="Elegir (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {paymentAccounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
@@ -381,17 +409,21 @@ function PaymentRow({
   dueId,
   payment,
   paymentMethods,
+  paymentAccounts,
 }: {
   groupId: string;
   dueId: string;
   payment: DuePaymentRow;
   paymentMethods: { id: string; name: string }[];
+  paymentAccounts: { id: string; name: string }[];
 }) {
   const [editing, setEditing] = useState(false);
   const boundAction = updateDuePayment.bind(null, groupId, dueId, payment.id);
   const [state, formAction, isPending] = useActionState(boundAction, {});
   const [methodId, setMethodId] = useState(payment.method_id ?? "");
+  const [accountId, setAccountId] = useState(payment.account_id ?? "");
   const methodLabels = Object.fromEntries(paymentMethods.map((m) => [m.id, m.name]));
+  const accountLabels = Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name]));
   const methodName = payment.method_id
     ? (paymentMethods.find((m) => m.id === payment.method_id)?.name ?? null)
     : null;
@@ -451,27 +483,56 @@ function PaymentRow({
             />
           </div>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Medio de pago</Label>
-          <input type="hidden" name="method_id" value={methodId} />
-          <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Elegir (opcional)" />
-            </SelectTrigger>
-            <SelectContent>
-              {paymentMethods.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Medio de pago</Label>
+            <input type="hidden" name="method_id" value={methodId} />
+            <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Elegir (opcional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {paymentMethods.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Cuenta</Label>
+            <input type="hidden" name="account_id" value={accountId} />
+            <Select items={accountLabels} value={accountId} onValueChange={(v) => setAccountId(v ?? "")}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Elegir (opcional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {paymentAccounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <div className="space-y-1">
           <Label htmlFor={`edit-reference-${payment.id}`} className="text-xs text-muted-foreground">
             Referencia
           </Label>
           <Input id={`edit-reference-${payment.id}`} name="reference" defaultValue={payment.reference ?? ""} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`edit-notes-${payment.id}`} className="text-xs text-muted-foreground">
+            Nota de la corrección
+          </Label>
+          <Input
+            id={`edit-notes-${payment.id}`}
+            name="notes"
+            placeholder="Ej: importe mal cargado, era $12.000"
+            defaultValue={payment.notes ?? ""}
+          />
         </div>
         {state.error && <p className="text-xs text-destructive">{state.error}</p>}
         <div className="flex gap-2">

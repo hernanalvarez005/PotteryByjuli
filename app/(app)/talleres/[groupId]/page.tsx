@@ -13,6 +13,7 @@ import { EnrollDialog } from "./enroll-dialog";
 import { RosterTable, type RosterRow } from "./roster-table";
 import { DuesPanel, type DueRow, type DueExtraRow } from "./dues-panel";
 import { EditMonthlyFeeDialog } from "./edit-monthly-fee-dialog";
+import { EditCapacityDialog } from "./edit-capacity-dialog";
 import { archiveGroup, deleteGroup } from "./actions";
 
 export default async function GroupDetailPage({
@@ -53,7 +54,7 @@ export default async function GroupDetailPage({
       ? supabase
           .from("workshop_dues")
           .select(
-            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,reference),workshop_enrollments(customers(first_name,last_name))"
+            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes),workshop_enrollments(customers(first_name,last_name))"
           )
           .in("enrollment_id", enrollmentIds)
           .order("period", { ascending: false })
@@ -85,6 +86,8 @@ export default async function GroupDetailPage({
       todayAttendance: attendanceByEnrollment.get(e.id) ?? null,
     };
   });
+
+  const activeEnrollmentCount = rosterRows.filter((r) => r.status === "active").length;
 
   const dueIds = (dueRows ?? []).map((d) => d.id);
   const [{ data: dueItemRows }, { data: concepts }] = await Promise.all([
@@ -123,7 +126,9 @@ export default async function GroupDetailPage({
       amount: number;
       paid_at: string;
       method_id: string | null;
+      account_id: string | null;
       reference: string | null;
+      notes: string | null;
     }[];
     const items = itemsByDue.get(d.id) ?? [];
     const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
@@ -152,6 +157,12 @@ export default async function GroupDetailPage({
     .select("id,name")
     .eq("is_active", true)
     .order("sort_order");
+
+  const { data: paymentAccounts } = await supabase
+    .from("payment_accounts")
+    .select("id,name")
+    .eq("is_active", true)
+    .order("code");
 
   const enrollmentOptions = rosterRows
     .filter((r) => r.status === "active")
@@ -209,6 +220,14 @@ export default async function GroupDetailPage({
           </span>
           {canEditDues && <EditMonthlyFeeDialog groupId={groupId} currentFee={group.monthly_fee} />}
         </p>
+        <p className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+          <span>
+            Cupos: {activeEnrollmentCount}/{group.capacity}
+          </span>
+          {canEditRoster && (
+            <EditCapacityDialog groupId={groupId} currentCapacity={group.capacity} activeCount={activeEnrollmentCount} />
+          )}
+        </p>
       </div>
 
       <Tabs defaultValue="asistencia">
@@ -236,6 +255,7 @@ export default async function GroupDetailPage({
             dues={dueList}
             enrollments={enrollmentOptions}
             paymentMethods={paymentMethods ?? []}
+            paymentAccounts={paymentAccounts ?? []}
             concepts={concepts ?? []}
             canEdit={canEditDues}
           />

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupSchema, dueSchema, duePaymentSchema } from "./workshops";
+import { groupSchema, dueSchema, duePaymentSchema, groupCapacitySchema } from "./workshops";
 
 const baseGroup = {
   program_id: "11111111-1111-4111-8111-111111111111",
@@ -27,6 +27,20 @@ describe("groupSchema.monthly_fee", () => {
 
   it("rejects a negative fee", () => {
     expect(groupSchema.safeParse({ ...baseGroup, monthly_fee: "-100" }).success).toBe(false);
+  });
+});
+
+describe("groupCapacitySchema", () => {
+  it("accepts a positive integer", () => {
+    const result = groupCapacitySchema.safeParse({ capacity: "8" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.capacity).toBe(8);
+  });
+
+  it("rejects zero, negative or non-integer values", () => {
+    expect(groupCapacitySchema.safeParse({ capacity: "0" }).success).toBe(false);
+    expect(groupCapacitySchema.safeParse({ capacity: "-1" }).success).toBe(false);
+    expect(groupCapacitySchema.safeParse({ capacity: "3.5" }).success).toBe(false);
   });
 });
 
@@ -72,22 +86,39 @@ describe("duePaymentSchema", () => {
   });
 
   // Real bug found alongside the order-form one (2026-09-10): dues-panel.tsx's
-  // RegisterPaymentDialog never renders a "Cuenta" input at all — so
-  // formData.get("account_id") is always a bare `null`, never "". The old
+  // RegisterPaymentDialog never rendered a "Cuenta" input at all (fixed
+  // 2026-09-12, sección 14 de la tanda de usabilidad) — so
+  // formData.get("account_id") could be a bare `null`, never "". The old
   // `.optional().or(z.literal(""))` pattern doesn't tolerate that; only
-  // optionalUuid() (lib/zod-helpers.ts) does.
-  it("accepts account_id as a bare null — the field the real form never renders", () => {
+  // optionalUuid() (lib/zod-helpers.ts) does. Kept as a regression test
+  // even now that the field renders — a checkbox/select left untouched
+  // still produces this exact shape.
+  it("accepts account_id/method_id/reference/notes as bare nulls when left untouched", () => {
     const result = duePaymentSchema.safeParse({
       amount: "1000",
       paid_at: "2026-09-10",
       method_id: null,
       account_id: null,
       reference: null,
+      notes: null,
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.account_id).toBeNull();
       expect(result.data.method_id).toBeNull();
+      expect(result.data.notes).toBeNull();
     }
+  });
+
+  // Nota de corrección (sección 14) — sólo se usa al editar un pago ya
+  // registrado, nunca obligatoria.
+  it("accepts a correction note", () => {
+    const result = duePaymentSchema.safeParse({
+      amount: "1000",
+      paid_at: "2026-09-10",
+      notes: "Importe mal cargado, era $12.000",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.notes).toBe("Importe mal cargado, era $12.000");
   });
 });

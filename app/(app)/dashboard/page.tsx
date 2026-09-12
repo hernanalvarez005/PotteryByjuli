@@ -17,6 +17,7 @@ import { DashboardFilters as DashboardFiltersBar } from "./dashboard-filters";
 import { SalesOverTimeChart } from "./sales-over-time-chart";
 import { TopProductsChart } from "./top-products-chart";
 import { MixDonutChart } from "./mix-donut-chart";
+import { PendingDuesAttention } from "./pending-dues-attention";
 
 const ROLE_LABELS: Record<string, string> = {
   owner: "Dueña",
@@ -54,6 +55,8 @@ export default async function DashboardPage({
     { data: businessUnits },
     { data: locations },
     { data: channels },
+    { data: paymentMethods },
+    { data: paymentAccounts },
   ] = hasAnyRole && canSeeFinance
     ? await Promise.all([
         getDashboardSummary(filters),
@@ -64,11 +67,15 @@ export default async function DashboardPage({
         supabase.from("business_units").select("id,name").eq("is_active", true).order("name"),
         supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
         supabase.from("sales_channels").select("id,name").eq("is_active", true).order("name"),
+        supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),
+        supabase.from("payment_accounts").select("id,name").eq("is_active", true).order("code"),
       ])
     : hasAnyRole
-      ? [await getDashboardSummary(filters), [], [], [], [], { data: [] }, { data: [] }, { data: [] }]
-      : [null, [], [], [], [], { data: [] }, { data: [] }, { data: [] }];
+      ? [await getDashboardSummary(filters), [], [], [], [], { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }]
+      : [null, [], [], [], [], { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
+  // Cuotas pendientes es accionable (PendingDuesAttention), no un link
+  // plano — se saca de esta lista para no duplicarlo.
   const attentionItems = summary
     ? [
         summary.overdueOrdersCount > 0 && {
@@ -82,10 +89,6 @@ export default async function DashboardPage({
         summary.pendingProductionCount > 0 && {
           label: `${summary.pendingProductionCount} orden${summary.pendingProductionCount > 1 ? "es" : ""} de producción activa${summary.pendingProductionCount > 1 ? "s" : ""}`,
           href: "/produccion",
-        },
-        summary.pendingDuesCount > 0 && {
-          label: `${summary.pendingDuesCount} cuota${summary.pendingDuesCount > 1 ? "s" : ""} de taller pendiente${summary.pendingDuesCount > 1 ? "s" : ""}`,
-          href: "/talleres",
         },
       ].filter((v): v is { label: string; href: string } => Boolean(v))
     : [];
@@ -163,8 +166,8 @@ export default async function DashboardPage({
           <CardHeader>
             <CardTitle className="text-base">Necesita atención</CardTitle>
           </CardHeader>
-          <CardContent>
-            {attentionItems.length === 0 ? (
+          <CardContent className="flex flex-col gap-3">
+            {attentionItems.length === 0 && !(summary && summary.pendingDuesCount > 0) ? (
               <p className="text-sm text-muted-foreground">Nada pendiente por ahora.</p>
             ) : (
               <ul className="flex flex-col gap-2 text-sm">
@@ -176,6 +179,13 @@ export default async function DashboardPage({
                   </li>
                 ))}
               </ul>
+            )}
+            {summary && summary.pendingDuesCount > 0 && (
+              <PendingDuesAttention
+                dues={summary.pendingDuesDetail}
+                paymentMethods={paymentMethods ?? []}
+                paymentAccounts={paymentAccounts ?? []}
+              />
             )}
           </CardContent>
         </Card>

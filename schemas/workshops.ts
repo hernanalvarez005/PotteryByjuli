@@ -39,6 +39,19 @@ export const groupMonthlyFeeSchema = z.object({
   monthly_fee: optionalMoneyAmount(),
 });
 
+/** Editing just the capacity/cupos of an existing group (sección 18 de la
+ * tanda de usabilidad) — la validación de "no bajar de las inscriptas
+ * activas" vive en el Server Action (mensaje amigable con el número real)
+ * y de fondo en un trigger de la DB, nunca sólo acá. */
+export const groupCapacitySchema = z.object({
+  capacity: z
+    .string()
+    .trim()
+    .min(1, "Requerido")
+    .transform((v) => Number(v))
+    .refine((v) => Number.isInteger(v) && v > 0, "Cupo inválido"),
+});
+
 export const enrollmentSchema = z.object({
   customer_id: z.string().trim().uuid(),
   monthly_fee: optionalMoneyAmount(),
@@ -79,6 +92,10 @@ export const duePaymentSchema = z.object({
   // schemas/orders.ts § delivery_address (2026-09-10).
   account_id: optionalUuid(),
   reference: optionalString(200),
+  // Nota de corrección (sección 14 de la tanda de usabilidad) — separada
+  // de `reference` (que es una referencia de la transacción, no una nota
+  // de por qué se corrigió el pago).
+  notes: optionalString(500),
 });
 
 // Cargo extra sobre una cuota (sección 6) — nunca un payment, un monto que
