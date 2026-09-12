@@ -48,7 +48,7 @@ export default async function OrderDetailPage({
     await Promise.all([
       supabase
         .from("order_items")
-        .select("id,quantity,unit_price,product_variants(name,products(name))")
+        .select("id,quantity,unit_price,custom_name,custom_description,product_variants(name,products(name))")
         .eq("order_id", id),
       supabase
         .from("payments")
@@ -180,14 +180,21 @@ export default async function OrderDetailPage({
                     name: string;
                     products: { name: string } | null;
                   } | null;
+                  // Un ítem sin variante es no inventariado/personalizado
+                  // (custom_name) — nunca un producto real sin nombre.
                   const label = variant
                     ? variant.name === "Único"
                       ? variant.products?.name
                       : `${variant.products?.name} — ${variant.name}`
-                    : "—";
+                    : item.custom_name;
                   return (
                     <TableRow key={item.id}>
-                      <TableCell>{label}</TableCell>
+                      <TableCell>
+                        {label}
+                        {!variant && item.custom_description && (
+                          <p className="text-xs text-muted-foreground">{item.custom_description}</p>
+                        )}
+                      </TableCell>
                       <TableCell>{item.quantity}</TableCell>
                       <TableCell>{formatCurrency(item.unit_price)}</TableCell>
                       <TableCell className="text-right">

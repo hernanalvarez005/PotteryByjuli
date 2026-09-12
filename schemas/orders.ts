@@ -1,11 +1,26 @@
 import { z } from "zod";
 import { optionalString, optionalUuid, optionalMoneyAmount } from "@/lib/zod-helpers";
 
-export const orderItemInputSchema = z.object({
+// Un pedido puede tener ítems de catálogo (con product_variant_id real) o
+// ítems no inventariados/personalizados (custom_name en vez de una
+// variante) — nunca los dos a la vez, nunca ninguno de los dos (sección 8
+// de la tanda de usabilidad). Nunca se descuenta stock automáticamente
+// por un ítem custom (ver supabase/migrations/*_order_items_custom_non_stock.sql)
+// ni se crea un producto permanente en /productos.
+const catalogOrderItemSchema = z.object({
   product_variant_id: z.string().trim().uuid(),
   quantity: z.number().int().positive(),
   unit_price: z.number().nonnegative(),
 });
+
+const customOrderItemSchema = z.object({
+  custom_name: z.string().trim().min(1, "Falta el nombre del ítem.").max(200),
+  custom_description: optionalString(1000),
+  quantity: z.number().int().positive(),
+  unit_price: z.number().nonnegative(),
+});
+
+export const orderItemInputSchema = z.union([catalogOrderItemSchema, customOrderItemSchema]);
 
 export type OrderItemInput = z.infer<typeof orderItemInputSchema>;
 
