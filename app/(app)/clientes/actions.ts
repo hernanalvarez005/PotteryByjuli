@@ -233,3 +233,125 @@ export async function deleteCustomer(customerId: string) {
   revalidatePath("/clientes");
   redirect("/clientes");
 }
+
+export type MergeConflictField = "whatsapp" | "email" | "cuit" | "company_name";
+
+export type MergePreview = {
+  primary: { id: string; name: string; whatsapp: string | null; email: string | null; cuit: string | null; company_name: string | null };
+  duplicate: { id: string; name: string; whatsapp: string | null; email: string | null; cuit: string | null; company_name: string | null };
+  duplicateCounts: {
+    orders: number;
+    payments: number;
+    enrollments: number;
+    dues: number;
+    notes: number;
+    eventRegistrations: number;
+    tags: number;
+  };
+  /** Campos donde principal y duplicado tienen valores distintos (y
+   * ambos cargados) — sección 22: nunca se decide en silencio cuál
+   * conservar, se muestran para que la usuaria elija. */
+  conflicts: MergeConflictField[];
+  /** Campos donde el principal no tiene valor pero el duplicado sí —
+   * nunca es un conflicto real (no hay nada que elegir), así que se
+   * completan solos al fusionar en vez de perderse silenciosamente. */
+  autoFill: Partial<Record<MergeConflictField, string>>;
+};
+
+/**
+ * Preview obligatorio antes de fusionar (sección 20) — qué va a
+ * migrarse del duplicado al principal, y qué conflictos de datos hay
+ * que resolver a mano. Sólo lectura, no toca nada todavía.
+ */
+export async function getMergePreview(
+  primaryId: string,
+  duplicateId: string
+): Promise<MergePreview | { error: string }> {
+  const user = await requireUser();
+  if (!isOwner(user)) return { error: "Sólo la administradora puede fusionar clientes." };
+  if (primaryId === duplicateId) return { error: "Elegí dos clientes distintos." };
+
+  const supabase = await createClient();
+  const customerFields = "id,first_name,last_name,whatsapp,email,cuit,company_name";
+  const [{ data: primary }, { data: duplicate }] = await Promise.all([
+    supabase.from("customers").select(customerFields).eq("id", primaryId).single(),
+    supabase.from("customers").select(customerFields).eq("id", duplicateId).single(),
+  ]);
+  if (!primary || !duplicate) return { error: "No se pudo leer alguno de los dos clientes." };
+
+  const [{ count: orders }, { count: notes }, { count: eventRegistrations }, { count: tags }, { data: enrollments }, { count: payments }] =
+    await Promise.all([
+      supabase.from("orders").select("id", { count: "exact", head: true }).eq("customer_id", duplicateId),
+      supabase.from("customer_notes").select("id", { count: "exact", head: true }).eq("customer_id", duplicateId),
+      supabase.from("event_registrations").select("id", { count: "exact", head: true }).eq("customer_id", duplicateId),
+      supabase.from("customer_tag_links").select("customer_id", { count: "exact", head: true }).eq("customer_id", duplicateId),
+      supabase.from("workshop_enrollments").select("id").eq("customer_id", duplicateId),
+      supabase
+        .from("payments")
+        .select("id,orders!inner(customer_id)", { count: "exact", head: true })
+        .eq("orders.customer_id", duplicateId),
+    ]);
+
+  const enrollmentIds = (enrollments ?? []).map((e) => e.id);
+  const { count: dues } = enrollmentIds.length
+    ? await supabase.from("workshop_dues").select("id", { count: "exact", head: true }).in("enrollment_id", enrollmentIds)
+    : { count: 0 };
+
+  const conflicts: MergeConflictField[] = (["whatsapp", "email", "cuit", "company_name"] as const).filter(
+    (field) => duplicate[field] && primary[field] && duplicate[field] !== primary[field]
+  );
+  const autoFill: Partial<Record<MergeConflictField, string>> = {};
+  for (const field of ["whatsapp", "email", "cuit", "company_name"] as const) {
+    if (duplicate[field] && !primary[field]) autoFill[field] = duplicate[field]!;
+  }
+
+  return {
+    primary: { id: primary.id, name: [primary.first_name, primary.last_name].filter(Boolean).join(" "), whatsapp: primary.whatsapp, email: primary.email, cuit: primary.cuit, company_name: primary.company_name },
+    duplicate: { id: duplicate.id, name: [duplicate.first_name, duplicate.last_name].filter(Boolean).join(" "), whatsapp: duplicate.whatsapp, email: duplicate.email, cuit: duplicate.cuit, company_name: duplicate.company_name },
+    duplicateCounts: {
+      orders: orders ?? 0,
+      payments: payments ?? 0,
+      enrollments: enrollmentIds.length,
+      dues: dues ?? 0,
+      notes: notes ?? 0,
+      eventRegistrations: eventRegistrations ?? 0,
+      tags: tags ?? 0,
+    },
+    conflicts,
+    autoFill,
+  };
+}
+
+export type MergeActionState = { error?: string; done?: boolean };
+
+/**
+ * Fusión real (secciones 20-21) — el principal sobrevive, el duplicado
+ * se archiva sin borrarse. `resolved` sólo trae los campos que
+ * getMergePreview marcó como conflicto, ya con el valor que la usuaria
+ * eligió — el resto de los campos del principal quedan intactos
+ * (merge_customers nunca pisa un campo si no se le pasa un valor).
+ */
+export async function mergeCustomers(
+  primaryId: string,
+  duplicateId: string,
+  resolved: Partial<Record<MergeConflictField, string>>
+): Promise<MergeActionState> {
+  const user = await requireUser();
+  if (!isOwner(user)) return { error: "Sólo la administradora puede fusionar clientes." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("merge_customers", {
+    p_primary_id: primaryId,
+    p_duplicate_id: duplicateId,
+    p_whatsapp: resolved.whatsapp ?? null,
+    p_email: resolved.email ?? null,
+    p_cuit: resolved.cuit ?? null,
+    p_company_name: resolved.company_name ?? null,
+  });
+  if (error) return { error: error.message || "No se pudo fusionar." };
+
+  revalidatePath("/clientes");
+  revalidatePath(`/clientes/${primaryId}`);
+  revalidatePath(`/clientes/${duplicateId}`);
+  return { done: true };
+}

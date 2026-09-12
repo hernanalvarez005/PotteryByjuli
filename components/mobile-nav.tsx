@@ -25,11 +25,17 @@ export function MobileNav() {
       >
         <Menu className="size-5" />
       </Button>
-      <SheetContent side="left" className="w-64 p-0">
-        <SheetHeader className="border-b px-4 py-3">
+      <SheetContent side="left" className="max-h-dvh w-64 p-0">
+        <SheetHeader className="shrink-0 border-b px-4 py-3">
           <SheetTitle className="text-left">Pottery</SheetTitle>
         </SheetHeader>
-        <SidebarNav onNavigate={() => setOpen(false)} />
+        {/* El header queda fijo arriba (shrink-0); esto es lo único que
+            scrollea — sin overflow-y-auto acá, un menú con muchos ítems
+            no tenía forma de desplazarse hasta el final en mobile
+            (sección 27 de la tanda de usabilidad). */}
+        <div className="flex-1 overflow-y-auto overscroll-contain">
+          <SidebarNav onNavigate={() => setOpen(false)} />
+        </div>
       </SheetContent>
     </Sheet>
   );
