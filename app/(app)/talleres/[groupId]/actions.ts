@@ -158,6 +158,7 @@ export async function registerDuePayment(
 
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
+  revalidatePath("/dashboard");
   return {};
 }
 
@@ -201,6 +202,7 @@ export async function updateDuePayment(
 
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
+  revalidatePath("/dashboard");
   return {};
 }
 

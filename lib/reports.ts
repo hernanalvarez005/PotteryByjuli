@@ -1,10 +1,36 @@
 import { createClient } from "@/lib/supabase/server";
 import { computeDueSummary } from "@/lib/workshop-dues";
+import { customerDisplayName } from "@/lib/customers-shared";
 import {
   dateOnlyToArgentinaStartOfDayISO,
   dateOnlyToArgentinaEndOfDayISO,
   todayInArgentina,
 } from "@/lib/format";
+
+/** Mismo shape que DuePaymentRow (talleres/[groupId]/dues-panel.tsx) —
+ * "Necesita atención" reusa RegisterPaymentDialog tal cual, así que
+ * necesita exactamente los mismos campos por pago. */
+export type PendingDuePayment = {
+  id: string;
+  amount: number;
+  paid_at: string;
+  method_id: string | null;
+  account_id: string | null;
+  reference: string | null;
+  notes: string | null;
+};
+
+export type PendingDueRow = {
+  id: string;
+  groupId: string;
+  groupName: string;
+  customerName: string;
+  period: string;
+  totalDue: number;
+  paidTotal: number;
+  balance: number;
+  payments: PendingDuePayment[];
+};
 
 function startOfMonthIso(): string {
   const d = new Date();
@@ -154,8 +180,16 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
       .eq("status", "pending"),
     // is_paid ya no existe (Fase workshop_monthly_dues la reemplazó por
     // un estado siempre derivado) — computeDueSummary abajo es la única
-    // fuente de verdad, igual que en Talleres/ficha de alumna.
-    supabase.from("workshop_dues").select("amount,status,payments(amount),workshop_due_items(amount,voided_at)"),
+    // fuente de verdad, igual que en Talleres/ficha de alumna. Trae
+    // también lo necesario para el detalle accionable de "Necesita
+    // atención" (sección 12/13): grupo/alumna/período y los pagos
+    // completos (no sólo el monto) para poder reusar RegisterPaymentDialog
+    // tal cual, sin un segundo camino financiero.
+    supabase
+      .from("workshop_dues")
+      .select(
+        "id,amount,status,period,payments(id,amount,paid_at,method_id,account_id,reference,notes),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
+      ),
     supabase
       .from("events")
       .select("id,human_code,name,event_date,event_type")
@@ -205,15 +239,48 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   // para el estado de una cuota — Talleres, la ficha de alumna y esto
   // calculan exactamente lo mismo, nunca una columna is_paid separada.
   // No se filtra por período/atributo: es un conteo de "ahora mismo",
-  // como el resto de "Necesita atención".
-  const pendingDuesCount = (allDueRows ?? []).filter((d) => {
-    const summary = computeDueSummary(
-      { status: d.status as "pending" | "cancelled", amount: d.amount },
-      (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[],
-      (d.payments ?? []) as { amount: number }[]
-    );
-    return summary.status === "pending" || summary.status === "partial";
-  }).length;
+  // como el resto de "Necesita atención". pendingDuesDetail trae todo lo
+  // que "Necesita atención" (sección 12/13) necesita para ser accionable
+  // sin una segunda consulta: Alumna/Grupo/Período/Total/Pagado/Pendiente
+  // + los pagos completos de cada cuota, para reusar RegisterPaymentDialog
+  // (talleres/[groupId]/dues-panel.tsx) tal cual.
+  const pendingDues: (PendingDueRow & { status: string })[] = (allDueRows ?? [])
+    .map((d) => {
+      const payments = (d.payments ?? []) as PendingDuePayment[];
+      const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
+      const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
+      const enrollment = d.workshop_enrollments as unknown as {
+        group_id: string;
+        customers: { first_name: string; last_name: string | null } | null;
+        workshop_groups: { name: string } | null;
+      } | null;
+      return {
+        id: d.id as string,
+        groupId: enrollment?.group_id ?? "",
+        groupName: enrollment?.workshop_groups?.name ?? "—",
+        customerName: enrollment?.customers ? customerDisplayName(enrollment.customers) : "—",
+        period: d.period as string,
+        totalDue: summary.totalDue,
+        paidTotal: summary.paidTotal,
+        balance: summary.balance,
+        status: summary.status,
+        payments,
+      };
+    })
+    .filter((d) => d.status === "pending" || d.status === "partial");
+
+  const pendingDuesCount = pendingDues.length;
+  const pendingDuesDetail: PendingDueRow[] = pendingDues.map((row) => ({
+    id: row.id,
+    groupId: row.groupId,
+    groupName: row.groupName,
+    customerName: row.customerName,
+    period: row.period,
+    totalDue: row.totalDue,
+    paidTotal: row.paidTotal,
+    balance: row.balance,
+    payments: row.payments,
+  }));
 
   return {
     salesThisMonth,
@@ -227,6 +294,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     pendingProductionCount: pendingProductionCount ?? 0,
     newWholesaleCount: newWholesaleCount ?? 0,
     pendingDuesCount,
+    pendingDuesDetail,
     upcomingEvents: upcomingEvents ?? [],
   };
 }
