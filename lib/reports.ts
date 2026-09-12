@@ -189,6 +189,17 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   }
 
   const collectedFiltered = orderPaymentsFiltered + duePaymentsFiltered;
+  // Pendiente de cobro es una noción exclusivamente de `orders` — nunca se
+  // computa contra `collectedFiltered` (que mezcla pagos de pedidos con
+  // cuotas de talleres, dos flujos de plata sin relación entre sí: una
+  // cuota jamás aparece en `orders.total`). Bug real (tanda de
+  // usabilidad, 2026-09-11): con "Unidad = Todas" o "classes", las cuotas
+  // cobradas en el período se sumaban a `collectedFiltered` sin ningún
+  // "invoiced" de cuotas del otro lado de la resta, así que plata cobrada
+  // de cuotas netamente escondía saldos pendientes reales de pedidos
+  // (Personalizados, Minorista, etc.) — filtrando por una unidad
+  // específica no tenía ese problema porque duePaymentsFiltered daba 0.
+  const pendingToCollect = Math.max(0, totalInvoicedFiltered - orderPaymentsFiltered);
 
   // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
   // para el estado de una cuota — Talleres, la ficha de alumna y esto
@@ -207,7 +218,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   return {
     salesThisMonth,
     collectedThisMonth,
-    pendingToCollect: Math.max(0, totalInvoicedFiltered - collectedFiltered),
+    pendingToCollect,
     totalInvoicedFiltered,
     collectedFiltered,
     duesExcludedByChannelFilter: includeDuesInFilter && !includeDuePayments,
