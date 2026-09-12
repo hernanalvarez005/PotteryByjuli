@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { NewCustomerDialog } from "./new-customer-dialog";
 import { CustomerSearchBar } from "./customer-search-bar";
 
@@ -68,7 +69,16 @@ export default async function ClientesPage({
             taller o es mayorista.
           </p>
         </div>
-        {canEdit && <NewCustomerDialog />}
+        <div className="flex gap-2">
+          {isOwner(user) && (
+            <Link href="/clientes/fusionar">
+              <Button size="sm" variant="outline">
+                Fusionar clientes
+              </Button>
+            </Link>
+          )}
+          {canEdit && <NewCustomerDialog />}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-1">
