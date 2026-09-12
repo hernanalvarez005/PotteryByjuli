@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalString, optionalUuid } from "@/lib/zod-helpers";
+import { optionalString, optionalUuid, optionalMoneyAmount } from "@/lib/zod-helpers";
 
 export const orderItemInputSchema = z.object({
   product_variant_id: z.string().trim().uuid(),
@@ -36,6 +36,15 @@ export const createOrderSchema = z.object({
   estimated_date: optionalString(10),
   notes: optionalString(2000),
   items: z.array(orderItemInputSchema).min(1, "Agregá al menos un producto."),
+  // Pago opcional al crear el pedido (sección 3 de la tanda de
+  // usabilidad) — nunca obligatorio. Un checkbox ausente del FormData es
+  // `null`, nunca "on"/"off", así que el preprocess lo trata como false
+  // en vez de fallar.
+  register_payment: z.preprocess((v) => v === "on", z.boolean()),
+  payment_amount: optionalMoneyAmount(),
+  payment_method_id: optionalUuid(),
+  payment_account_id: optionalUuid(),
+  payment_paid_at: optionalString(10),
 });
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;

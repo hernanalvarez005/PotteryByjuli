@@ -68,10 +68,31 @@ export async function getWholesaleCatalog() {
     (p.product_variants as { id: string; name: string }[]).map((v) => v.id)
   );
 
-  const { data: priceRows } = variantIds.length
+  // BUG REAL (tanda de usabilidad, 2026-09-11): esta query nunca filtraba
+  // por price_list_id — traía TANTO el precio minorista como el mayorista
+  // de cada variante (price_list_items no tiene una columna que distinga
+  // "cuál es cuál" salvo price_list_id), y el Map de abajo se queda con
+  // el último que Postgres devuelva para esa variant_id — un orden que la
+  // query nunca fijó, así que dependía de un detalle interno de Postgres
+  // sin ninguna relación con "hay o no hay precio mayorista cargado".
+  // Resultado: qué precio ganaba (minorista o mayorista) era
+  // efectivamente aleatorio por variante — exactamente el síntoma
+  // reportado ("algunos productos toman el precio mayorista
+  // correctamente y otros no, incluso después de cargar valores").
+  // Fix: resolver primero el id de la lista mayorista y filtrar
+  // explícitamente por él — nunca dejar que dos filas para la misma
+  // variante puedan competir por el mismo lugar en el Map.
+  const { data: wholesaleList } = await supabase
+    .from("price_lists")
+    .select("id")
+    .eq("code", "wholesale")
+    .maybeSingle();
+
+  const { data: priceRows } = variantIds.length && wholesaleList
     ? await supabase
         .from("price_list_items")
         .select("product_variant_id,unit_price")
+        .eq("price_list_id", wholesaleList.id)
         .in("product_variant_id", variantIds)
     : { data: [] as { product_variant_id: string; unit_price: number }[] };
 

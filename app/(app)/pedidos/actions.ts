@@ -21,7 +21,7 @@ export async function createOrder(
   _prevState: OrderActionState,
   formData: FormData
 ): Promise<OrderActionState> {
-  await assertCanManageOrders();
+  const user = await assertCanManageOrders();
 
   let itemsRaw: unknown;
   try {
@@ -41,10 +41,24 @@ export async function createOrder(
     estimated_date: formData.get("estimated_date"),
     notes: formData.get("notes"),
     items: itemsRaw,
+    register_payment: formData.get("register_payment"),
+    payment_amount: formData.get("payment_amount"),
+    payment_method_id: formData.get("payment_method_id"),
+    payment_account_id: formData.get("payment_account_id"),
+    payment_paid_at: formData.get("payment_paid_at"),
   });
 
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  if (parsed.data.register_payment) {
+    if (!parsed.data.payment_amount || parsed.data.payment_amount <= 0) {
+      return { error: "Ingresá el importe del pago." };
+    }
+    if (!parsed.data.payment_paid_at) {
+      return { error: "Ingresá la fecha real del pago." };
+    }
   }
 
   const supabase = await createClient();
@@ -63,6 +77,22 @@ export async function createOrder(
 
   if (error || !orderId) {
     return { error: error?.message ?? "No se pudo crear el pedido." };
+  }
+
+  // Pago opcional al crear el pedido — usa `payments` (nunca un campo
+  // financiero nuevo en `orders`), mismo contrato paid_at/created_at que
+  // el resto de la app. Si esto falla, el pedido ya existe igual: se
+  // puede registrar el pago manualmente desde su ficha, así que no vale
+  // la pena bloquear la creación por esto.
+  if (parsed.data.register_payment && parsed.data.payment_amount && parsed.data.payment_paid_at) {
+    await supabase.from("payments").insert({
+      order_id: orderId,
+      amount: parsed.data.payment_amount,
+      method_id: parsed.data.payment_method_id,
+      account_id: parsed.data.payment_account_id,
+      paid_at: dateOnlyToArgentinaNoonISO(parsed.data.payment_paid_at),
+      created_by: user.id,
+    });
   }
 
   revalidatePath("/pedidos");
