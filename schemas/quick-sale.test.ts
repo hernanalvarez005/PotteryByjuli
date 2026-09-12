@@ -14,8 +14,9 @@ const baseSale = {
   paid_at: "2026-09-11",
   customer_id: "",
   channel_id: "",
-  discount_total: "",
   client_request_id: "44444444-4444-4444-8444-444444444444",
+  price_condition_id: "55555555-5555-4555-8555-555555555555",
+  expected_total: 4000,
   items: [validItem],
 };
 
@@ -42,8 +43,11 @@ describe("quickSaleSchema", () => {
       expect(result.data.customer_id).toBeNull();
       expect(result.data.channel_id).toBeNull();
       expect(result.data.payment_account_id).toBeNull();
-      expect(result.data.discount_total).toBeNull();
     }
+  });
+
+  it("requires a price_condition_id — a sale is always quoted and charged under a specific condition", () => {
+    expect(quickSaleSchema.safeParse({ ...baseSale, price_condition_id: "" }).success).toBe(false);
   });
 
   it("rejects a sale with no items", () => {
@@ -61,16 +65,15 @@ describe("quickSaleSchema", () => {
   });
 
   // Same FormData shape a real submission produces: fields the form left
-  // untouched (no customer picked, no account chosen, no discount typed)
-  // arrive as bare `null`, not `""` — this is exactly the bug class fixed
-  // across the rest of the app this session (lib/zod-helpers.ts).
+  // untouched (no customer picked, no account chosen) arrive as bare
+  // `null`, not `""` — this is exactly the bug class fixed across the
+  // rest of the app this session (lib/zod-helpers.ts).
   it("accepts every optional field as a bare null, matching what formData.get() actually returns", () => {
     const asSubmittedByTheRealForm = {
       ...baseSale,
       payment_account_id: null,
       customer_id: null,
       channel_id: null,
-      discount_total: null,
     };
     const result = quickSaleSchema.safeParse(asSubmittedByTheRealForm);
     expect(result.success).toBe(true);
@@ -78,7 +81,6 @@ describe("quickSaleSchema", () => {
       expect(result.data.payment_account_id).toBeNull();
       expect(result.data.customer_id).toBeNull();
       expect(result.data.channel_id).toBeNull();
-      expect(result.data.discount_total).toBeNull();
     }
   });
 

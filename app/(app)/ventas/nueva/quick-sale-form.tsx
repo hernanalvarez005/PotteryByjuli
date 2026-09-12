@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Minus, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import { createClient } from "@/lib/supabase/client";
 import { createCustomer } from "@/app/(app)/clientes/actions";
 import { createQuickSale } from "./actions";
 import { quickSaleSessionReducer } from "@/lib/quick-sale-session";
@@ -30,6 +31,7 @@ import { quickSaleSessionReducer } from "@/lib/quick-sale-session";
 type Option = { id: string; name: string };
 type Channel = { id: string; name: string; code: string };
 type VariantOption = { id: string; label: string; retailPrice: number };
+type Quote = { price_condition_id: string; price_condition_name: string; total: number };
 
 type CartLine = { key: string; variantId: string; label: string; quantity: number; unitPrice: number };
 
@@ -70,6 +72,7 @@ export function QuickSaleForm({
   accounts,
   channels,
   defaultChannelId,
+  priceConditions,
 }: {
   variants: VariantOption[];
   customers: Option[];
@@ -78,6 +81,7 @@ export function QuickSaleForm({
   accounts: Option[];
   channels: Channel[];
   defaultChannelId: string | null;
+  priceConditions: Option[];
 }) {
   const [state, formAction, isPending] = useActionState(createQuickSale, {});
 
@@ -93,8 +97,13 @@ export function QuickSaleForm({
   const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
   const [channelId, setChannelId] = useState(defaultChannelId ?? "");
   const [editingChannel, setEditingChannel] = useState(false);
-  const [editingTotal, setEditingTotal] = useState(false);
-  const [totalOverride, setTotalOverride] = useState<number | null>(null);
+
+  // Cards de cobro por condición (Bloque 3) — el frontend nunca calcula
+  // un total: sólo pinta lo que quote_retail_sale devuelve para el
+  // carrito actual. Se re-cotiza cada vez que cambia qué hay en el
+  // carrito (nunca en cada tecla de otro campo del formulario).
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [selectedConditionId, setSelectedConditionId] = useState("");
 
   // Estado de sesión separado del que devuelve useActionState — ver
   // lib/quick-sale-session.ts para el porqué (bug real: "Nueva venta" no
@@ -125,6 +134,71 @@ export function QuickSaleForm({
       // ignore
     }
   }, []);
+
+  // Firma estable del carrito (variante+cantidad) — dispara una recotización
+  // sólo cuando lo que hay para vender realmente cambió, nunca por un
+  // re-render de otro campo del formulario.
+  const cartSignature = useMemo(
+    () => JSON.stringify(cart.map((line) => ({ v: line.variantId, q: line.quantity })).sort((a, b) => a.v.localeCompare(b.v))),
+    [cart]
+  );
+
+  // `quoting` se deriva de si la última cotización recibida corresponde
+  // a este carrito o a uno anterior — nunca un setState síncrono al
+  // arrancar el efecto (eso dispara un render en cascada evitable); el
+  // único setState real pasa dentro del callback async, cuando la
+  // respuesta de verdad llega.
+  const [quotesFor, setQuotesFor] = useState<string | null>(null);
+  const quoting = cart.length > 0 && quotesFor !== cartSignature;
+
+  useEffect(() => {
+    const items = cart.map((line) => ({ product_variant_id: line.variantId, quantity: line.quantity }));
+    if (items.length === 0) {
+      // Carrito vacío: nada que cotizar. No hace falta limpiar `quotes`/
+      // `selectedConditionId` acá — toda la sección de condiciones (y el
+      // submit) ya está condicionada a `cart.length > 0` en el render, así
+      // que un valor stale mientras el carrito está vacío no es visible
+      // ni habilita nada.
+      return;
+    }
+
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .rpc("quote_retail_sale", { p_items: items })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        const rows = error || !data ? [] : (data as Quote[]);
+        setQuotes(rows);
+        setQuotesFor(cartSignature);
+        // Si la condición elegida ya no aparece en la nueva cotización
+        // (se sacó un producto del carrito que sólo tenía precio ahí, o
+        // se desactivó mientras tanto), se limpia la selección — nunca
+        // se deja seleccionada una card que ya no es válida.
+        setSelectedConditionId((prev) => (rows.some((q) => q.price_condition_id === prev) ? prev : ""));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartSignature]);
+
+  const selectedQuote = quotes.find((q) => q.price_condition_id === selectedConditionId) ?? null;
+  // El RPC ya ordena por sort_order/nombre, pero se re-ordena acá contra
+  // el orden que trajo la página — mismo orden que ve la usuaria en
+  // /precios, nunca el orden en que las cards llegaron de la red.
+  const conditionOrder = useMemo(
+    () => new Map(priceConditions.map((c, i) => [c.id, i])),
+    [priceConditions]
+  );
+  const orderedQuotes = useMemo(
+    () =>
+      [...quotes].sort(
+        (a, b) => (conditionOrder.get(a.price_condition_id) ?? 0) - (conditionOrder.get(b.price_condition_id) ?? 0)
+      ),
+    [quotes, conditionOrder]
+  );
 
   const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
   const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
@@ -174,19 +248,14 @@ export function QuickSaleForm({
   }
 
   const subtotal = cart.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
-  // El total nunca puede superar el subtotal (sólo puede bajar, nunca ser
-  // un recargo encubierto) ni quedar negativo — mismo límite que valida el
-  // RPC del lado del servidor.
-  const total = totalOverride === null ? subtotal : Math.min(Math.max(totalOverride, 0), subtotal);
-  const discountTotal = subtotal - total;
 
   function resetForNewSale() {
     setCart([]);
     setSearch("");
     setCustomerId("");
     setCustomerLabel("");
-    setEditingTotal(false);
-    setTotalOverride(null);
+    setQuotes([]);
+    setSelectedConditionId("");
     setPaidAt(new Date().toISOString().slice(0, 10));
     // Forma de pago se resetea — a diferencia de la ubicación, no es un
     // default útil entre ventas (puede variar de una a la siguiente).
@@ -228,7 +297,7 @@ export function QuickSaleForm({
   }
 
   const canSubmit =
-    cart.length > 0 && locationId && paymentMethodId && paidAt && !isPending;
+    cart.length > 0 && locationId && paymentMethodId && paidAt && !!selectedQuote && !isPending;
 
   return (
     <form action={formAction} className="flex max-w-2xl flex-col gap-4">
@@ -249,8 +318,9 @@ export function QuickSaleForm({
       <input type="hidden" name="paid_at" value={paidAt} />
       <input type="hidden" name="customer_id" value={customerId} />
       <input type="hidden" name="channel_id" value={channelId} />
-      <input type="hidden" name="discount_total" value={discountTotal > 0 ? String(discountTotal) : ""} />
       <input type="hidden" name="client_request_id" value={session.clientRequestId} />
+      <input type="hidden" name="price_condition_id" value={selectedConditionId} />
+      <input type="hidden" name="expected_total" value={selectedQuote ? String(selectedQuote.total) : ""} />
 
       {/* Buscador de producto */}
       <div className="space-y-2">
@@ -346,55 +416,46 @@ export function QuickSaleForm({
             ))}
 
             <div className="flex items-center justify-between border-t pt-3">
-              <span className="text-sm text-muted-foreground">Subtotal</span>
+              <span className="text-sm text-muted-foreground">Subtotal (precio de referencia)</span>
               <span className="text-sm">{formatCurrency(subtotal)}</span>
             </div>
-
-            {editingTotal ? (
-              <div className="flex items-center gap-2">
-                <Label htmlFor="total_override" className="text-sm text-muted-foreground">
-                  Total final
-                </Label>
-                <Input
-                  id="total_override"
-                  type="number"
-                  min="0"
-                  max={subtotal}
-                  step="0.01"
-                  className="w-32"
-                  value={total}
-                  onChange={(e) => setTotalOverride(Number(e.target.value) || 0)}
-                  autoFocus
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setEditingTotal(false);
-                    setTotalOverride(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setTotalOverride(total);
-                  setEditingTotal(true);
-                }}
-                className="flex items-center justify-between text-left"
-              >
-                <span className="text-base font-semibold">Total</span>
-                <span className="text-base font-semibold underline decoration-dotted">
-                  {formatCurrency(total)}
-                </span>
-              </button>
-            )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Condición de precio — el frontend nunca calcula, sólo pinta lo
+          que quote_retail_sale devolvió para este carrito. */}
+      {cart.length > 0 && (
+        <div className="space-y-2">
+          <Label>Condición de precio *</Label>
+          {quoting && quotes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Cotizando...</p>
+          ) : orderedQuotes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Ninguna condición de precio activa tiene precio cargado para estos productos.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              {orderedQuotes.map((q) => (
+                <button
+                  key={q.price_condition_id}
+                  type="button"
+                  onClick={() => setSelectedConditionId(q.price_condition_id)}
+                  className={`min-w-[8.5rem] flex-1 rounded-lg border p-3 text-left transition-colors ${
+                    selectedConditionId === q.price_condition_id
+                      ? "border-primary bg-accent"
+                      : "border-input hover:bg-accent/50"
+                  }`}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {q.price_condition_name}
+                  </p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums">{formatCurrency(q.total)}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Ubicación */}
@@ -517,7 +578,11 @@ export function QuickSaleForm({
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}
 
       <Button type="submit" disabled={!canSubmit} size="lg" className="w-full sm:w-auto">
-        {isPending ? "Registrando..." : `Registrar venta — ${formatCurrency(total)}`}
+        {isPending
+          ? "Registrando..."
+          : selectedQuote
+            ? `Registrar venta — ${formatCurrency(selectedQuote.total)}`
+            : "Elegí una condición de precio"}
       </Button>
     </form>
   );
