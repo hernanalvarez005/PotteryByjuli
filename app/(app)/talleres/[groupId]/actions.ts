@@ -193,6 +193,7 @@ export async function updateDuePayment(
       method_id: parsed.data.method_id,
       account_id: parsed.data.account_id,
       reference: parsed.data.reference,
+      notes: parsed.data.notes,
     })
     .eq("id", paymentId)
     .eq("workshop_due_id", dueId);

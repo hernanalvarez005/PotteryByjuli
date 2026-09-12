@@ -79,6 +79,10 @@ export const duePaymentSchema = z.object({
   // schemas/orders.ts § delivery_address (2026-09-10).
   account_id: optionalUuid(),
   reference: optionalString(200),
+  // Nota de corrección (sección 14 de la tanda de usabilidad) — separada
+  // de `reference` (que es una referencia de la transacción, no una nota
+  // de por qué se corrigió el pago).
+  notes: optionalString(500),
 });
 
 // Cargo extra sobre una cuota (sección 6) — nunca un payment, un monto que

@@ -53,7 +53,7 @@ export default async function GroupDetailPage({
       ? supabase
           .from("workshop_dues")
           .select(
-            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,reference),workshop_enrollments(customers(first_name,last_name))"
+            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes),workshop_enrollments(customers(first_name,last_name))"
           )
           .in("enrollment_id", enrollmentIds)
           .order("period", { ascending: false })
@@ -123,7 +123,9 @@ export default async function GroupDetailPage({
       amount: number;
       paid_at: string;
       method_id: string | null;
+      account_id: string | null;
       reference: string | null;
+      notes: string | null;
     }[];
     const items = itemsByDue.get(d.id) ?? [];
     const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
@@ -152,6 +154,12 @@ export default async function GroupDetailPage({
     .select("id,name")
     .eq("is_active", true)
     .order("sort_order");
+
+  const { data: paymentAccounts } = await supabase
+    .from("payment_accounts")
+    .select("id,name")
+    .eq("is_active", true)
+    .order("code");
 
   const enrollmentOptions = rosterRows
     .filter((r) => r.status === "active")
@@ -236,6 +244,7 @@ export default async function GroupDetailPage({
             dues={dueList}
             enrollments={enrollmentOptions}
             paymentMethods={paymentMethods ?? []}
+            paymentAccounts={paymentAccounts ?? []}
             concepts={concepts ?? []}
             canEdit={canEditDues}
           />
