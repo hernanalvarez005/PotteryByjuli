@@ -10,7 +10,7 @@ import {
   defaultDashboardFilters,
   type DashboardFilters,
 } from "@/lib/reports";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DashboardFilters as DashboardFiltersBar } from "./dashboard-filters";
@@ -18,6 +18,7 @@ import { SalesOverTimeChart } from "./sales-over-time-chart";
 import { TopProductsChart } from "./top-products-chart";
 import { MixDonutChart } from "./mix-donut-chart";
 import { PendingDuesAttention } from "./pending-dues-attention";
+import { Kpi, KpiCurrency } from "./kpi";
 
 const ROLE_LABELS: Record<string, string> = {
   owner: "Dueña",
@@ -144,9 +145,9 @@ export default async function DashboardPage({
 
       {summary && canSeeFinance && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <Kpi label="Ventas del período" value={formatCurrency(summary.totalInvoicedFiltered)} />
-          <Kpi label="Cobrado del período" value={formatCurrency(summary.collectedFiltered)} />
-          <Kpi label="Pendiente de cobro" value={formatCurrency(summary.pendingToCollect)} />
+          <KpiCurrency label="Ventas del período" amount={summary.totalInvoicedFiltered} />
+          <KpiCurrency label="Cobrado del período" amount={summary.collectedFiltered} />
+          <KpiCurrency label="Pendiente de cobro" amount={summary.pendingToCollect} />
           <Kpi label="Pedidos activos" value={String(summary.activeOrdersCount)} />
         </div>
       )}
@@ -238,16 +239,5 @@ export default async function DashboardPage({
         </Card>
       )}
     </div>
-  );
-}
-
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs font-normal text-muted-foreground">{label}</CardTitle>
-      </CardHeader>
-      <CardContent className="text-xl font-semibold">{value}</CardContent>
-    </Card>
   );
 }

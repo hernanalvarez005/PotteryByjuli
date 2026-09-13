@@ -4,6 +4,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import type { TopProductRow } from "@/lib/reports";
+import { usePrivacyMode, maskCurrency } from "@/lib/privacy-mode";
 
 const chartConfig: ChartConfig = {
   unitsSold: { label: "Unidades vendidas", color: "var(--chart-2)" },
@@ -16,6 +17,7 @@ const chartConfig: ChartConfig = {
  * detalle de facturación vive en el tooltip.
  */
 export function TopProductsChart({ data }: { data: TopProductRow[] }) {
+  const { isPrivate } = usePrivacyMode();
   const rows = [...data].reverse(); // recharts vertical bars render top-to-bottom in array order
 
   return (
@@ -50,9 +52,7 @@ export function TopProductsChart({ data }: { data: TopProductRow[] }) {
                       return (
                         <div className="flex flex-col">
                           <span>{value} unidades</span>
-                          <span className="text-muted-foreground">
-                            {new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(revenue)}
-                          </span>
+                          <span className="text-muted-foreground">{maskCurrency(revenue, isPrivate)}</span>
                         </div>
                       );
                     }}

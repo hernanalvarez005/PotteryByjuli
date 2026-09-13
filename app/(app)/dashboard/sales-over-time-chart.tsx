@@ -4,6 +4,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import type { SalesOverTimePoint } from "@/lib/reports";
+import { usePrivacyMode, maskCurrency } from "@/lib/privacy-mode";
 
 const chartConfig: ChartConfig = {
   total: { label: "Ventas", color: "var(--chart-1)" },
@@ -16,6 +17,7 @@ function labelForBucket(bucket: string): string {
 }
 
 export function SalesOverTimeChart({ data }: { data: SalesOverTimePoint[] }) {
+  const { isPrivate } = usePrivacyMode();
   return (
     <Card>
       <CardHeader>
@@ -30,7 +32,11 @@ export function SalesOverTimeChart({ data }: { data: SalesOverTimePoint[] }) {
               <CartesianGrid vertical={false} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} fontSize={11} />
               <YAxis tickLine={false} axisLine={false} tickMargin={8} fontSize={11} width={50} />
-              <ChartTooltip content={<ChartTooltipContent labelKey="label" />} />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent labelKey="label" formatter={(value) => maskCurrency(Number(value), isPrivate)} />
+                }
+              />
               <Bar dataKey="total" fill="var(--color-total)" radius={4} />
             </BarChart>
           </ChartContainer>
