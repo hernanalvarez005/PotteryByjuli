@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { customerDisplayName } from "@/lib/customers-shared";
 
 export type ClassSlot = {
   kind: "class";
@@ -33,7 +34,34 @@ export type SpecialDateEntry = {
   category: string | null;
 };
 
-export type CalendarEntry = ClassSlot | WorkshopEntry | SpecialDateEntry;
+/** Un pedido (encargo/personalizado, nunca una venta minorista — esas
+ * nunca tienen estimated_date) con fecha de entrega estimada. Sólo
+ * trabajo activo: un pedido ya entregado o cancelado no tiene sentido
+ * en un calendario de "qué falta entregar" (Bloque 7). */
+export type OrderDeliveryEntry = {
+  kind: "order";
+  id: string;
+  date: string;
+  title: string;
+  subtitle: string;
+  status: string;
+  href: string;
+};
+
+/** Recordatorio (Bloque 7) — opcionalmente vinculado a una fecha
+ * especial, nunca la duplica: sólo guarda su id. */
+export type ReminderEntry = {
+  kind: "reminder";
+  id: string;
+  date: string;
+  title: string;
+  status: "pending" | "completed";
+  specialDateId: string | null;
+  /** Fecha especial vinculada, para el link corto — null si no vincula ninguna. */
+  linkedSpecialDate: { title: string; date: string } | null;
+};
+
+export type CalendarEntry = ClassSlot | WorkshopEntry | SpecialDateEntry | OrderDeliveryEntry | ReminderEntry;
 
 /** Recurring classes (weekday+time already set) — one row per group, reused every week. */
 export async function getWeeklyClasses(): Promise<ClassSlot[]> {
@@ -130,6 +158,57 @@ export async function getSpecialDatesInRange(
   return result;
 }
 
+/** Pedidos (nunca ventas — operation_type='order' explícito, Bloque 2)
+ * con estimated_date en [startDate, endDate], excluyendo los ya
+ * entregados o cancelados: eso ya pasó, no es "trabajo por hacer". */
+export async function getOrderDeliveriesInRange(startDate: string, endDate: string): Promise<OrderDeliveryEntry[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("orders")
+    .select("id,human_code,estimated_date,status,customers(first_name,last_name)")
+    .eq("operation_type", "order")
+    .not("status", "in", "(delivered,cancelled)")
+    .not("estimated_date", "is", null)
+    .gte("estimated_date", startDate)
+    .lte("estimated_date", endDate);
+
+  return (data ?? []).map((o) => {
+    const customer = o.customers as unknown as { first_name: string; last_name: string | null } | null;
+    return {
+      kind: "order" as const,
+      id: o.id,
+      date: o.estimated_date as string,
+      title: o.human_code,
+      subtitle: customer ? customerDisplayName(customer) : "Sin cliente",
+      status: o.status,
+      href: `/pedidos/${o.id}`,
+    };
+  });
+}
+
+/** Recordatorios con remind_at en [startDate, endDate]. */
+export async function getRemindersInRange(startDate: string, endDate: string): Promise<ReminderEntry[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("calendar_reminders")
+    .select("id,title,remind_at,status,special_date_id,special_dates(title,date)")
+    .gte("remind_at", startDate)
+    .lte("remind_at", endDate);
+
+  return (data ?? []).map((r) => {
+    const linked = r.special_dates as unknown as { title: string; date: string } | null;
+    return {
+      kind: "reminder" as const,
+      id: r.id,
+      date: r.remind_at,
+      title: r.title,
+      status: r.status as "pending" | "completed",
+      specialDateId: r.special_date_id,
+      linkedSpecialDate: linked,
+    };
+  });
+}
+
 /** Monday of the week containing `date` (ISO 8601 week start). */
 export function startOfWeek(date: Date): Date {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -157,6 +236,8 @@ export function isoWeekday(d: Date): number {
 function entryTime(e: CalendarEntry): string {
   if (e.kind === "class") return e.startTime ?? "99:99";
   if (e.kind === "workshop") return e.startTime ?? "99:99";
+  // special/order/reminder son eventos de todo el día — se muestran
+  // primero, antes que cualquier horario puntual.
   return "00:00";
 }
 
@@ -170,14 +251,18 @@ export function entriesForDate(
   classes: ClassSlot[],
   workshops: WorkshopEntry[],
   specialDates: SpecialDateEntry[],
+  orderDeliveries: OrderDeliveryEntry[],
+  reminders: ReminderEntry[],
   dateIso: string,
-  filter: "all" | "class" | "workshop" | "special" = "all"
+  filter: "all" | "class" | "workshop" | "special" | "order" | "reminder" = "all"
 ): CalendarEntry[] {
   const weekday = isoWeekday(new Date(`${dateIso}T00:00:00Z`));
   const entries: CalendarEntry[] = [
     ...classes.filter((c) => c.weekday === weekday),
     ...workshops.filter((w) => w.date === dateIso),
     ...specialDates.filter((s) => s.date === dateIso),
+    ...orderDeliveries.filter((o) => o.date === dateIso),
+    ...reminders.filter((r) => r.date === dateIso),
   ];
   const filtered = filter === "all" ? entries : entries.filter((e) => e.kind === filter);
   return filtered.sort((a, b) => entryTime(a).localeCompare(entryTime(b)));

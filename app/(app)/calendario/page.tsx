@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import {
   getWeeklyClasses,
   getWorkshopsInRange,
   getSpecialDatesInRange,
+  getOrderDeliveriesInRange,
+  getRemindersInRange,
   entriesForDate,
   startOfWeek,
   startOfMonth,
@@ -17,13 +20,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { NewSpecialDateDialog } from "./new-special-date-dialog";
+import { NewReminderDialog } from "./new-reminder-dialog";
+import { ReminderCheckbox } from "./reminder-checkbox";
+
+type Filter = "all" | "class" | "workshop" | "special" | "order" | "reminder";
 
 const DAY_LABELS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
-const FILTERS = [
+const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "Todos" },
   { value: "class", label: "Clases" },
   { value: "workshop", label: "Workshops" },
   { value: "special", label: "Fechas especiales" },
+  { value: "order", label: "Pedidos con entrega" },
+  { value: "reminder", label: "Recordatorios" },
 ];
 type ViewMode = "day" | "week" | "month";
 const VIEWS: { value: ViewMode; label: string }[] = [
@@ -40,16 +49,21 @@ export default async function CalendarioPage({
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations") || hasRole(user, "workshop_staff");
   const params = await searchParams;
-  const filter = (params.filter ?? "all") as "all" | "class" | "workshop" | "special";
+  const filter = (params.filter ?? "all") as Filter;
   const view: ViewMode = params.view === "day" || params.view === "month" ? params.view : "week";
   const todayIso = toIsoDate(new Date());
+
+  const supabase = await createClient();
+  const { data: specialDates } = await supabase.from("special_dates").select("id,title").order("date");
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Calendario</h1>
-          <p className="text-muted-foreground">Clases, workshops y fechas especiales.</p>
+          <p className="text-muted-foreground">
+            Clases, workshops, fechas especiales, pedidos con entrega y recordatorios.
+          </p>
         </div>
         {canEdit && (
           <div className="flex gap-2">
@@ -60,6 +74,7 @@ export default async function CalendarioPage({
               </Button>
             </Link>
             <NewSpecialDateDialog />
+            <NewReminderDialog specialDates={specialDates ?? []} />
           </div>
         )}
       </div>
@@ -85,34 +100,38 @@ export default async function CalendarioPage({
         </div>
       </div>
 
-      {view === "day" && <DayView dateParam={params.date} filter={filter} todayIso={todayIso} />}
-      {view === "week" && <WeekView weekParam={params.week} filter={filter} todayIso={todayIso} />}
+      {view === "day" && <DayView dateParam={params.date} filter={filter} todayIso={todayIso} canEdit={canEdit} />}
+      {view === "week" && <WeekView weekParam={params.week} filter={filter} todayIso={todayIso} canEdit={canEdit} />}
       {view === "month" && <MonthView monthParam={params.month} filter={filter} todayIso={todayIso} />}
     </div>
   );
 }
 
 async function loadRange(startIso: string, endIso: string) {
-  const [classes, workshops, specialDates] = await Promise.all([
+  const [classes, workshops, specialDates, orderDeliveries, reminders] = await Promise.all([
     getWeeklyClasses(),
     getWorkshopsInRange(startIso, endIso),
     getSpecialDatesInRange(startIso, endIso),
+    getOrderDeliveriesInRange(startIso, endIso),
+    getRemindersInRange(startIso, endIso),
   ]);
-  return { classes, workshops, specialDates };
+  return { classes, workshops, specialDates, orderDeliveries, reminders };
 }
 
 async function DayView({
   dateParam,
   filter,
   todayIso,
+  canEdit,
 }: {
   dateParam?: string;
-  filter: "all" | "class" | "workshop" | "special";
+  filter: Filter;
   todayIso: string;
+  canEdit: boolean;
 }) {
   const dateIso = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayIso;
-  const { classes, workshops, specialDates } = await loadRange(dateIso, dateIso);
-  const entries = entriesForDate(classes, workshops, specialDates, dateIso, filter);
+  const { classes, workshops, specialDates, orderDeliveries, reminders } = await loadRange(dateIso, dateIso);
+  const entries = entriesForDate(classes, workshops, specialDates, orderDeliveries, reminders, dateIso, filter);
 
   const date = new Date(`${dateIso}T00:00:00Z`);
   const prevIso = toIsoDate(addDays(date, -1));
@@ -134,7 +153,7 @@ async function DayView({
       ) : (
         <div className="flex flex-col gap-2">
           {entries.map((entry) => (
-            <AgendaRow key={`${entry.kind}-${entry.id}`} entry={entry} />
+            <AgendaRow key={`${entry.kind}-${entry.id}`} entry={entry} canEdit={canEdit} />
           ))}
         </div>
       )}
@@ -146,10 +165,12 @@ async function WeekView({
   weekParam,
   filter,
   todayIso,
+  canEdit,
 }: {
   weekParam?: string;
-  filter: "all" | "class" | "workshop" | "special";
+  filter: Filter;
   todayIso: string;
+  canEdit: boolean;
 }) {
   const anchor = weekParam && /^\d{4}-\d{2}-\d{2}$/.test(weekParam) ? new Date(`${weekParam}T00:00:00Z`) : new Date();
   const monday = startOfWeek(anchor);
@@ -157,10 +178,10 @@ async function WeekView({
   const weekStartIso = toIsoDate(monday);
   const weekEndIso = toIsoDate(days[6]);
 
-  const { classes, workshops, specialDates } = await loadRange(weekStartIso, weekEndIso);
+  const { classes, workshops, specialDates, orderDeliveries, reminders } = await loadRange(weekStartIso, weekEndIso);
   const entriesByDay = days.map((day) => {
     const iso = toIsoDate(day);
-    return { iso, entries: entriesForDate(classes, workshops, specialDates, iso, filter) };
+    return { iso, entries: entriesForDate(classes, workshops, specialDates, orderDeliveries, reminders, iso, filter) };
   });
 
   const prevWeekIso = toIsoDate(addDays(monday, -7));
@@ -190,7 +211,7 @@ async function WeekView({
             ) : (
               <div className="flex flex-col gap-1.5">
                 {entries.map((entry) => (
-                  <CalendarChip key={`${entry.kind}-${entry.id}`} entry={entry} />
+                  <CalendarChip key={`${entry.kind}-${entry.id}`} entry={entry} canEdit={canEdit} />
                 ))}
               </div>
             )}
@@ -207,7 +228,7 @@ async function MonthView({
   todayIso,
 }: {
   monthParam?: string;
-  filter: "all" | "class" | "workshop" | "special";
+  filter: Filter;
   todayIso: string;
 }) {
   const anchor = monthParam && /^\d{4}-\d{2}$/.test(monthParam) ? new Date(`${monthParam}-01T00:00:00Z`) : new Date();
@@ -218,13 +239,13 @@ async function MonthView({
   const monthLabel = firstOfMonth.toLocaleDateString("es-AR", { month: "long", year: "numeric", timeZone: "UTC" });
   const currentMonthIso = `${firstOfMonth.getUTCFullYear()}-${String(firstOfMonth.getUTCMonth() + 1).padStart(2, "0")}`;
 
-  const { classes, workshops, specialDates } = await loadRange(gridStartIso, gridEndIso);
+  const { classes, workshops, specialDates, orderDeliveries, reminders } = await loadRange(gridStartIso, gridEndIso);
   const daysWithEntries = gridDays.map((day) => {
     const iso = toIsoDate(day);
     return {
       iso,
       inMonth: day.getUTCMonth() === firstOfMonth.getUTCMonth(),
-      entries: entriesForDate(classes, workshops, specialDates, iso, filter),
+      entries: entriesForDate(classes, workshops, specialDates, orderDeliveries, reminders, iso, filter),
     };
   });
 
@@ -253,6 +274,8 @@ async function MonthView({
           const classCount = entries.filter((e) => e.kind === "class").length;
           const workshopCount = entries.filter((e) => e.kind === "workshop").length;
           const specialCount = entries.filter((e) => e.kind === "special").length;
+          const orderCount = entries.filter((e) => e.kind === "order").length;
+          const reminderCount = entries.filter((e) => e.kind === "reminder").length;
           return (
             <Link
               key={iso}
@@ -276,6 +299,16 @@ async function MonthView({
                 {specialCount > 0 && (
                   <span className="rounded bg-pottery-clay/15 px-1 text-[10px] text-foreground">
                     {specialCount} fecha{specialCount > 1 ? "s" : ""}
+                  </span>
+                )}
+                {orderCount > 0 && (
+                  <span className="rounded bg-chart-4/25 px-1 text-[10px] text-foreground">
+                    {orderCount} entrega{orderCount > 1 ? "s" : ""}
+                  </span>
+                )}
+                {reminderCount > 0 && (
+                  <span className="rounded bg-chart-5/20 px-1 text-[10px] text-foreground">
+                    {reminderCount} recordatorio{reminderCount > 1 ? "s" : ""}
                   </span>
                 )}
               </div>
@@ -321,7 +354,7 @@ function NavBar({
   );
 }
 
-function AgendaRow({ entry }: { entry: CalendarEntry }) {
+function AgendaRow({ entry, canEdit }: { entry: CalendarEntry; canEdit: boolean }) {
   if (entry.kind === "class") {
     return (
       <Link
@@ -348,6 +381,37 @@ function AgendaRow({ entry }: { entry: CalendarEntry }) {
       </Link>
     );
   }
+  if (entry.kind === "order") {
+    return (
+      <Link
+        href={entry.href}
+        className="flex items-center gap-3 rounded-md border border-chart-4/40 bg-chart-4/20 px-3 py-2 text-sm text-foreground hover:bg-chart-4/30"
+      >
+        <span className="w-12 shrink-0 font-medium">—</span>
+        <span className="flex-1">{entry.title}</span>
+        <span className="text-muted-foreground">{entry.subtitle}</span>
+      </Link>
+    );
+  }
+  if (entry.kind === "reminder") {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-chart-5/40 bg-chart-5/15 px-3 py-2 text-sm text-foreground">
+        <span className="w-12 shrink-0" />
+        <ReminderCheckbox reminderId={entry.id} completed={entry.status === "completed"} canEdit={canEdit} />
+        <span className={`flex-1 ${entry.status === "completed" ? "text-muted-foreground line-through" : ""}`}>
+          {entry.title}
+        </span>
+        {entry.linkedSpecialDate && (
+          <Link
+            href={`/calendario?view=day&date=${entry.linkedSpecialDate.date}`}
+            className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {entry.linkedSpecialDate.title} ↗
+          </Link>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-3 rounded-md border border-pottery-clay/30 bg-pottery-clay/15 px-3 py-2 text-sm text-foreground">
       <span className="w-12 shrink-0 font-medium">—</span>
@@ -356,7 +420,7 @@ function AgendaRow({ entry }: { entry: CalendarEntry }) {
   );
 }
 
-function CalendarChip({ entry }: { entry: CalendarEntry }) {
+function CalendarChip({ entry, canEdit }: { entry: CalendarEntry; canEdit: boolean }) {
   if (entry.kind === "class") {
     return (
       <Link
@@ -383,6 +447,27 @@ function CalendarChip({ entry }: { entry: CalendarEntry }) {
           {entry.subtitle} {entry.capacity != null ? `· ${entry.confirmedCount}/${entry.capacity}` : ""}
         </p>
       </Link>
+    );
+  }
+  if (entry.kind === "order") {
+    return (
+      <Link
+        href={entry.href}
+        className="block rounded-md border border-chart-4/40 bg-chart-4/20 px-2 py-1.5 text-xs text-foreground hover:bg-chart-4/30"
+      >
+        <p className="font-medium">{entry.title}</p>
+        <p className="text-muted-foreground">{entry.subtitle}</p>
+      </Link>
+    );
+  }
+  if (entry.kind === "reminder") {
+    return (
+      <div className="flex items-start gap-1.5 rounded-md border border-chart-5/40 bg-chart-5/15 px-2 py-1.5 text-xs text-foreground">
+        <ReminderCheckbox reminderId={entry.id} completed={entry.status === "completed"} canEdit={canEdit} />
+        <p className={entry.status === "completed" ? "text-muted-foreground line-through" : "font-medium"}>
+          {entry.title}
+        </p>
+      </div>
     );
   }
   return (

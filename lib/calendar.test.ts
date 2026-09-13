@@ -9,6 +9,8 @@ import {
   type ClassSlot,
   type WorkshopEntry,
   type SpecialDateEntry,
+  type OrderDeliveryEntry,
+  type ReminderEntry,
 } from "./calendar";
 
 function classSlot(overrides: Partial<ClassSlot>): ClassSlot {
@@ -46,6 +48,32 @@ function special(overrides: Partial<SpecialDateEntry>): SpecialDateEntry {
   return { kind: "special", id: "s1", date: "2026-09-09", title: "Día especial", category: null, ...overrides };
 }
 
+function orderDelivery(overrides: Partial<OrderDeliveryEntry>): OrderDeliveryEntry {
+  return {
+    kind: "order",
+    id: "o1",
+    date: "2026-09-09",
+    title: "PED-000001",
+    subtitle: "Juana Pérez",
+    status: "confirmed",
+    href: "/pedidos/o1",
+    ...overrides,
+  };
+}
+
+function reminder(overrides: Partial<ReminderEntry>): ReminderEntry {
+  return {
+    kind: "reminder",
+    id: "r1",
+    date: "2026-09-09",
+    title: "Comprar arcilla",
+    status: "pending",
+    specialDateId: null,
+    linkedSpecialDate: null,
+    ...overrides,
+  };
+}
+
 describe("isoWeekday", () => {
   it("returns 1 for Monday and 7 for Sunday", () => {
     // 2026-09-07 is a Monday, 2026-09-13 is the following Sunday.
@@ -60,13 +88,15 @@ describe("entriesForDate", () => {
       [classSlot({ weekday: 3 })], // Wednesday
       [workshop({ date: "2026-09-09" })],
       [special({ date: "2026-09-09" })],
+      [],
+      [],
       "2026-09-09" // a Wednesday
     );
     expect(entries).toHaveLength(3);
   });
 
   it("excludes a class whose weekday doesn't match this date", () => {
-    const entries = entriesForDate([classSlot({ weekday: 1 })], [], [], "2026-09-09"); // Wednesday
+    const entries = entriesForDate([classSlot({ weekday: 1 })], [], [], [], [], "2026-09-09"); // Wednesday
     expect(entries).toHaveLength(0);
   });
 
@@ -74,6 +104,8 @@ describe("entriesForDate", () => {
     const entries = entriesForDate(
       [classSlot({ weekday: 3, startTime: "18:00", id: "late" })],
       [workshop({ date: "2026-09-09", startTime: "09:00", id: "early" })],
+      [],
+      [],
       [],
       "2026-09-09"
     );
@@ -85,11 +117,52 @@ describe("entriesForDate", () => {
       [classSlot({ weekday: 3 })],
       [workshop({ date: "2026-09-09" })],
       [],
+      [],
+      [],
       "2026-09-09",
       "workshop"
     );
     expect(entries).toHaveLength(1);
     expect(entries[0].kind).toBe("workshop");
+  });
+
+  it("finds a pedido con entrega and a recordatorio by exact date, alongside everything else", () => {
+    const entries = entriesForDate(
+      [],
+      [],
+      [special({ date: "2026-09-09" })],
+      [orderDelivery({ date: "2026-09-09" })],
+      [reminder({ date: "2026-09-09" })],
+      "2026-09-09"
+    );
+    expect(entries).toHaveLength(3);
+    expect(entries.map((e) => e.kind).sort()).toEqual(["order", "reminder", "special"]);
+  });
+
+  it("excludes a pedido/recordatorio on a different date", () => {
+    const entries = entriesForDate(
+      [],
+      [],
+      [],
+      [orderDelivery({ date: "2026-09-10" })],
+      [reminder({ date: "2026-09-10" })],
+      "2026-09-09"
+    );
+    expect(entries).toHaveLength(0);
+  });
+
+  it("the 'order' and 'reminder' filters isolate their own kind", () => {
+    const classes: ClassSlot[] = [];
+    const workshops: WorkshopEntry[] = [];
+    const specialDates: SpecialDateEntry[] = [];
+    const orders = [orderDelivery({})];
+    const reminders = [reminder({})];
+    expect(entriesForDate(classes, workshops, specialDates, orders, reminders, "2026-09-09", "order").map((e) => e.kind)).toEqual([
+      "order",
+    ]);
+    expect(
+      entriesForDate(classes, workshops, specialDates, orders, reminders, "2026-09-09", "reminder").map((e) => e.kind)
+    ).toEqual(["reminder"]);
   });
 });
 
