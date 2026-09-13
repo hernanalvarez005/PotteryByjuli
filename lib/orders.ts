@@ -6,6 +6,8 @@ export type OrderListRow = {
   status: string;
   total: number;
   created_at: string;
+  estimated_date: string | null;
+  archived_at: string | null;
   customers: { first_name: string; last_name: string | null } | null;
   business_units: { name: string } | null;
 };
@@ -17,18 +19,29 @@ export type OrderListRow = {
  * pantalla: son dos vistas de un mismo modelo de datos, no dos tablas,
  * pero conceptualmente son operaciones distintas (ver auditoría "Próxima
  * evolución operativa de Pottery", Bloque 2).
+ *
+ * `includeArchived` (default false) — un pedido archivado (Bloque 4,
+ * Kanban) sigue existiendo igual que cualquier otro, sólo se saca del
+ * trabajo activo por default. `false` filtra `archived_at is null`;
+ * `true` trae todo, para el switch "Ver archivados".
  */
 export async function getOrders(options?: {
   operationType?: "order" | "retail_sale";
+  includeArchived?: boolean;
 }): Promise<{ orders: OrderListRow[]; paidByOrder: Record<string, number> }> {
   const supabase = await createClient();
 
   let query = supabase
     .from("orders")
-    .select("id,human_code,status,total,created_at,customers(first_name,last_name),business_units(name)")
+    .select(
+      "id,human_code,status,total,created_at,estimated_date,archived_at,customers(first_name,last_name),business_units(name)"
+    )
     .order("created_at", { ascending: false });
   if (options?.operationType) {
     query = query.eq("operation_type", options.operationType);
+  }
+  if (!options?.includeArchived) {
+    query = query.is("archived_at", null);
   }
 
   const [{ data: orders }, { data: payments }] = await Promise.all([
