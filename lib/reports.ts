@@ -122,6 +122,13 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   // Tampoco tienen canal — un filtro de canal activo las excluye siempre
   // (se avisa explícitamente en la UI, nunca parece un bug silencioso).
   const includeDuePayments = includeDuesInFilter && filters.channelId == null;
+  // Otros ingresos (Bloque 6) no pertenecen a ninguna unidad de negocio
+  // del catálogo ni tienen canal — a diferencia de Talleres (que sí
+  // corresponde a la unidad "classes"), no hay ninguna unidad específica
+  // bajo la que deban aparecer. Sólo se suman a "Cobrado" cuando la vista
+  // es genuinamente "Todas las unidades, sin canal" — nunca atribuidos a
+  // una unidad o canal que no tienen.
+  const includeIncomeEntries = filters.businessUnitIds == null && filters.channelId == null;
 
   let filteredOrdersQuery = supabase
     .from("orders")
@@ -144,11 +151,20 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   if (filters.locationId) filteredOrderPaymentsQuery = filteredOrderPaymentsQuery.eq("orders.location_id", filters.locationId);
   if (filters.channelId) filteredOrderPaymentsQuery = filteredOrderPaymentsQuery.eq("orders.closing_channel_id", filters.channelId);
 
+  let filteredIncomeQuery = supabase
+    .from("income_entries")
+    .select("amount")
+    .gte("occurred_at", fromIso)
+    .lte("occurred_at", toIso);
+  if (filters.locationId) filteredIncomeQuery = filteredIncomeQuery.eq("location_id", filters.locationId);
+
   const [
     { data: monthOrders },
     { data: monthPayments },
+    { data: monthIncomeEntries },
     { data: filteredOrders },
     { data: filteredOrderPayments },
+    { data: filteredIncomeEntries },
     { count: activeOrdersCount },
     { count: overdueOrdersCount },
     { count: pendingProductionCount },
@@ -158,12 +174,14 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   ] = await Promise.all([
     supabase.from("orders").select("total").neq("status", "cancelled").gte("created_at", monthStart),
     supabase.from("payments").select("amount").gte("paid_at", monthStart),
+    supabase.from("income_entries").select("amount").gte("occurred_at", monthStart),
     filteredOrdersQuery,
     // Joined to orders and filtered the same way as `filteredOrders` above
     // — otherwise a deposit on an order that later got cancelled (or
     // outside the filtered range/attributes) still counted as "collected"
     // against nothing.
     filteredOrderPaymentsQuery,
+    filteredIncomeQuery,
     supabase
       .from("orders")
       .select("id", { count: "exact", head: true })
@@ -205,10 +223,18 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   ]);
 
   const salesThisMonth = (monthOrders ?? []).reduce((sum, o) => sum + o.total, 0);
-  const collectedThisMonth = (monthPayments ?? []).reduce((sum, p) => sum + p.amount, 0);
+  // "Cobrado" es genuinamente "toda la plata que entró" — igual que
+  // monthPayments (pedidos + cuotas mezclados sin distinguir unidad acá),
+  // un ingreso sin producto también cuenta, nunca a "unidades vendidas".
+  const collectedThisMonth =
+    (monthPayments ?? []).reduce((sum, p) => sum + p.amount, 0) +
+    (monthIncomeEntries ?? []).reduce((sum, e) => sum + e.amount, 0);
 
   const totalInvoicedFiltered = (filteredOrders ?? []).reduce((sum, o) => sum + o.total, 0);
   const orderPaymentsFiltered = (filteredOrderPayments ?? []).reduce((sum: number, p: { amount: number }) => sum + p.amount, 0);
+  const incomeEntriesFiltered = includeIncomeEntries
+    ? (filteredIncomeEntries ?? []).reduce((sum: number, e: { amount: number }) => sum + e.amount, 0)
+    : 0;
 
   let duePaymentsFiltered = 0;
   if (includeDuePayments) {
@@ -227,7 +253,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     duePaymentsFiltered = (duePaymentRows ?? []).reduce((sum: number, p: { amount: number }) => sum + p.amount, 0);
   }
 
-  const collectedFiltered = orderPaymentsFiltered + duePaymentsFiltered;
+  const collectedFiltered = orderPaymentsFiltered + duePaymentsFiltered + incomeEntriesFiltered;
   // Pendiente de cobro es una noción exclusivamente de `orders` — nunca se
   // computa contra `collectedFiltered` (que mezcla pagos de pedidos con
   // cuotas de talleres, dos flujos de plata sin relación entre sí: una
@@ -294,6 +320,10 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     totalInvoicedFiltered,
     collectedFiltered,
     duesExcludedByChannelFilter: includeDuesInFilter && !includeDuePayments,
+    // A diferencia de las cuotas (que sí tienen una unidad propia,
+    // "classes"), Otros ingresos no pertenece a ninguna unidad — CUALQUIER
+    // filtro de unidad específica lo excluye, no sólo uno que no sea la suya.
+    incomeEntriesExcludedByFilter: !includeIncomeEntries,
     activeOrdersCount: activeOrdersCount ?? 0,
     overdueOrdersCount: overdueOrdersCount ?? 0,
     pendingProductionCount: pendingProductionCount ?? 0,
@@ -301,6 +331,46 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     pendingDuesCount,
     pendingDuesDetail,
     upcomingEvents: upcomingEvents ?? [],
+  };
+}
+
+export type IncomeEntriesSummary = {
+  total: number;
+  count: number;
+  byCategory: { category: string; total: number }[];
+};
+
+/**
+ * Otros ingresos (Bloque 6) para /reportes — "aparece en reportes
+ * financieros" del criterio de done. Consulta exclusivamente
+ * `income_entries`: nunca se une a `order_items`/`products`, así que por
+ * construcción no puede aparecer en "productos más vendidos" ni afectar
+ * ningún reporte de stock.
+ */
+export async function getIncomeEntriesSummary(
+  filters: DashboardFilters = defaultDashboardFilters()
+): Promise<IncomeEntriesSummary> {
+  const supabase = await createClient();
+  const { fromIso, toIso } = dateRange(filters);
+  let query = supabase
+    .from("income_entries")
+    .select("amount,category")
+    .gte("occurred_at", fromIso)
+    .lte("occurred_at", toIso);
+  if (filters.locationId) query = query.eq("location_id", filters.locationId);
+  const { data } = await query;
+
+  const rows = data ?? [];
+  const byCategory = new Map<string, number>();
+  for (const row of rows) {
+    const category = row.category ?? "Sin categoría";
+    byCategory.set(category, (byCategory.get(category) ?? 0) + row.amount);
+  }
+
+  return {
+    total: rows.reduce((sum, r) => sum + r.amount, 0),
+    count: rows.length,
+    byCategory: [...byCategory.entries()].map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total),
   };
 }
 

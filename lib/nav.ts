@@ -14,6 +14,7 @@ import {
   PartyPopper,
   Wallet,
   Receipt,
+  PiggyBank,
   BarChart3,
   Megaphone,
   Settings,
@@ -78,6 +79,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Pagos", href: "/pagos", icon: Wallet, phase: 3 },
       { label: "Gastos", href: "/gastos", icon: Receipt, phase: 9 },
+      { label: "Otros ingresos", href: "/ingresos", icon: PiggyBank, phase: 9.5 },
       { label: "Campañas", href: "/campanas", icon: Megaphone, phase: 9 },
       { label: "Reportes", href: "/reportes", icon: BarChart3, phase: 9 },
     ],
