@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalUuid, optionalMoneyAmount } from "@/lib/zod-helpers";
+import { optionalUuid } from "@/lib/zod-helpers";
 
 // Venta minorista rápida — a propósito NO incluye unit_price acá: el
 // precio real lo resuelve el RPC (create_quick_retail_sale) contra
@@ -28,9 +28,15 @@ export const quickSaleSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
   customer_id: optionalUuid(),
   channel_id: optionalUuid(),
-  discount_total: optionalMoneyAmount(),
   client_request_id: z.string().trim().uuid(),
   items: z.array(quickSaleItemSchema).min(1, "Agregá al menos un producto."),
+  // Condición de precio elegida (Bloque 3) — nunca opcional: cada venta
+  // se cotiza y se cobra bajo una condición específica.
+  price_condition_id: z.string().trim().uuid("Elegí una condición de precio."),
+  // Sólo para el chequeo de "¿cambió la cotización desde que se mostró
+  // la card?" en el Server Action — no es lo que decide el cobro, eso lo
+  // vuelve a resolver create_quick_retail_sale server-side.
+  expected_total: z.number().nonnegative(),
 });
 
 export type QuickSaleInput = z.infer<typeof quickSaleSchema>;

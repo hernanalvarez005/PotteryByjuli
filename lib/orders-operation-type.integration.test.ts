@@ -115,11 +115,14 @@ describe.skipIf(!hasCredentials)("orders.operation_type (local)", () => {
     const { data: item } = await admin.from("inventory_items").select("id").eq("product_variant_id", variant!.id).single();
     await admin.from("inventory_movements").insert({ inventory_item_id: item!.id, location_id: retailLocationId, movement_type: "production_in", quantity: 5 });
 
+    const { data: generalCondition } = await admin.from("price_conditions").select("id").eq("code", "general").single();
+
     const { data, error } = await owner.rpc("create_quick_retail_sale", {
       p_location_id: retailLocationId,
       p_items: [{ product_variant_id: variant!.id, quantity: 1 }],
       p_payment_method_id: bankTransferMethodId,
       p_paid_at: new Date().toISOString(),
+      p_price_condition_id: generalCondition!.id,
     });
     expect(error).toBeNull();
     const orderId = (data as { order_id: string }[])[0].order_id;

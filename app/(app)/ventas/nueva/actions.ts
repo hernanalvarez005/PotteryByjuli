@@ -4,13 +4,14 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { quickSaleSchema } from "@/schemas/quick-sale";
-import { getPricesForVariants } from "@/lib/products";
 import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
 
 export type QuickSaleActionState = {
   error?: string;
   result?: { orderId: string; humanCode: string; total: number };
 };
+
+type QuoteRow = { price_condition_id: string; price_condition_name: string; total: number };
 
 async function assertCanSell() {
   const user = await requireUser();
@@ -40,8 +41,9 @@ export async function createQuickSale(
     paid_at: formData.get("paid_at"),
     customer_id: formData.get("customer_id"),
     channel_id: formData.get("channel_id"),
-    discount_total: formData.get("discount_total"),
     client_request_id: formData.get("client_request_id"),
+    price_condition_id: formData.get("price_condition_id"),
+    expected_total: Number(formData.get("expected_total")),
     items: itemsRaw,
   });
 
@@ -50,38 +52,50 @@ export async function createQuickSale(
   }
 
   const input = parsed.data;
-
-  // Chequeo de "¿cambió el precio desde que se abrió la pantalla?" — es UX,
-  // no la defensa de fondo (esa la hace el RPC solo, resolviendo el precio
-  // él mismo y nunca aceptando uno del cliente). Se hace ANTES de llamar al
-  // RPC: evita el caso humano común de dejar la pantalla abierta un rato
-  // mientras un precio se actualiza, cortando con un mensaje específico en
-  // vez de un pedido creado con un total que ya no coincide con lo que la
-  // usuaria vio en pantalla.
-  const prices = await getPricesForVariants(input.items.map((it) => it.product_variant_id));
-  for (const item of input.items) {
-    const currentPrice = prices[item.product_variant_id]?.retail;
-    if (currentPrice === undefined || currentPrice !== item.expected_unit_price) {
-      return {
-        error: "El precio de uno de los productos cambió. Revisá la venta antes de continuar.",
-      };
-    }
-  }
+  const quotedItems = input.items.map((it) => ({
+    product_variant_id: it.product_variant_id,
+    quantity: it.quantity,
+  }));
 
   const supabase = await createClient();
+
+  // Chequeo de "¿cambió la cotización desde que se mostró la card?" — es
+  // UX, no la defensa de fondo (esa la hace create_quick_retail_sale
+  // solo, resolviendo el precio él mismo y nunca aceptando un total del
+  // cliente). Se re-cotiza con el mismo RPC de sólo lectura que pintó las
+  // cards, justo antes de confirmar — si la condición elegida ya no
+  // aparece (se desactivó, o algún precio se borró) o su total cambió,
+  // se corta acá con un mensaje específico en vez de un pedido creado
+  // con un total que ya no coincide con lo que la usuaria vio en pantalla.
+  const { data: freshQuotes, error: quoteError } = await supabase.rpc("quote_retail_sale", {
+    p_items: quotedItems,
+  });
+  if (quoteError) {
+    return { error: "No se pudo verificar la cotización. Probá de nuevo." };
+  }
+  const freshQuote = (freshQuotes as QuoteRow[] | null)?.find(
+    (q) => q.price_condition_id === input.price_condition_id
+  );
+  if (!freshQuote) {
+    return {
+      error: "La condición de precio elegida ya no está disponible. Revisá la venta antes de continuar.",
+    };
+  }
+  if (freshQuote.total !== input.expected_total) {
+    return { error: "El precio cambió. Revisá la venta antes de continuar." };
+  }
+
   const { data: rows, error } = await supabase.rpc("create_quick_retail_sale", {
     p_location_id: input.location_id,
-    p_items: input.items.map((it) => ({
-      product_variant_id: it.product_variant_id,
-      quantity: it.quantity,
-    })),
+    p_items: quotedItems,
     p_payment_method_id: input.payment_method_id,
     p_paid_at: dateOnlyToArgentinaNoonISO(input.paid_at),
     p_customer_id: input.customer_id,
     p_channel_id: input.channel_id,
     p_payment_account_id: input.payment_account_id,
-    p_discount_total: input.discount_total ?? 0,
+    p_discount_total: 0,
     p_client_request_id: input.client_request_id,
+    p_price_condition_id: input.price_condition_id,
   });
 
   const row = rows?.[0] as { order_id: string; human_code: string; total: number } | undefined;
