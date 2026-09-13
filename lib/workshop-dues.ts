@@ -133,3 +133,61 @@ export function lastPaidPeriod(
   if (paidPeriods.length === 0) return null;
   return paidPeriods.sort().at(-1)!;
 }
+
+/** Último día calendario (AAAA-MM-DD) de un período "AAAA-MM". */
+export function lastDayOfPeriod(period: string): string {
+  const [year, month] = period.split("-").map(Number);
+  // Día 0 del mes siguiente = último día de este mes.
+  const d = new Date(Date.UTC(year, month, 0));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+export type PeriodStatus = "paid" | "debtor" | "excluded";
+
+export type EnrollmentForPeriod = {
+  id: string;
+  status: "active" | "paused" | "cancelled";
+  startDate: string; // yyyy-mm-dd
+  /** Ya resuelta: enrollment.monthly_fee ?? group.monthly_fee. */
+  monthlyFee: number | null;
+};
+
+/**
+ * Auditoría "Ventas: fecha real, canal, comisiones y talleres" (G.1),
+ * corrección aprobada: para un enrollment SIN ningún workshop_dues
+ * generado en el período, "tiene monthly_fee configurada" nunca alcanza
+ * sola — hace falta que, a la fecha, ya le tocara pagar. Sin una tabla de
+ * historial de bajas, `status === 'active'` hoy es la única evidencia
+ * disponible de que seguía inscripta; se documenta como limitación real,
+ * no se inventa un dato que no existe. Confirmado con la usuaria: el mes
+ * de alta se cobra completo, sin prorratear — por eso alcanza con
+ * `startDate <= último día del período`, sin mirar el día exacto dentro
+ * del mes.
+ */
+export function isEligibleWithoutDue(enrollment: EnrollmentForPeriod, period: string): boolean {
+  return (
+    enrollment.status === "active" &&
+    enrollment.monthlyFee != null &&
+    enrollment.startDate <= lastDayOfPeriod(period)
+  );
+}
+
+/**
+ * Clasifica un enrollment para un período — paga/deudora/excluida.
+ * Cuando existe un due, reusa computeDueSummary tal cual (única fuente de
+ * verdad de deuda, nunca una segunda lógica); cuando no existe ninguno,
+ * aplica isEligibleWithoutDue en vez de mirar sólo si tiene tarifa.
+ */
+export function classifyForPeriod(
+  enrollment: EnrollmentForPeriod,
+  period: string,
+  // Sólo lo que hace falta mirar — cualquier DueSummary ya calculado
+  // (dues-panel.tsx, la ficha de grupo) satisface esta forma tal cual.
+  due: { status: DueDisplayStatus; balance: number } | null
+): PeriodStatus {
+  if (due) {
+    if (due.status === "cancelled") return "excluded";
+    return due.balance <= 0 ? "paid" : "debtor";
+  }
+  return isEligibleWithoutDue(enrollment, period) ? "debtor" : "excluded";
+}

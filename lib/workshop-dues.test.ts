@@ -7,6 +7,10 @@ import {
   lastPaidPeriod,
   previousPeriod,
   nextPeriod,
+  lastDayOfPeriod,
+  isEligibleWithoutDue,
+  classifyForPeriod,
+  type EnrollmentForPeriod,
 } from "./workshop-dues";
 
 describe("previousPeriod / nextPeriod", () => {
@@ -164,5 +168,102 @@ describe("lastPaidPeriod", () => {
   it("a cancelled due is never counted as paid even if it happens to have payments recorded before cancellation", () => {
     const dues = [{ period: "2026-09", status: "cancelled" as const, amount: 100, paidAmount: 100 }];
     expect(lastPaidPeriod(dues)).toBeNull();
+  });
+});
+
+describe("lastDayOfPeriod", () => {
+  it("returns the real last day of a 30/31-day month", () => {
+    expect(lastDayOfPeriod("2026-09")).toBe("2026-09-30");
+    expect(lastDayOfPeriod("2026-10")).toBe("2026-10-31");
+  });
+
+  it("handles February correctly, leap or not", () => {
+    expect(lastDayOfPeriod("2026-02")).toBe("2026-02-28"); // 2026 no es bisiesto
+    expect(lastDayOfPeriod("2028-02")).toBe("2028-02-29"); // 2028 sí
+  });
+});
+
+// Auditoría "Ventas: fecha real, canal, comisiones y talleres" (G.1),
+// corrección aprobada: "tiene monthly_fee" nunca alcanza solo — hace
+// falta que a la fecha ya le tocara pagar.
+describe("isEligibleWithoutDue", () => {
+  function enrollment(overrides: Partial<EnrollmentForPeriod>): EnrollmentForPeriod {
+    return { id: "e1", status: "active", startDate: "2026-01-01", monthlyFee: 10000, ...overrides };
+  }
+
+  it("is eligible when active, with a fee, and enrolled before the period ended", () => {
+    expect(isEligibleWithoutDue(enrollment({}), "2026-09")).toBe(true);
+  });
+
+  it("is NOT eligible when inactive, even with a fee configured — this is the exact bug the correction fixes", () => {
+    expect(isEligibleWithoutDue(enrollment({ status: "paused" }), "2026-09")).toBe(false);
+    expect(isEligibleWithoutDue(enrollment({ status: "cancelled" }), "2026-09")).toBe(false);
+  });
+
+  it("is NOT eligible without any monthly fee configured, regardless of status", () => {
+    expect(isEligibleWithoutDue(enrollment({ monthlyFee: null }), "2026-09")).toBe(false);
+  });
+
+  it("is NOT eligible for a period before the enrollment even started", () => {
+    expect(isEligibleWithoutDue(enrollment({ startDate: "2026-10-01" }), "2026-09")).toBe(false);
+  });
+
+  it("an enrollment that started mid-month is eligible for that whole month — the confirmed 'sin prorrateo' policy", () => {
+    expect(isEligibleWithoutDue(enrollment({ startDate: "2026-09-28" }), "2026-09")).toBe(true);
+  });
+
+  it("started on the last calendar day of the period is still eligible", () => {
+    expect(isEligibleWithoutDue(enrollment({ startDate: "2026-09-30" }), "2026-09")).toBe(true);
+  });
+
+  it("started the day after the period ended is not eligible for that period", () => {
+    expect(isEligibleWithoutDue(enrollment({ startDate: "2026-10-01" }), "2026-09")).toBe(false);
+  });
+});
+
+describe("classifyForPeriod", () => {
+  const period = "2026-09";
+  function enrollment(overrides: Partial<EnrollmentForPeriod>): EnrollmentForPeriod {
+    return { id: "e1", status: "active", startDate: "2026-01-01", monthlyFee: 10000, ...overrides };
+  }
+
+  it("with an existing due: cancelled always wins, regardless of balance", () => {
+    const summary = computeDueSummary({ status: "cancelled", amount: 10000 }, [], [{ amount: 10000 }]);
+    expect(classifyForPeriod(enrollment({}), period, summary)).toBe("excluded");
+  });
+
+  it("with an existing due: balance <= 0 is paid", () => {
+    const summary = computeDueSummary({ status: "pending", amount: 10000 }, [], [{ amount: 10000 }]);
+    expect(classifyForPeriod(enrollment({}), period, summary)).toBe("paid");
+  });
+
+  it("with an existing due: balance > 0 (partial included) is debtor", () => {
+    const summary = computeDueSummary({ status: "pending", amount: 10000 }, [], [{ amount: 4000 }]);
+    expect(classifyForPeriod(enrollment({}), period, summary)).toBe("debtor");
+  });
+
+  it("a due already fully paid, with an extra added afterwards, flips back to debtor automatically — same computeDueSummary, no special case", () => {
+    const summary = computeDueSummary(
+      { status: "pending", amount: 10000 },
+      [{ amount: 2000, voided_at: null }],
+      [{ amount: 10000 }] // same old payment, nothing new
+    );
+    expect(classifyForPeriod(enrollment({}), period, summary)).toBe("debtor");
+  });
+
+  it("without any due: debtor only when genuinely eligible for the period", () => {
+    expect(classifyForPeriod(enrollment({}), period, null)).toBe("debtor");
+  });
+
+  it("without any due: excluded when inactive — never a manufactured debt", () => {
+    expect(classifyForPeriod(enrollment({ status: "cancelled" }), period, null)).toBe("excluded");
+  });
+
+  it("without any due: excluded when there was never a fee configured", () => {
+    expect(classifyForPeriod(enrollment({ monthlyFee: null }), period, null)).toBe("excluded");
+  });
+
+  it("without any due: excluded when the enrollment started after the period", () => {
+    expect(classifyForPeriod(enrollment({ startDate: "2026-10-05" }), period, null)).toBe("excluded");
   });
 });
