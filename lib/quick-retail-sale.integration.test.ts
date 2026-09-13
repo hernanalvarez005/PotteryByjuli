@@ -400,6 +400,7 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
       p_payment_method_ids: [],
     });
     const inactiveConditionId = created as string;
+    const { data: condition } = await admin.from("price_conditions").select("price_list_id").eq("id", inactiveConditionId).single();
     await admin.from("price_conditions").update({ is_active: false }).eq("id", inactiveConditionId);
 
     const { error } = await callSale({
@@ -408,5 +409,10 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     });
     expect(error).not.toBeNull();
     expect(await physicalStock(variantId)).toBe(5);
+
+    // Limpieza: create_price_condition creó también su propia price_list
+    // dedicada — sin esto quedaría huérfana en la base local.
+    await admin.from("price_conditions").delete().eq("id", inactiveConditionId);
+    await admin.from("price_lists").delete().eq("id", condition!.price_list_id);
   });
 });
