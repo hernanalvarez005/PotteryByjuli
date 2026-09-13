@@ -64,7 +64,12 @@ describe.skipIf(!hasCredentials)("price conditions + quote_retail_sale (local)",
   });
 
   afterAll(async () => {
+    // Cada condición creada por create_price_condition trae consigo su
+    // propia price_list dedicada — hay que borrarla también, o queda
+    // huérfana en la base local (nunca en producción, esto es sólo local).
+    const { data: conditions } = await admin.from("price_conditions").select("price_list_id").in("id", createdConditionIds);
     await admin.from("price_conditions").delete().in("id", createdConditionIds);
+    await admin.from("price_lists").delete().in("id", (conditions ?? []).map((c) => c.price_list_id));
     await admin.from("products").delete().in("id", createdProductIds);
     await admin.from("product_categories").delete().eq("id", categoryId);
   });
