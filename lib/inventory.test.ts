@@ -4,6 +4,7 @@ import { summarizeStockByProduct, type StockRow } from "./inventory";
 function row(overrides: Partial<StockRow>): StockRow {
   return {
     inventoryItemId: "item-1",
+    productVariantId: "variant-1",
     locationId: "loc-1",
     locationName: "La Plata",
     productLabel: "Taza clásica",
