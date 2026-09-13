@@ -39,6 +39,7 @@ export async function createQuickSale(
     payment_method_id: formData.get("payment_method_id"),
     payment_account_id: formData.get("payment_account_id"),
     paid_at: formData.get("paid_at"),
+    sale_date: formData.get("sale_date"),
     customer_id: formData.get("customer_id"),
     channel_id: formData.get("channel_id"),
     client_request_id: formData.get("client_request_id"),
@@ -96,6 +97,7 @@ export async function createQuickSale(
     p_discount_total: 0,
     p_client_request_id: input.client_request_id,
     p_price_condition_id: input.price_condition_id,
+    p_sale_date: input.sale_date,
   });
 
   const row = rows?.[0] as { order_id: string; human_code: string; total: number } | undefined;
