@@ -157,6 +157,12 @@ export default async function DashboardPage({
         </p>
       )}
 
+      {summary && canSeeFinance && summary.incomeEntriesExcludedByFilter && (
+        <p className="text-xs text-muted-foreground">
+          Otros ingresos no pertenece a ninguna unidad de negocio ni canal — sólo se incluye en estos totales con el filtro en &quot;Todas&quot;.
+        </p>
+      )}
+
       {summary && canSeeFinance && (
         <div className="grid gap-4 lg:grid-cols-2">
           <SalesOverTimeChart data={salesOverTime} />

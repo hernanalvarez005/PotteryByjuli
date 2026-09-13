@@ -5,6 +5,7 @@ import {
   getSalesByBusinessUnit,
   getWholesaleConversion,
   getProductionCounts,
+  getIncomeEntriesSummary,
   allTimeDashboardFilters,
 } from "@/lib/reports";
 import { formatCurrency } from "@/lib/format";
@@ -35,12 +36,13 @@ export default async function ReportesPage() {
   // dashboard (que sí filtra por período por default), /reportes sigue
   // mostrando todo lo que hubo alguna vez.
   const allTime = allTimeDashboardFilters();
-  const [topProducts, salesByUnit, wholesale, productionCounts, stockRows] = await Promise.all([
+  const [topProducts, salesByUnit, wholesale, productionCounts, stockRows, otherIncome] = await Promise.all([
     getTopProducts(allTime),
     getSalesByBusinessUnit(allTime),
     getWholesaleConversion(),
     getProductionCounts(),
     getFinishedGoodsStock(),
+    getIncomeEntriesSummary(allTime),
   ]);
 
   const criticalStock = stockRows.filter((r) => r.available <= 0 || (r.minQuantity != null && r.available <= r.minQuantity));
@@ -111,6 +113,32 @@ export default async function ReportesPage() {
                   </li>
                 ))}
               </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Otros ingresos</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {otherIncome.count === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin ingresos cargados todavía.</p>
+            ) : (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Total ({otherIncome.count})</span>
+                  <span className="font-medium">{formatCurrency(otherIncome.total)}</span>
+                </div>
+                <ul className="mt-2 flex flex-col gap-1 border-t pt-2 text-sm">
+                  {otherIncome.byCategory.slice(0, 5).map((c) => (
+                    <li key={c.category} className="flex justify-between">
+                      <span className="text-muted-foreground">{c.category}</span>
+                      <span>{formatCurrency(c.total)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </CardContent>
         </Card>
