@@ -120,6 +120,35 @@ export async function changeOrderStatus(orderId: string, status: string) {
   revalidatePath("/stock");
 }
 
+// Kanban (Bloque 4): archivar nunca borra el pedido, su historial ni sus
+// pagos — sólo lo saca del tablero operativo por default (getOrders
+// filtra `archived_at is null` salvo que se pida explícitamente lo
+// contrario). Siempre reversible.
+export async function archiveOrder(orderId: string) {
+  await assertCanManageOrders();
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("orders")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", orderId);
+  if (error) throw new Error("No se pudo archivar el pedido.");
+
+  revalidatePath("/pedidos");
+  revalidatePath(`/pedidos/${orderId}`);
+}
+
+export async function unarchiveOrder(orderId: string) {
+  await assertCanManageOrders();
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("orders").update({ archived_at: null }).eq("id", orderId);
+  if (error) throw new Error("No se pudo desarchivar el pedido.");
+
+  revalidatePath("/pedidos");
+  revalidatePath(`/pedidos/${orderId}`);
+}
+
 export async function associateOrderCustomer(orderId: string, customerId: string) {
   await assertCanManageOrders();
 
