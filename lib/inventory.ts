@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export type StockRow = {
   inventoryItemId: string;
+  productVariantId: string;
   locationId: string;
   locationName: string;
   productLabel: string;
@@ -13,8 +14,9 @@ export type StockRow = {
 
 export type ProductStockSummary = {
   inventoryItemId: string;
+  productVariantId: string;
   productLabel: string;
-  byLocation: Omit<StockRow, "inventoryItemId" | "productLabel">[];
+  byLocation: Omit<StockRow, "inventoryItemId" | "productVariantId" | "productLabel">[];
   totalPhysical: number;
   totalReserved: number;
   totalAvailable: number;
@@ -22,6 +24,7 @@ export type ProductStockSummary = {
 
 type InventoryItemRow = {
   id: string;
+  product_variant_id: string;
   product_variants: {
     name: string;
     is_active: boolean;
@@ -37,7 +40,7 @@ export async function getFinishedGoodsStock(): Promise<StockRow[]> {
     await Promise.all([
       supabase
         .from("inventory_items")
-        .select("id,product_variants(name,is_active,products(name,is_active))")
+        .select("id,product_variant_id,product_variants(name,is_active,products(name,is_active))")
         .eq("item_type", "finished_good")
         .eq("is_active", true),
       supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
@@ -85,6 +88,7 @@ export async function getFinishedGoodsStock(): Promise<StockRow[]> {
       const key = `${item.id}:${location.id}`;
       rows.push({
         inventoryItemId: item.id,
+        productVariantId: item.product_variant_id,
         locationId: location.id,
         locationName: location.name,
         productLabel: label,
@@ -114,6 +118,7 @@ export function summarizeStockByProduct(rows: StockRow[]): ProductStockSummary[]
     if (!summary) {
       summary = {
         inventoryItemId: row.inventoryItemId,
+        productVariantId: row.productVariantId,
         productLabel: row.productLabel,
         byLocation: [],
         totalPhysical: 0,

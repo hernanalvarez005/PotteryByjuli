@@ -3,11 +3,13 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
+import { getFinishedGoodsStock, summarizeStockByProduct, type ProductStockSummary } from "@/lib/inventory";
 import { ProductInfoForm } from "./product-info-form";
 import { VariantsPanel } from "./variants-panel";
 import { PricesPanel } from "./prices-panel";
 import { ImagesPanel, type ProductImage } from "./images-panel";
 import { WholesaleRulesPanel, type WholesaleRules } from "./wholesale-rules-panel";
+import { StockPanel } from "./stock-panel";
 
 export default async function ProductDetailPage({
   params,
@@ -63,6 +65,18 @@ export default async function ProductDetailPage({
     prices[`${row.price_list_id}:${row.product_variant_id}`] = row.unit_price;
   }
 
+  // Stock por ubicación (Bloque 5) — reusa exactamente la misma consulta
+  // que /stock, filtrada a las variantes de este producto. No es una
+  // fuente de datos nueva, sólo se muestra acá también.
+  const stockRows = await getFinishedGoodsStock();
+  const stockSummaries = summarizeStockByProduct(
+    stockRows.filter((row) => variantIds.includes(row.productVariantId))
+  );
+  const stockByVariant: Record<string, ProductStockSummary | undefined> = {};
+  for (const summary of stockSummaries) {
+    stockByVariant[summary.productVariantId] = summary;
+  }
+
   const imagesBucket = supabase.storage.from("product-images");
   const productImages: ProductImage[] = (images ?? []).map((img) => ({
     id: img.id,
@@ -102,6 +116,7 @@ export default async function ProductDetailPage({
           canEdit={canEdit}
         />
         <VariantsPanel productId={product.id} variants={variants} canEdit={canEdit} />
+        <StockPanel variants={variants} summaries={stockByVariant} canEdit={canEdit} />
         <PricesPanel
           productId={product.id}
           variants={variants}
