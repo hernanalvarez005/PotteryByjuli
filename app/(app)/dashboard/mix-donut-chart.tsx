@@ -5,7 +5,7 @@ import { Pie, PieChart, Cell } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { formatCurrency } from "@/lib/format";
+import { usePrivacyMode, maskCurrency } from "@/lib/privacy-mode";
 
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 
@@ -18,6 +18,7 @@ type MixRow = { name: string; total: number };
  * resuelto server-side en las dos props.
  */
 export function MixDonutChart({ byUnit, byChannel }: { byUnit: MixRow[]; byChannel: MixRow[] }) {
+  const { isPrivate } = usePrivacyMode();
   const [mode, setMode] = useState<"unit" | "channel">("unit");
   const data = mode === "unit" ? byUnit : byChannel;
   const config: ChartConfig = Object.fromEntries(
@@ -43,7 +44,7 @@ export function MixDonutChart({ byUnit, byChannel }: { byUnit: MixRow[]; byChann
         ) : (
           <ChartContainer config={config} className="mx-auto aspect-square h-64">
             <PieChart>
-              <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCurrency(Number(value))} hideLabel />} />
+              <ChartTooltip content={<ChartTooltipContent formatter={(value) => maskCurrency(Number(value), isPrivate)} hideLabel />} />
               <Pie data={data} dataKey="total" nameKey="name" innerRadius={55} outerRadius={90} strokeWidth={2}>
                 {data.map((row, i) => (
                   <Cell key={row.name} fill={COLORS[i % COLORS.length]} />
@@ -60,7 +61,7 @@ export function MixDonutChart({ byUnit, byChannel }: { byUnit: MixRow[]; byChann
                   <span className="size-2 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
                   {row.name}
                 </span>
-                <span className="font-medium">{formatCurrency(row.total)}</span>
+                <span className="font-medium">{maskCurrency(row.total, isPrivate)}</span>
               </li>
             ))}
           </ul>
