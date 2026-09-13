@@ -12,6 +12,7 @@ import { ConfirmAction } from "@/components/confirm-action";
 import { EnrollDialog } from "./enroll-dialog";
 import { RosterTable, type RosterRow } from "./roster-table";
 import { DuesPanel, type DueRow, type DueExtraRow } from "./dues-panel";
+import { PeriodDuesSummary, type EnrollmentSummaryInput, type DueForSummary } from "./period-dues-summary";
 import { EditMonthlyFeeDialog } from "./edit-monthly-fee-dialog";
 import { EditCapacityDialog } from "./edit-capacity-dialog";
 import { archiveGroup, deleteGroup } from "./actions";
@@ -41,7 +42,7 @@ export default async function GroupDetailPage({
   const [{ data: enrollments }, { data: allCustomers }] = await Promise.all([
     supabase
       .from("workshop_enrollments")
-      .select("id,status,customer_id,customers(id,first_name,last_name,whatsapp)")
+      .select("id,status,start_date,monthly_fee,customer_id,customers(id,first_name,last_name,whatsapp)")
       .eq("group_id", groupId)
       .order("created_at"),
     supabase.from("customers").select("id,first_name,last_name").eq("is_active", true).order("first_name"),
@@ -152,6 +153,29 @@ export default async function GroupDetailPage({
     };
   });
 
+  // Resumen pagas/deudoras por período (Bloque 1 — Talleres). status
+  // acá es un string ancho (enrollment_status) — se acota al tipo que
+  // classifyForPeriod espera; cualquier valor fuera de esos 3 no debería
+  // poder existir dado el enum de la base.
+  const enrollmentsForSummary: EnrollmentSummaryInput[] = (enrollments ?? []).map((e) => {
+    const customer = e.customers as unknown as { first_name: string; last_name: string | null } | null;
+    return {
+      id: e.id,
+      customerName: customer ? customerDisplayName(customer) : "—",
+      status: e.status as "active" | "paused" | "cancelled",
+      startDate: e.start_date,
+      monthlyFee: e.monthly_fee ?? group.monthly_fee,
+    };
+  });
+  const duesForSummary: DueForSummary[] = dueList.map((d) => ({
+    id: d.id,
+    enrollmentId: d.enrollmentId,
+    period: d.period,
+    status: d.displayStatus,
+    balance: d.balance,
+    payments: d.payments,
+  }));
+
   const { data: paymentMethods } = await supabase
     .from("payment_methods")
     .select("id,name")
@@ -249,7 +273,15 @@ export default async function GroupDetailPage({
             canDelete={isOwner(user)}
           />
         </TabsContent>
-        <TabsContent value="cuotas">
+        <TabsContent value="cuotas" className="flex flex-col gap-4">
+          <PeriodDuesSummary
+            groupId={groupId}
+            enrollments={enrollmentsForSummary}
+            dues={duesForSummary}
+            paymentMethods={paymentMethods ?? []}
+            paymentAccounts={paymentAccounts ?? []}
+            canEdit={canEditDues}
+          />
           <DuesPanel
             groupId={groupId}
             dues={dueList}
