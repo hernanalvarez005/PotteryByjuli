@@ -4,6 +4,7 @@ import { CATALOG_TABLES, CATALOG_TABLE_KEYS, type CatalogRow } from "@/lib/catal
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CatalogManager } from "./catalog-manager";
 import { WholesaleSettingsForm, type WholesaleSettings } from "./wholesale-settings-form";
+import { FeeSuggestionsManager } from "./fee-suggestions-manager";
 
 export default async function ConfiguracionPage() {
   const user = await requireUser();
@@ -25,6 +26,11 @@ export default async function ConfiguracionPage() {
     .limit(1)
     .maybeSingle();
 
+  const { data: feeSuggestions } = await supabase
+    .from("payment_method_fee_suggestions")
+    .select("id,payment_method_id,account_id,suggested_percentage")
+    .order("payment_method_id");
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -43,6 +49,7 @@ export default async function ConfiguracionPage() {
             </TabsTrigger>
           ))}
           {wholesaleSettings && <TabsTrigger value="wholesale">Mayorista</TabsTrigger>}
+          <TabsTrigger value="fees">Comisiones</TabsTrigger>
         </TabsList>
         {CATALOG_TABLE_KEYS.map((table) => (
           <TabsContent key={table} value={table}>
@@ -71,6 +78,26 @@ export default async function ConfiguracionPage() {
             />
           </TabsContent>
         )}
+        <TabsContent value="fees">
+          <div className="flex flex-col gap-1 pb-4">
+            <h3 className="font-medium">Comisiones por método de pago</h3>
+            <p className="text-sm text-muted-foreground">
+              Se usa para mostrar una comisión y un neto estimados en la venta rápida — el fee real
+              de cada cobro siempre se confirma ahí, nunca lo decide esta configuración sola.
+            </p>
+          </div>
+          <FeeSuggestionsManager
+            suggestions={(feeSuggestions ?? []) as {
+              id: string;
+              payment_method_id: string;
+              account_id: string | null;
+              suggested_percentage: number;
+            }[]}
+            methods={rowsByTable.payment_methods.map((r) => ({ id: r.id, name: r.name as string }))}
+            accounts={rowsByTable.payment_accounts.map((r) => ({ id: r.id, name: r.name as string }))}
+            canEdit={isOwner(user)}
+          />
+        </TabsContent>
       </Tabs>
     </div>
   );

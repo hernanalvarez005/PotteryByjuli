@@ -31,6 +31,13 @@ function todayArgentina(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
 }
 
+/** Día calendario argentino de un timestamp — nunca `.toISOString().slice(0,10)`,
+ * que da el día en UTC y difiere del argentino durante buena parte de la
+ * noche (Argentina va 3 horas atrás de UTC). */
+function argentinaDateOf(isoTimestamp: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date(isoTimestamp));
+}
+
 describe.skipIf(!hasCredentials)("orders.sale_date via create_order (local)", () => {
   let admin: SupabaseClient;
   let customUnitId: string;
@@ -89,7 +96,7 @@ describe.skipIf(!hasCredentials)("orders.sale_date via create_order (local)", ()
     // Declarada, aunque retroactiva — esto no es un backfill sin
     // evidencia, es la usuaria diciendo explícitamente cuándo fue.
     expect(order?.sale_date_declared).toBe(true);
-    expect(new Date(order!.created_at).toISOString().slice(0, 10)).toBe(todayArgentina());
+    expect(argentinaDateOf(order!.created_at)).toBe(todayArgentina());
   });
 });
 
@@ -175,8 +182,8 @@ describe.skipIf(!hasCredentials)("orders.sale_date via create_quick_retail_sale 
     expect(order?.sale_date_declared).toBe(true);
     // sold_at mantiene su contrato técnico de siempre — el instante real
     // en que el trigger corrió (hoy), nunca la fecha declarada.
-    expect(new Date(order!.sold_at as string).toISOString().slice(0, 10)).toBe(todayArgentina());
-    expect(new Date(order!.created_at).toISOString().slice(0, 10)).toBe(todayArgentina());
+    expect(argentinaDateOf(order!.sold_at as string)).toBe(todayArgentina());
+    expect(argentinaDateOf(order!.created_at)).toBe(todayArgentina());
   });
 
   it("sin p_sale_date, cae al default (hoy en Argentina) — nunca falla por NOT NULL", async () => {

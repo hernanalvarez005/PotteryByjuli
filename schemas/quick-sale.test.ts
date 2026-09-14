@@ -18,6 +18,7 @@ const baseSale = {
   client_request_id: "44444444-4444-4444-8444-444444444444",
   price_condition_id: "55555555-5555-4555-8555-555555555555",
   expected_total: 4000,
+  fee_amount: 0,
   items: [validItem],
 };
 
@@ -101,5 +102,12 @@ describe("quickSaleSchema", () => {
 
   it("requires client_request_id — idempotency depends on it always being present", () => {
     expect(quickSaleSchema.safeParse({ ...baseSale, client_request_id: "" }).success).toBe(false);
+  });
+
+  it("fee_amount: acepta 0 y positivos, rechaza negativos — nunca se calcula un net_amount acá", () => {
+    expect(quickSaleSchema.safeParse({ ...baseSale, fee_amount: 0 }).success).toBe(true);
+    expect(quickSaleSchema.safeParse({ ...baseSale, fee_amount: 348 }).success).toBe(true);
+    expect(quickSaleSchema.safeParse({ ...baseSale, fee_amount: -1 }).success).toBe(false);
+    expect(Object.keys(quickSaleSchema.shape)).not.toContain("net_amount");
   });
 });

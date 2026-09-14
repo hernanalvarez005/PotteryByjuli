@@ -49,6 +49,8 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
   let locationId: string;
   let otherLocationId: string;
   let bankTransferMethodId: string;
+  let cashMethodId: string;
+  let cardMethodId: string;
   let generalConditionId: string;
   const createdProductIds: string[] = [];
 
@@ -151,6 +153,10 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     otherLocationId = tresLomas!.id;
     const { data: bankTransfer } = await admin.from("payment_methods").select("id").eq("code", "bank_transfer").single();
     bankTransferMethodId = bankTransfer!.id;
+    const { data: cash } = await admin.from("payment_methods").select("id").eq("code", "cash").single();
+    cashMethodId = cash!.id;
+    const { data: card } = await admin.from("payment_methods").select("id").eq("code", "card").single();
+    cardMethodId = card!.id;
     const { data: generalCondition } = await admin.from("price_conditions").select("id").eq("code", "general").single();
     generalConditionId = generalCondition!.id;
   });
@@ -414,5 +420,225 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     // dedicada — sin esto quedaría huérfana en la base local.
     await admin.from("price_conditions").delete().eq("id", inactiveConditionId);
     await admin.from("price_lists").delete().eq("id", condition!.price_list_id);
+  });
+
+  // Bloque 3 — comisiones/neto: el fee vive en payments, nunca en el
+  // pedido ni acoplado a price_condition. p_fee_amount es opcional
+  // (default 0) y el RPC nunca acepta un net_amount — eso siempre lo
+  // deriva la columna generada de payments.
+  describe("fee_amount / net_amount (Bloque 3)", () => {
+    it("efectivo (sin p_fee_amount): el pago queda con comisión 0 y neto = total", async () => {
+      const { variantId } = await makeVariant("Efectivo sin fee", 5000, 5);
+      const { data, error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+      });
+      expect(error).toBeNull();
+      const { data: payment } = await admin
+        .from("payments")
+        .select("amount,fee_amount,net_amount")
+        .eq("order_id", (data as SaleResult[])[0].order_id)
+        .single();
+      expect(payment?.fee_amount).toBe(0);
+      expect(payment?.net_amount).toBe(5000);
+    });
+
+    it("tarjeta con p_fee_amount: guarda la comisión real y el neto se deriva solo (amount - fee)", async () => {
+      const { variantId } = await makeVariant("Tarjeta con fee", 10000, 5);
+      const { data, error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_fee_amount: 550,
+      });
+      expect(error).toBeNull();
+      const { data: payment } = await admin
+        .from("payments")
+        .select("amount,fee_amount,net_amount")
+        .eq("order_id", (data as SaleResult[])[0].order_id)
+        .single();
+      expect(payment?.amount).toBe(10000);
+      expect(payment?.fee_amount).toBe(550);
+      expect(payment?.net_amount).toBe(9450);
+    });
+
+    it("no se puede forzar un neto arbitrario: una comisión mayor al total cobrado se rechaza (el neto nunca puede quedar negativo)", async () => {
+      const { variantId } = await makeVariant("Fee excesivo", 2000, 5);
+      const { error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_fee_amount: 5000,
+      });
+      expect(error).not.toBeNull();
+      expect(await physicalStock(variantId)).toBe(5);
+    });
+
+    it("price condition y fee son independientes: la misma condición de precio con distinta comisión no cambia el total del pedido", async () => {
+      const { variantId } = await makeVariant("Independencia fee/condición", 8000, 5);
+
+      const cash = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: generalConditionId,
+        p_fee_amount: 0,
+      });
+      const card = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: generalConditionId,
+        p_fee_amount: 400,
+      });
+      expect(cash.error).toBeNull();
+      expect(card.error).toBeNull();
+
+      const cashOrder = (cash.data as SaleResult[])[0];
+      const cardOrder = (card.data as SaleResult[])[0];
+      // Mismo price_condition_id, mismo total — el fee nunca lo toca.
+      expect(cashOrder.total).toBe(cardOrder.total);
+      const { data: orders } = await admin
+        .from("orders")
+        .select("price_condition_id")
+        .in("id", [cashOrder.order_id, cardOrder.order_id]);
+      expect(orders?.every((o) => o.price_condition_id === generalConditionId)).toBe(true);
+    });
+  });
+
+  // Revisión previa al merge de Bloque 3 (PR #26): el backend nunca debe
+  // depender de que el frontend ya mande las líneas del carrito
+  // consolidadas por variante. Antes de este fix, la misma variante
+  // repetida en p_items pasaba la validación de stock una vez por
+  // aparición contra el mismo disponible, pudiendo terminar en stock
+  // negativo.
+  describe("ítems duplicados se consolidan por variante antes de validar stock", () => {
+    it("con stock=1, la misma variante enviada dos veces (qty 1 + qty 1) se rechaza entera — nunca dos aprobaciones parciales contra el mismo disponible", async () => {
+      const { variantId } = await makeVariant("Duplicado insuficiente", 1000, 1);
+      const requestId = crypto.randomUUID();
+
+      const { error } = await callSale({
+        p_items: [
+          { product_variant_id: variantId, quantity: 1 },
+          { product_variant_id: variantId, quantity: 1 },
+        ],
+        p_client_request_id: requestId,
+      });
+      expect(error).not.toBeNull();
+      expect(error!.message).toContain("No hay stock suficiente");
+
+      const { count: ordersWithThisRequestId } = await admin
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq("client_request_id", requestId);
+      expect(ordersWithThisRequestId).toBe(0);
+      expect(await physicalStock(variantId)).toBe(1);
+    });
+
+    it("con stock=2, la misma variante enviada dos veces (qty 1 + qty 1) se consolida en una sola línea de cantidad 2", async () => {
+      const { variantId } = await makeVariant("Duplicado suficiente", 1500, 2);
+
+      const { data, error } = await callSale({
+        p_items: [
+          { product_variant_id: variantId, quantity: 1 },
+          { product_variant_id: variantId, quantity: 1 },
+        ],
+      });
+      expect(error).toBeNull();
+      const orderId = (data as SaleResult[])[0].order_id;
+      expect((data as SaleResult[])[0].total).toBe(3000);
+
+      // Una sola fila de order_items con la cantidad ya sumada — nunca
+      // dos filas de cantidad 1 cada una.
+      const { data: items } = await admin.from("order_items").select("quantity").eq("order_id", orderId);
+      expect(items).toHaveLength(1);
+      expect(items![0].quantity).toBe(2);
+
+      // Un solo movimiento de stock por -2, equivalente a haber pedido
+      // quantity=2 desde el principio.
+      const { data: item } = await admin.from("inventory_items").select("id").eq("product_variant_id", variantId).single();
+      const { data: movements } = await admin
+        .from("inventory_movements")
+        .select("quantity")
+        .eq("inventory_item_id", item!.id)
+        .eq("location_id", locationId)
+        .eq("movement_type", "sale");
+      expect(movements).toHaveLength(1);
+      expect(movements![0].quantity).toBe(-2);
+
+      expect(await physicalStock(variantId)).toBe(0);
+    });
+  });
+
+  // Revisión previa al merge de Bloque 3 (PR #26): la condición de
+  // precio restringe qué métodos de pago acepta
+  // (price_condition_payment_methods) — nunca hay que confiar en que la
+  // UI sólo ofrezca combinaciones válidas.
+  describe("la condición de precio restringe los métodos de pago habilitados", () => {
+    async function makeRestrictedCondition(paymentMethodId: string) {
+      const { data: conditionId, error } = await admin.rpc("create_price_condition", {
+        p_code: `restricted-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        p_name: "Restringida (test)",
+        p_payment_method_ids: [paymentMethodId],
+      });
+      if (error) throw error;
+      const { data: condition } = await admin
+        .from("price_conditions")
+        .select("price_list_id")
+        .eq("id", conditionId as string)
+        .single();
+      return { conditionId: conditionId as string, priceListId: condition!.price_list_id as string };
+    }
+
+    async function cleanupCondition(conditionId: string, priceListId: string) {
+      await admin.from("price_conditions").delete().eq("id", conditionId);
+      await admin.from("price_lists").delete().eq("id", priceListId);
+    }
+
+    it("efectivo + condición que sólo acepta efectivo: OK", async () => {
+      const { conditionId, priceListId } = await makeRestrictedCondition(cashMethodId);
+      const { variantId } = await makeVariant("Restringida efectivo", 1000, 5);
+      await admin.from("price_list_items").insert({ price_list_id: priceListId, product_variant_id: variantId, unit_price: 1000 });
+
+      const { error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: conditionId,
+        p_payment_method_id: cashMethodId,
+      });
+      expect(error).toBeNull();
+
+      await cleanupCondition(conditionId, priceListId);
+    });
+
+    it("tarjeta + condición que sólo acepta tarjeta: OK", async () => {
+      const { conditionId, priceListId } = await makeRestrictedCondition(cardMethodId);
+      const { variantId } = await makeVariant("Restringida tarjeta", 1000, 5);
+      await admin.from("price_list_items").insert({ price_list_id: priceListId, product_variant_id: variantId, unit_price: 1000 });
+
+      const { error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: conditionId,
+        p_payment_method_id: cardMethodId,
+      });
+      expect(error).toBeNull();
+
+      await cleanupCondition(conditionId, priceListId);
+    });
+
+    it("tarjeta + condición que sólo acepta efectivo: se rechaza entera, sin filas parciales", async () => {
+      const { conditionId, priceListId } = await makeRestrictedCondition(cashMethodId);
+      const { variantId } = await makeVariant("Restringida rechazo", 1000, 5);
+      await admin.from("price_list_items").insert({ price_list_id: priceListId, product_variant_id: variantId, unit_price: 1000 });
+      const requestId = crypto.randomUUID();
+
+      const { error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: conditionId,
+        p_payment_method_id: cardMethodId,
+        p_client_request_id: requestId,
+      });
+      expect(error).not.toBeNull();
+      expect(error!.message).toContain("no está habilitada");
+
+      const { count: ordersWithThisRequestId } = await admin
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq("client_request_id", requestId);
+      expect(ordersWithThisRequestId).toBe(0);
+      expect(await physicalStock(variantId)).toBe(5);
+
+      await cleanupCondition(conditionId, priceListId);
+    });
   });
 });
