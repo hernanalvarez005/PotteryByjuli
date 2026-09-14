@@ -5,6 +5,7 @@ import {
   dateOnlyToArgentinaStartOfDayISO,
   dateOnlyToArgentinaEndOfDayISO,
   todayInArgentina,
+  APP_TIMEZONE,
 } from "@/lib/format";
 
 /** Mismo shape que DuePaymentRow (talleres/[groupId]/dues-panel.tsx) —
@@ -35,6 +36,16 @@ export type PendingDueRow = {
 function startOfMonthIso(): string {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
+}
+
+/** Primer día del mes actual, fecha argentina (AAAA-MM-DD) — para
+ * filtrar orders.sale_date, que es `date` puro, nunca timestamptz.
+ * startOfMonthIso() de arriba sigue sirviendo para payments/income_entries
+ * (timestamptz), que no cambian de semántica en este bloque. */
+function startOfMonthDateArgentina(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: APP_TIMEZONE, year: "numeric", month: "2-digit" })
+    .format(new Date())
+    .concat("-01");
 }
 
 function todayIso(): string {
@@ -130,12 +141,16 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   // una unidad o canal que no tienen.
   const includeIncomeEntries = filters.businessUnitIds == null && filters.channelId == null;
 
+  // sale_date (Bloque 2 — "Ventas: fecha real, canal, comisiones y
+  // talleres") es `date`, no timestamptz — se compara directo contra
+  // filters.from/to (ya "AAAA-MM-DD"), nunca contra fromIso/toIso
+  // (esos siguen siendo para payments/income_entries, que no cambian).
   let filteredOrdersQuery = supabase
     .from("orders")
     .select("id,total")
     .neq("status", "cancelled")
-    .gte("created_at", fromIso)
-    .lte("created_at", toIso);
+    .gte("sale_date", filters.from)
+    .lte("sale_date", filters.to);
   if (filters.businessUnitIds) filteredOrdersQuery = filteredOrdersQuery.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) filteredOrdersQuery = filteredOrdersQuery.eq("location_id", filters.locationId);
   if (filters.channelId) filteredOrdersQuery = filteredOrdersQuery.eq("closing_channel_id", filters.channelId);
@@ -172,7 +187,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     { data: allDueRows },
     { data: upcomingEvents },
   ] = await Promise.all([
-    supabase.from("orders").select("total").neq("status", "cancelled").gte("created_at", monthStart),
+    supabase.from("orders").select("total").neq("status", "cancelled").gte("sale_date", startOfMonthDateArgentina()),
     supabase.from("payments").select("amount").gte("paid_at", monthStart),
     supabase.from("income_entries").select("amount").gte("occurred_at", monthStart),
     filteredOrdersQuery,
@@ -378,15 +393,15 @@ export type TopProductRow = { label: string; unitsSold: number; revenue: number 
 
 export async function getTopProducts(filters: DashboardFilters = defaultDashboardFilters(), limit = 10): Promise<TopProductRow[]> {
   const supabase = await createClient();
-  const { fromIso, toIso } = dateRange(filters);
   // A cancelled order didn't actually sell anything — exclude its items,
-  // same filter used everywhere else in this file.
+  // same filter used everywhere else in this file. sale_date es `date`,
+  // se compara directo contra filters.from/to (Bloque 2).
   let query = supabase
     .from("order_items")
-    .select("quantity,unit_price,product_variants(name,products(name)),orders!inner(status,created_at,business_unit_id,location_id,closing_channel_id)")
+    .select("quantity,unit_price,product_variants(name,products(name)),orders!inner(status,sale_date,business_unit_id,location_id,closing_channel_id)")
     .neq("orders.status", "cancelled")
-    .gte("orders.created_at", fromIso)
-    .lte("orders.created_at", toIso);
+    .gte("orders.sale_date", filters.from)
+    .lte("orders.sale_date", filters.to);
   if (filters.businessUnitIds) query = query.in("orders.business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("orders.location_id", filters.locationId);
   if (filters.channelId) query = query.eq("orders.closing_channel_id", filters.channelId);
@@ -425,12 +440,16 @@ export async function getTopProducts(filters: DashboardFilters = defaultDashboar
 export async function getSalesByBusinessUnit(filters: DashboardFilters = defaultDashboardFilters()) {
   const supabase = await createClient();
   const { fromIso, toIso } = dateRange(filters);
+  // orders.sale_date es `date` (Bloque 2) — se compara directo contra
+  // filters.from/to; fromIso/toIso siguen sirviendo para
+  // getWorkshopDuePaymentsTotal (payments.paid_at, timestamptz), que no
+  // cambia de semántica acá.
   let query = supabase
     .from("orders")
     .select("total,business_units(name)")
     .neq("status", "cancelled")
-    .gte("created_at", fromIso)
-    .lte("created_at", toIso);
+    .gte("sale_date", filters.from)
+    .lte("sale_date", filters.to);
   if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
@@ -494,13 +513,13 @@ async function getWorkshopDuePaymentsTotal(
  */
 export async function getMixByChannel(filters: DashboardFilters = defaultDashboardFilters()) {
   const supabase = await createClient();
-  const { fromIso, toIso } = dateRange(filters);
+  // sale_date es `date` (Bloque 2) — se compara directo contra filters.from/to.
   let query = supabase
     .from("orders")
     .select("total,sales_channels!orders_closing_channel_id_fkey(name)")
     .neq("status", "cancelled")
-    .gte("created_at", fromIso)
-    .lte("created_at", toIso);
+    .gte("sale_date", filters.from)
+    .lte("sale_date", filters.to);
   if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
@@ -521,24 +540,27 @@ export type SalesOverTimePoint = { bucket: string; total: number };
  * cómodo de leer en un gráfico de barras), mensual si es más largo (un
  * año entero en barras diarias sería ilegible).
  *
- * Agrupa por `sold_at` (auditoría "Próxima evolución operativa", bloque
- * 1) — nunca por `created_at`. Un pedido cargado un día y entregado
- * otro tiene que aparecer en el día real de la venta, no en el día en
- * que se cargó al sistema. Como consecuencia, sólo entran acá pedidos
- * que ya tienen `sold_at` (es decir, que llegaron a `delivered`) — un
- * pedido todavía en curso no es una venta todavía, así que no debe
- * sumar en "Ventas en el tiempo".
+ * Agrupa por `sale_date` (Bloque 2 — "Ventas: fecha real, canal,
+ * comisiones y talleres") — nunca por `created_at` ni por `sold_at`.
+ * `sale_date` es la fecha comercial declarada, editable, la única que
+ * puede reflejar una venta cargada retroactivamente ("cargué hoy una
+ * venta de hace tres días" imputa al día real, no al de carga).
+ *
+ * `sold_at` describía "cuándo pasó técnicamente a delivered" — ese
+ * filtro implícito (sólo pedidos entregados, nunca uno en curso) se
+ * preserva acá con un `eq("status","delivered")` explícito, porque nada
+ * de esa semántica cambió: un pedido todavía en curso sigue sin ser una
+ * venta todavía, sólo que ahora el filtro lo dice directamente en vez de
+ * apoyarse en que sold_at sólo existe para los entregados.
  */
 export async function getSalesOverTime(filters: DashboardFilters = defaultDashboardFilters()): Promise<SalesOverTimePoint[]> {
   const supabase = await createClient();
-  const { fromIso, toIso } = dateRange(filters);
   let query = supabase
     .from("orders")
-    .select("total,sold_at")
-    .neq("status", "cancelled")
-    .not("sold_at", "is", null)
-    .gte("sold_at", fromIso)
-    .lte("sold_at", toIso);
+    .select("total,sale_date")
+    .eq("status", "delivered")
+    .gte("sale_date", filters.from)
+    .lte("sale_date", filters.to);
   if (filters.businessUnitIds) query = query.in("business_unit_id", filters.businessUnitIds);
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
@@ -549,20 +571,19 @@ export async function getSalesOverTime(filters: DashboardFilters = defaultDashbo
   const daySpan = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1);
   const monthly = daySpan > 62;
 
-  const bucketOf = (iso: string) => {
-    const local = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Argentina/Buenos_Aires",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date(iso));
-    return monthly ? local.slice(0, 7) : local;
-  };
+  // sale_date ya es "AAAA-MM-DD" en fecha calendario, sin componente
+  // horario — a diferencia del bucketOf anterior (que parseaba un
+  // timestamptz con Intl.DateTimeFormat para no correrse de día por el
+  // huso horario), acá no hace falta ninguna conversión: es exactamente
+  // el motivo por el que sale_date es `date` y no timestamptz.
+  const bucketOf = (dateOnly: string) => (monthly ? dateOnly.slice(0, 7) : dateOnly);
 
   const totals = new Map<string, number>();
   for (const row of data ?? []) {
-    if (!row.sold_at) continue;
-    const bucket = bucketOf(row.sold_at);
+    // sale_date es not null siempre — a diferencia de sold_at, nunca
+    // hace falta este guard por otro motivo que TypeScript no lo sepa.
+    if (!row.sale_date) continue;
+    const bucket = bucketOf(row.sale_date);
     totals.set(bucket, (totals.get(bucket) ?? 0) + row.total);
   }
   return [...totals.entries()].map(([bucket, total]) => ({ bucket, total })).sort((a, b) => a.bucket.localeCompare(b.bucket));

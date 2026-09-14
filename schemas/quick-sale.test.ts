@@ -12,6 +12,7 @@ const baseSale = {
   payment_method_id: "33333333-3333-4333-8333-333333333333",
   payment_account_id: "",
   paid_at: "2026-09-11",
+  sale_date: "2026-09-11",
   customer_id: "",
   channel_id: "",
   client_request_id: "44444444-4444-4444-8444-444444444444",
@@ -62,6 +63,20 @@ describe("quickSaleSchema", () => {
   it("requires paid_at explicitly — same contract as every other payment form in the app", () => {
     expect(quickSaleSchema.safeParse({ ...baseSale, paid_at: "" }).success).toBe(false);
     expect(quickSaleSchema.safeParse({ ...baseSale, paid_at: "11/09/2026" }).success).toBe(false);
+  });
+
+  it("requires sale_date explicitly — the declared commercial date, always sent by the form, never inferred", () => {
+    expect(quickSaleSchema.safeParse({ ...baseSale, sale_date: "" }).success).toBe(false);
+    expect(quickSaleSchema.safeParse({ ...baseSale, sale_date: "11/09/2026" }).success).toBe(false);
+  });
+
+  it("sale_date can differ from paid_at — a backdated sale doesn't change when it was collected", () => {
+    const result = quickSaleSchema.safeParse({ ...baseSale, sale_date: "2026-08-10", paid_at: "2026-09-11" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sale_date).toBe("2026-08-10");
+      expect(result.data.paid_at).toBe("2026-09-11");
+    }
   });
 
   // Same FormData shape a real submission produces: fields the form left

@@ -26,6 +26,14 @@ export const quickSaleSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
+  // Fecha comercial declarada (Bloque 2 — orders.sale_date), distinta de
+  // paid_at (cuándo se cobró) y de created_at/sold_at (técnicas, nunca
+  // editables acá). Default hoy, editable — la usuaria puede backdatear
+  // una venta cargada tarde sin que eso cambie cuándo se cobró.
+  sale_date: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha de venta inválida"),
   customer_id: optionalUuid(),
   channel_id: optionalUuid(),
   client_request_id: z.string().trim().uuid(),

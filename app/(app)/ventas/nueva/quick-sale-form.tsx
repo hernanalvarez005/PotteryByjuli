@@ -22,7 +22,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Minus, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, todayInArgentina } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import { createCustomer } from "@/app/(app)/clientes/actions";
 import { createQuickSale } from "./actions";
@@ -92,6 +92,10 @@ export function QuickSaleForm({
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [paymentAccountId, setPaymentAccountId] = useState("");
   const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0, 10));
+  // Fecha comercial declarada (Bloque 2 — orders.sale_date): default hoy
+  // en horario argentino, editable — separada de paidAt (cuándo se
+  // cobró) y de created_at/sold_at (técnicas, no editables desde acá).
+  const [saleDate, setSaleDate] = useState(() => todayInArgentina());
   const [customerId, setCustomerId] = useState("");
   const [customerLabel, setCustomerLabel] = useState("");
   const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
@@ -257,6 +261,7 @@ export function QuickSaleForm({
     setQuotes([]);
     setSelectedConditionId("");
     setPaidAt(new Date().toISOString().slice(0, 10));
+    setSaleDate(todayInArgentina());
     // Forma de pago se resetea — a diferencia de la ubicación, no es un
     // default útil entre ventas (puede variar de una a la siguiente).
     setPaymentMethodId("");
@@ -297,7 +302,7 @@ export function QuickSaleForm({
   }
 
   const canSubmit =
-    cart.length > 0 && locationId && paymentMethodId && paidAt && !!selectedQuote && !isPending;
+    cart.length > 0 && locationId && paymentMethodId && paidAt && saleDate && !!selectedQuote && !isPending;
 
   return (
     <form action={formAction} className="flex max-w-2xl flex-col gap-4">
@@ -316,6 +321,7 @@ export function QuickSaleForm({
       <input type="hidden" name="payment_method_id" value={paymentMethodId} />
       <input type="hidden" name="payment_account_id" value={paymentAccountId} />
       <input type="hidden" name="paid_at" value={paidAt} />
+      <input type="hidden" name="sale_date" value={saleDate} />
       <input type="hidden" name="customer_id" value={customerId} />
       <input type="hidden" name="channel_id" value={channelId} />
       <input type="hidden" name="client_request_id" value={session.clientRequestId} />
@@ -509,9 +515,15 @@ export function QuickSaleForm({
         </div>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="paid_at">Fecha de pago *</Label>
-        <Input id="paid_at" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} className="w-full sm:w-48" />
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label htmlFor="sale_date">Fecha de venta *</Label>
+          <Input id="sale_date" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="w-full" />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="paid_at">Fecha de pago *</Label>
+          <Input id="paid_at" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} className="w-full" />
+        </div>
       </div>
 
       {/* Cliente (opcional) */}
