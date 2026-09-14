@@ -415,4 +415,79 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     await admin.from("price_conditions").delete().eq("id", inactiveConditionId);
     await admin.from("price_lists").delete().eq("id", condition!.price_list_id);
   });
+
+  // Bloque 3 — comisiones/neto: el fee vive en payments, nunca en el
+  // pedido ni acoplado a price_condition. p_fee_amount es opcional
+  // (default 0) y el RPC nunca acepta un net_amount — eso siempre lo
+  // deriva la columna generada de payments.
+  describe("fee_amount / net_amount (Bloque 3)", () => {
+    it("efectivo (sin p_fee_amount): el pago queda con comisión 0 y neto = total", async () => {
+      const { variantId } = await makeVariant("Efectivo sin fee", 5000, 5);
+      const { data, error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+      });
+      expect(error).toBeNull();
+      const { data: payment } = await admin
+        .from("payments")
+        .select("amount,fee_amount,net_amount")
+        .eq("order_id", (data as SaleResult[])[0].order_id)
+        .single();
+      expect(payment?.fee_amount).toBe(0);
+      expect(payment?.net_amount).toBe(5000);
+    });
+
+    it("tarjeta con p_fee_amount: guarda la comisión real y el neto se deriva solo (amount - fee)", async () => {
+      const { variantId } = await makeVariant("Tarjeta con fee", 10000, 5);
+      const { data, error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_fee_amount: 550,
+      });
+      expect(error).toBeNull();
+      const { data: payment } = await admin
+        .from("payments")
+        .select("amount,fee_amount,net_amount")
+        .eq("order_id", (data as SaleResult[])[0].order_id)
+        .single();
+      expect(payment?.amount).toBe(10000);
+      expect(payment?.fee_amount).toBe(550);
+      expect(payment?.net_amount).toBe(9450);
+    });
+
+    it("no se puede forzar un neto arbitrario: una comisión mayor al total cobrado se rechaza (el neto nunca puede quedar negativo)", async () => {
+      const { variantId } = await makeVariant("Fee excesivo", 2000, 5);
+      const { error } = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_fee_amount: 5000,
+      });
+      expect(error).not.toBeNull();
+      expect(await physicalStock(variantId)).toBe(5);
+    });
+
+    it("price condition y fee son independientes: la misma condición de precio con distinta comisión no cambia el total del pedido", async () => {
+      const { variantId } = await makeVariant("Independencia fee/condición", 8000, 5);
+
+      const cash = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: generalConditionId,
+        p_fee_amount: 0,
+      });
+      const card = await callSale({
+        p_items: [{ product_variant_id: variantId, quantity: 1 }],
+        p_price_condition_id: generalConditionId,
+        p_fee_amount: 400,
+      });
+      expect(cash.error).toBeNull();
+      expect(card.error).toBeNull();
+
+      const cashOrder = (cash.data as SaleResult[])[0];
+      const cardOrder = (card.data as SaleResult[])[0];
+      // Mismo price_condition_id, mismo total — el fee nunca lo toca.
+      expect(cashOrder.total).toBe(cardOrder.total);
+      const { data: orders } = await admin
+        .from("orders")
+        .select("price_condition_id")
+        .in("id", [cashOrder.order_id, cardOrder.order_id]);
+      expect(orders?.every((o) => o.price_condition_id === generalConditionId)).toBe(true);
+    });
+  });
 });

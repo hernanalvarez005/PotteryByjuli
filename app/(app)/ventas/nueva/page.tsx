@@ -18,6 +18,7 @@ export default async function QuickSalePage() {
     { data: accounts },
     { data: channels },
     { data: priceConditions },
+    { data: feeSuggestions },
     products,
   ] = await Promise.all([
     supabase
@@ -30,6 +31,10 @@ export default async function QuickSalePage() {
     supabase.from("payment_accounts").select("id,name").eq("is_active", true).order("code"),
     supabase.from("sales_channels").select("id,name,code").eq("is_active", true).order("sort_order"),
     supabase.from("price_conditions").select("id,name").eq("is_active", true).order("sort_order").order("name"),
+    // Sólo la comisión estimada a mostrar antes de cobrar (D.1/Bloque 3) —
+    // nunca lo que decide el fee real, eso lo confirma la usuaria en el
+    // momento del cobro.
+    supabase.from("payment_method_fee_suggestions").select("payment_method_id,account_id,suggested_percentage"),
     getProductsWithVariants(),
   ]);
 
@@ -88,6 +93,7 @@ export default async function QuickSalePage() {
           channels={channels ?? []}
           defaultChannelId={(channels ?? []).find((c) => c.code === "in_person")?.id ?? null}
           priceConditions={priceConditions ?? []}
+          feeSuggestions={feeSuggestions ?? []}
         />
       )}
     </div>

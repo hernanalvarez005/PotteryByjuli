@@ -45,6 +45,11 @@ export const quickSaleSchema = z.object({
   // la card?" en el Server Action — no es lo que decide el cobro, eso lo
   // vuelve a resolver create_quick_retail_sale server-side.
   expected_total: z.number().nonnegative(),
+  // Comisión real del cobro (Bloque 3) — la usuaria la confirma o
+  // corrige a partir de una estimación, nunca se calcula un net_amount
+  // acá: eso lo deriva la base (columna generada). Default 0 —
+  // efectivo y cualquier venta que no la edite queda con comisión cero.
+  fee_amount: z.number().nonnegative("La comisión no puede ser negativa."),
 });
 
 export type QuickSaleInput = z.infer<typeof quickSaleSchema>;

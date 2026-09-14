@@ -32,6 +32,7 @@ type Option = { id: string; name: string };
 type Channel = { id: string; name: string; code: string };
 type VariantOption = { id: string; label: string; retailPrice: number };
 type Quote = { price_condition_id: string; price_condition_name: string; total: number };
+type FeeSuggestion = { payment_method_id: string; account_id: string | null; suggested_percentage: number };
 
 type CartLine = { key: string; variantId: string; label: string; quantity: number; unitPrice: number };
 
@@ -73,6 +74,7 @@ export function QuickSaleForm({
   channels,
   defaultChannelId,
   priceConditions,
+  feeSuggestions,
 }: {
   variants: VariantOption[];
   customers: Option[];
@@ -82,6 +84,7 @@ export function QuickSaleForm({
   channels: Channel[];
   defaultChannelId: string | null;
   priceConditions: Option[];
+  feeSuggestions: FeeSuggestion[];
 }) {
   const [state, formAction, isPending] = useActionState(createQuickSale, {});
 
@@ -101,6 +104,15 @@ export function QuickSaleForm({
   const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
   const [channelId, setChannelId] = useState(defaultChannelId ?? "");
   const [editingChannel, setEditingChannel] = useState(false);
+
+  // Comisión (Bloque 3) — se precarga con la sugerencia configurada para
+  // el método/cuenta elegidos, pero es siempre editable: lo que se cobra
+  // de verdad puede diferir de la estimación. `feeTouched` es lo que
+  // distingue "la usuaria ya la corrigió a mano" (no volver a pisarla)
+  // de "todavía sigue la sugerencia" (recalcularla si cambia el método,
+  // la cuenta o el total).
+  const [manualFeeAmount, setManualFeeAmount] = useState(0);
+  const [feeTouched, setFeeTouched] = useState(false);
 
   // Cards de cobro por condición (Bloque 3) — el frontend nunca calcula
   // un total: sólo pinta lo que quote_retail_sale devuelve para el
@@ -204,6 +216,34 @@ export function QuickSaleForm({
     [quotes, conditionOrder]
   );
 
+  // Sugerencia de comisión (Bloque 3): la específica de método+cuenta
+  // gana sobre la genérica del método — mismo orden de precedencia que
+  // definen los dos índices únicos parciales de la migración.
+  const suggestedPercentage = useMemo(() => {
+    if (!paymentMethodId) return 0;
+    const specific = feeSuggestions.find(
+      (s) => s.payment_method_id === paymentMethodId && s.account_id === paymentAccountId
+    );
+    if (specific) return specific.suggested_percentage;
+    const generic = feeSuggestions.find(
+      (s) => s.payment_method_id === paymentMethodId && s.account_id === null
+    );
+    return generic?.suggested_percentage ?? 0;
+  }, [feeSuggestions, paymentMethodId, paymentAccountId]);
+
+  const estimatedFee = selectedQuote
+    ? Math.round(selectedQuote.total * (suggestedPercentage / 100) * 100) / 100
+    : 0;
+
+  // Mientras la usuaria no haya corregido la comisión a mano, sigue a la
+  // estimación — derivada en cada render a partir del método, la cuenta
+  // y el total cotizado, nunca copiada a un estado propio (evita el
+  // efecto-que-sólo-sincroniza-estado). En cuanto la toca, `feeTouched`
+  // congela `manualFeeAmount` hasta el próximo "Nueva venta" o cambio de
+  // método/cuenta.
+  const feeAmount = feeTouched ? manualFeeAmount : estimatedFee;
+  const estimatedNet = selectedQuote ? selectedQuote.total - feeAmount : 0;
+
   const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
   const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
   const methodLabels = useMemo(() => Object.fromEntries(methods.map((m) => [m.id, m.name])), [methods]);
@@ -262,6 +302,8 @@ export function QuickSaleForm({
     setSelectedConditionId("");
     setPaidAt(new Date().toISOString().slice(0, 10));
     setSaleDate(todayInArgentina());
+    setManualFeeAmount(0);
+    setFeeTouched(false);
     // Forma de pago se resetea — a diferencia de la ubicación, no es un
     // default útil entre ventas (puede variar de una a la siguiente).
     setPaymentMethodId("");
@@ -302,7 +344,15 @@ export function QuickSaleForm({
   }
 
   const canSubmit =
-    cart.length > 0 && locationId && paymentMethodId && paidAt && saleDate && !!selectedQuote && !isPending;
+    cart.length > 0 &&
+    locationId &&
+    paymentMethodId &&
+    paidAt &&
+    saleDate &&
+    !!selectedQuote &&
+    feeAmount >= 0 &&
+    feeAmount <= selectedQuote.total &&
+    !isPending;
 
   return (
     <form action={formAction} className="flex max-w-2xl flex-col gap-4">
@@ -327,6 +377,7 @@ export function QuickSaleForm({
       <input type="hidden" name="client_request_id" value={session.clientRequestId} />
       <input type="hidden" name="price_condition_id" value={selectedConditionId} />
       <input type="hidden" name="expected_total" value={selectedQuote ? String(selectedQuote.total) : ""} />
+      <input type="hidden" name="fee_amount" value={feeAmount} />
 
       {/* Buscador de producto */}
       <div className="space-y-2">
@@ -485,7 +536,19 @@ export function QuickSaleForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="method_select">Forma de pago *</Label>
-          <Select items={methodLabels} value={paymentMethodId} onValueChange={(v) => v && setPaymentMethodId(v)}>
+          <Select
+            items={methodLabels}
+            value={paymentMethodId}
+            onValueChange={(v) => {
+              if (!v) return;
+              setPaymentMethodId(v);
+              // Cambiar el método invalida cualquier corrección manual
+              // anterior — la comisión de un método nuevo vuelve a
+              // seguir su propia estimación hasta que se la edite de
+              // nuevo.
+              setFeeTouched(false);
+            }}
+          >
             <SelectTrigger id="method_select" className="w-full">
               <SelectValue placeholder="Elegir" />
             </SelectTrigger>
@@ -500,7 +563,14 @@ export function QuickSaleForm({
         </div>
         <div className="space-y-2">
           <Label htmlFor="account_select">Cuenta</Label>
-          <Select items={accountLabels} value={paymentAccountId} onValueChange={(v) => setPaymentAccountId(v ?? "")}>
+          <Select
+            items={accountLabels}
+            value={paymentAccountId}
+            onValueChange={(v) => {
+              setPaymentAccountId(v ?? "");
+              setFeeTouched(false);
+            }}
+          >
             <SelectTrigger id="account_select" className="w-full">
               <SelectValue placeholder="(opcional)" />
             </SelectTrigger>
@@ -514,6 +584,36 @@ export function QuickSaleForm({
           </Select>
         </div>
       </div>
+
+      {/* Comisión y neto estimados (Bloque 3) — la sugerencia sólo
+          orienta; lo que se guarda siempre es lo que quede acá, editado
+          o no. El neto nunca es un campo: se ve, pero se deriva. */}
+      {paymentMethodId && selectedQuote && (
+        <div className="space-y-2 rounded-md border p-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="fee_amount_input" className="shrink-0">
+              Comisión {suggestedPercentage > 0 && !feeTouched ? `estimada (${suggestedPercentage}%)` : ""}
+            </Label>
+            <Input
+              id="fee_amount_input"
+              type="number"
+              min="0"
+              max={selectedQuote.total}
+              step="0.01"
+              value={feeAmount}
+              onChange={(e) => {
+                setFeeTouched(true);
+                setManualFeeAmount(Number(e.target.value) || 0);
+              }}
+              className="w-32 text-right"
+            />
+          </div>
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>Neto estimado</span>
+            <span className="tabular-nums">{formatCurrency(estimatedNet)}</span>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
