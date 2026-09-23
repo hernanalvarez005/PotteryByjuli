@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { computeDueDisplayStatus } from "@/lib/workshop-dues";
 import { customerDisplayName } from "@/lib/customers-shared";
@@ -7,6 +8,19 @@ import {
   todayInArgentina,
   APP_TIMEZONE,
 } from "@/lib/format";
+
+/** La unidad "classes" (Talleres) la resuelven tanto getDashboardSummary
+ * como getSalesByBusinessUnit — ambas se llaman dentro del mismo
+ * Promise.all en dashboard/page.tsx, así que sin esto es la misma query
+ * ejecutada 2 veces por navegación (perf audit H-03). cache() memoiza
+ * por request/render, nunca entre navegaciones distintas — no es un
+ * caché persistente de datos dinámicos, sólo evita repetir el mismo
+ * lookup dentro de la misma carga de página. */
+const getClassesUnit = cache(async (): Promise<{ id: string; name: string } | null> => {
+  const supabase = await createClient();
+  const { data } = await supabase.from("business_units").select("id,name").eq("code", "classes").maybeSingle();
+  return data;
+});
 
 /** Mismo shape que DuePaymentRow (talleres/[groupId]/dues-panel.tsx) —
  * "Necesita atención" reusa RegisterPaymentDialog tal cual, así que
@@ -124,28 +138,6 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   const today = todayIso();
   const { fromIso, toIso } = dateRange(filters);
 
-  const { data: classesUnit } = await supabase
-    .from("business_units")
-    .select("id")
-    .eq("code", "classes")
-    .maybeSingle();
-  const classesUnitId = classesUnit?.id ?? null;
-  // Las cuotas de talleres no tienen business_unit_id propio — sólo
-  // corresponde incluirlas cuando el filtro es "Todas" o específicamente
-  // "classes" (decisión de arquitectura de esta tanda).
-  const includeDuesInFilter =
-    filters.businessUnitIds == null || (classesUnitId != null && filters.businessUnitIds.includes(classesUnitId));
-  // Tampoco tienen canal — un filtro de canal activo las excluye siempre
-  // (se avisa explícitamente en la UI, nunca parece un bug silencioso).
-  const includeDuePayments = includeDuesInFilter && filters.channelId == null;
-  // Otros ingresos (Bloque 6) no pertenecen a ninguna unidad de negocio
-  // del catálogo ni tienen canal — a diferencia de Talleres (que sí
-  // corresponde a la unidad "classes"), no hay ninguna unidad específica
-  // bajo la que deban aparecer. Sólo se suman a "Cobrado" cuando la vista
-  // es genuinamente "Todas las unidades, sin canal" — nunca atribuidos a
-  // una unidad o canal que no tienen.
-  const includeIncomeEntries = filters.businessUnitIds == null && filters.channelId == null;
-
   // sale_date (Bloque 2 — "Ventas: fecha real, canal, comisiones y
   // talleres") es `date`, no timestamptz — se compara directo contra
   // filters.from/to (ya "AAAA-MM-DD"), nunca contra fromIso/toIso
@@ -219,6 +211,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     { count: pendingDuesCountRaw },
     { data: pendingDueBalances },
     { data: upcomingEvents },
+    classesUnit,
   ] = await Promise.all([
     supabase.from("orders").select("total").neq("status", "cancelled").gte("sale_date", startOfMonthDateArgentina()),
     supabase.from("payments").select("amount").gte("paid_at", monthStart),
@@ -258,27 +251,64 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
       .neq("status", "cancelled")
       .order("event_date")
       .limit(5),
+    getClassesUnit(),
   ]);
+
+  const classesUnitId = classesUnit?.id ?? null;
+  // Las cuotas de talleres no tienen business_unit_id propio — sólo
+  // corresponde incluirlas cuando el filtro es "Todas" o específicamente
+  // "classes" (decisión de arquitectura de esta tanda).
+  const includeDuesInFilter =
+    filters.businessUnitIds == null || (classesUnitId != null && filters.businessUnitIds.includes(classesUnitId));
+  // Tampoco tienen canal — un filtro de canal activo las excluye siempre
+  // (se avisa explícitamente en la UI, nunca parece un bug silencioso).
+  const includeDuePayments = includeDuesInFilter && filters.channelId == null;
+  // Otros ingresos (Bloque 6) no pertenecen a ninguna unidad de negocio
+  // del catálogo ni tienen canal — a diferencia de Talleres (que sí
+  // corresponde a la unidad "classes"), no hay ninguna unidad específica
+  // bajo la que deban aparecer. Sólo se suman a "Cobrado" cuando la vista
+  // es genuinamente "Todas las unidades, sin canal" — nunca atribuidos a
+  // una unidad o canal que no tienen.
+  const includeIncomeEntries = filters.businessUnitIds == null && filters.channelId == null;
 
   // Enrichment de las (a lo sumo 50) cuotas mostradas — nunca de las
   // potencialmente miles que matchean el filtro real, sólo de las que
-  // efectivamente se van a pintar. Corre DESPUÉS del Promise.all porque
-  // necesita los ids que acaba de resolver (mismo patrón ya usado acá
-  // mismo para duePaymentsFiltered, más abajo).
+  // efectivamente se van a pintar — y el total de pagos de cuotas del
+  // período (antes en un await separado, sin relación de datos con el
+  // enrichment: ninguno de los dos depende del resultado del otro, así
+  // que corren en el mismo Promise.all en vez de uno detrás del otro
+  // (perf audit H-03). Ambos corren DESPUÉS del Promise.all principal
+  // porque el enrichment necesita los ids que ese batch acaba de
+  // resolver.
   const shownDueIds = (pendingDueBalances ?? []).map((d) => d.due_id as string);
   const shownEnrollmentIds = [...new Set((pendingDueBalances ?? []).map((d) => d.enrollment_id as string))];
-  const [{ data: shownDuePayments }, { data: shownEnrollments }] = shownDueIds.length
-    ? await Promise.all([
-        supabase
+  let dueQuery = supabase
+    .from("payments")
+    .select("amount,workshop_dues!inner(workshop_enrollments!inner(workshop_groups!inner(location_id)))")
+    .not("workshop_due_id", "is", null)
+    .gte("paid_at", fromIso)
+    .lte("paid_at", toIso);
+  if (filters.locationId) {
+    dueQuery = dueQuery.eq("workshop_dues.workshop_enrollments.workshop_groups.location_id", filters.locationId);
+  }
+  const [{ data: shownDuePayments }, { data: shownEnrollments }, { data: duePaymentRows }] = await Promise.all([
+    shownDueIds.length
+      ? supabase
           .from("payments")
           .select("id,amount,paid_at,method_id,account_id,reference,notes,workshop_due_id")
-          .in("workshop_due_id", shownDueIds),
-        supabase
+          .in("workshop_due_id", shownDueIds)
+      : Promise.resolve({ data: [] as never[] }),
+    shownDueIds.length
+      ? supabase
           .from("workshop_enrollments")
           .select("id,group_id,customers(first_name,last_name),workshop_groups(name)")
-          .in("id", shownEnrollmentIds),
-      ])
-    : [{ data: [] as never[] }, { data: [] as never[] }];
+          .in("id", shownEnrollmentIds)
+      : Promise.resolve({ data: [] as never[] }),
+    includeDuePayments ? dueQuery : Promise.resolve({ data: [] as never[] }),
+  ]);
+  const duePaymentsFiltered = includeDuePayments
+    ? (duePaymentRows ?? []).reduce((sum: number, p: { amount: number }) => sum + p.amount, 0)
+    : 0;
 
   const salesThisMonth = (monthOrders ?? []).reduce((sum, o) => sum + o.total, 0);
   // "Cobrado" es genuinamente "toda la plata que entró" — igual que
@@ -293,23 +323,6 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   const incomeEntriesFiltered = includeIncomeEntries
     ? (filteredIncomeEntries ?? []).reduce((sum: number, e: { amount: number }) => sum + e.amount, 0)
     : 0;
-
-  let duePaymentsFiltered = 0;
-  if (includeDuePayments) {
-    let dueQuery = supabase
-      .from("payments")
-      .select(
-        "amount,workshop_dues!inner(workshop_enrollments!inner(workshop_groups!inner(location_id)))"
-      )
-      .not("workshop_due_id", "is", null)
-      .gte("paid_at", fromIso)
-      .lte("paid_at", toIso);
-    if (filters.locationId) {
-      dueQuery = dueQuery.eq("workshop_dues.workshop_enrollments.workshop_groups.location_id", filters.locationId);
-    }
-    const { data: duePaymentRows } = await dueQuery;
-    duePaymentsFiltered = (duePaymentRows ?? []).reduce((sum: number, p: { amount: number }) => sum + p.amount, 0);
-  }
 
   const collectedFiltered = orderPaymentsFiltered + duePaymentsFiltered + incomeEntriesFiltered;
   // Pendiente de cobro es una noción exclusivamente de `orders` — nunca se
@@ -513,15 +526,19 @@ export async function getSalesByBusinessUnit(filters: DashboardFilters = default
   if (filters.locationId) query = query.eq("location_id", filters.locationId);
   if (filters.channelId) query = query.eq("closing_channel_id", filters.channelId);
 
-  const { data: classesUnit } = await supabase.from("business_units").select("id,name").eq("code", "classes").maybeSingle();
+  // classesUnit no depende de `query` ni viceversa — corren juntas
+  // (antes classesUnit se esperaba sola, primero) (perf audit H-03).
+  // getClassesUnit() está cacheada por request: si getDashboardSummary
+  // ya la pidió en esta misma navegación (se llaman juntas desde
+  // dashboard/page.tsx), esto no dispara una segunda query real.
+  const [{ data }, classesUnit] = await Promise.all([query, getClassesUnit()]);
   const includeWorkshops =
     (filters.businessUnitIds == null || (classesUnit != null && filters.businessUnitIds.includes(classesUnit.id))) &&
     filters.channelId == null;
 
-  const [{ data }, workshopsTotal] = await Promise.all([
-    query,
-    includeWorkshops ? getWorkshopDuePaymentsTotal(supabase, fromIso, toIso, filters.locationId) : Promise.resolve(0),
-  ]);
+  const workshopsTotal = includeWorkshops
+    ? await getWorkshopDuePaymentsTotal(supabase, fromIso, toIso, filters.locationId)
+    : 0;
 
   const byUnit = new Map<string, number>();
   for (const row of data ?? []) {
