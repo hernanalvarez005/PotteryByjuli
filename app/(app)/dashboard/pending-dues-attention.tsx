@@ -16,14 +16,21 @@ import type { PendingDueRow } from "@/lib/reports";
  */
 export function PendingDuesAttention({
   dues,
+  totalCount,
   paymentMethods,
   paymentAccounts,
 }: {
   dues: PendingDueRow[];
+  /** Cuenta real de `workshop_due_balances` (perf audit P1) — nunca
+   * `dues.length`, que ahora está topeado a las 50 más antiguas
+   * (`getDashboardSummary`). Es cantidad de CUOTAS pendientes, nunca
+   * "alumnas deudoras": la misma alumna puede tener varias. */
+  totalCount: number;
   paymentMethods: { id: string; name: string }[];
   paymentAccounts: { id: string; name: string }[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const isTruncated = totalCount > dues.length;
 
   return (
     <div className="flex flex-col gap-2">
@@ -33,8 +40,15 @@ export function PendingDuesAttention({
         onClick={() => setExpanded((v) => !v)}
       >
         <span>
-          {dues.length} cuota{dues.length !== 1 ? "s" : ""} de taller{dues.length !== 1 ? "es" : ""} pendiente
-          {dues.length !== 1 ? "s" : ""}
+          <span>
+            {totalCount} cuota{totalCount !== 1 ? "s" : ""} de taller{totalCount !== 1 ? "es" : ""} pendiente
+            {totalCount !== 1 ? "s" : ""}
+          </span>
+          {isTruncated && (
+            <span className="block text-xs font-normal text-muted-foreground">
+              Mostrando las {dues.length} más antiguas
+            </span>
+          )}
         </span>
         {expanded ? <ChevronUp className="size-4 shrink-0" /> : <ChevronDown className="size-4 shrink-0" />}
       </button>

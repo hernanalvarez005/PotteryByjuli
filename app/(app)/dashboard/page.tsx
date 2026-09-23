@@ -196,6 +196,7 @@ export default async function DashboardPage({
             {summary && summary.pendingDuesCount > 0 && (
               <PendingDuesAttention
                 dues={summary.pendingDuesDetail}
+                totalCount={summary.pendingDuesCount}
                 paymentMethods={paymentMethods ?? []}
                 paymentAccounts={paymentAccounts ?? []}
               />

@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { computeDueSummary } from "@/lib/workshop-dues";
+import { computeDueDisplayStatus } from "@/lib/workshop-dues";
 import { customerDisplayName } from "@/lib/customers-shared";
 import {
   dateOnlyToArgentinaStartOfDayISO,
@@ -32,6 +32,11 @@ export type PendingDueRow = {
   balance: number;
   payments: PendingDuePayment[];
 };
+
+/** Cuántas cuotas pendientes trae el detalle de "Necesita atención"
+ * (perf audit P1) — las más antiguas primero, nunca todas: el conteo
+ * real (nunca topeado) viaja aparte en `pendingDuesCount`. */
+export const PENDING_DUES_DETAIL_LIMIT = 50;
 
 function startOfMonthIso(): string {
   const d = new Date();
@@ -173,6 +178,33 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     .lte("occurred_at", toIso);
   if (filters.locationId) filteredIncomeQuery = filteredIncomeQuery.eq("location_id", filters.locationId);
 
+  // "Necesita atención → Cuotas pendientes" (perf audit, P1 —
+  // 2026-09-24): antes traía TODAS las cuotas de talleres de la
+  // historia, sin ningún filtro, para recién decidir pendiente/parcial
+  // en JS — sin `order by`, PostgREST ya corta eso en su límite de
+  // página por default (1.000 filas) en un orden no garantizado, así
+  // que en cualquier negocio con suficiente historial "Necesita
+  // atención" podía estar mostrando un recorte arbitrario, no
+  // necesariamente la deuda real. `workshop_due_balances` (vista, misma
+  // fórmula que computeDueSummary/computeDueBalance, nunca una segunda
+  // lógica) filtra `balance > 0` en el servidor — el conteo real sale
+  // de un `count: "exact"` aparte (nunca topeado), y el detalle mostrado
+  // se limita a las 50 cuotas pendientes más antiguas primero (deuda
+  // vieja tiene prioridad) — nunca por `balance` descendente, decisión
+  // explícita: la antigüedad de la deuda importa más que el monto.
+  const pendingDuesCountQuery = supabase
+    .from("workshop_due_balances")
+    .select("due_id", { count: "exact", head: true })
+    .neq("status", "cancelled")
+    .gt("balance", 0);
+  const pendingDueBalancesQuery = supabase
+    .from("workshop_due_balances")
+    .select("due_id,enrollment_id,period,status,total_due,paid_total,balance")
+    .neq("status", "cancelled")
+    .gt("balance", 0)
+    .order("period", { ascending: true })
+    .limit(PENDING_DUES_DETAIL_LIMIT);
+
   const [
     { data: monthOrders },
     { data: monthPayments },
@@ -184,7 +216,8 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     { count: overdueOrdersCount },
     { count: pendingProductionCount },
     { count: newWholesaleCount },
-    { data: allDueRows },
+    { count: pendingDuesCountRaw },
+    { data: pendingDueBalances },
     { data: upcomingEvents },
   ] = await Promise.all([
     supabase.from("orders").select("total").neq("status", "cancelled").gte("sale_date", startOfMonthDateArgentina()),
@@ -216,18 +249,8 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
       .select("id,business_units!inner(code)", { count: "exact", head: true })
       .eq("business_units.code", "wholesale")
       .eq("status", "pending"),
-    // is_paid ya no existe (Fase workshop_monthly_dues la reemplazó por
-    // un estado siempre derivado) — computeDueSummary abajo es la única
-    // fuente de verdad, igual que en Talleres/ficha de alumna. Trae
-    // también lo necesario para el detalle accionable de "Necesita
-    // atención" (sección 12/13): grupo/alumna/período y los pagos
-    // completos (no sólo el monto) para poder reusar RegisterPaymentDialog
-    // tal cual, sin un segundo camino financiero.
-    supabase
-      .from("workshop_dues")
-      .select(
-        "id,amount,status,period,payments(id,amount,paid_at,method_id,account_id,reference,notes),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
-      ),
+    pendingDuesCountQuery,
+    pendingDueBalancesQuery,
     supabase
       .from("events")
       .select("id,human_code,name,event_date,event_type")
@@ -236,6 +259,26 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
       .order("event_date")
       .limit(5),
   ]);
+
+  // Enrichment de las (a lo sumo 50) cuotas mostradas — nunca de las
+  // potencialmente miles que matchean el filtro real, sólo de las que
+  // efectivamente se van a pintar. Corre DESPUÉS del Promise.all porque
+  // necesita los ids que acaba de resolver (mismo patrón ya usado acá
+  // mismo para duePaymentsFiltered, más abajo).
+  const shownDueIds = (pendingDueBalances ?? []).map((d) => d.due_id as string);
+  const shownEnrollmentIds = [...new Set((pendingDueBalances ?? []).map((d) => d.enrollment_id as string))];
+  const [{ data: shownDuePayments }, { data: shownEnrollments }] = shownDueIds.length
+    ? await Promise.all([
+        supabase
+          .from("payments")
+          .select("id,amount,paid_at,method_id,account_id,reference,notes,workshop_due_id")
+          .in("workshop_due_id", shownDueIds),
+        supabase
+          .from("workshop_enrollments")
+          .select("id,group_id,customers(first_name,last_name),workshop_groups(name)")
+          .in("id", shownEnrollmentIds),
+      ])
+    : [{ data: [] as never[] }, { data: [] as never[] }];
 
   const salesThisMonth = (monthOrders ?? []).reduce((sum, o) => sum + o.total, 0);
   // "Cobrado" es genuinamente "toda la plata que entró" — igual que
@@ -281,52 +324,68 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
   // específica no tenía ese problema porque duePaymentsFiltered daba 0.
   const pendingToCollect = Math.max(0, totalInvoicedFiltered - orderPaymentsFiltered);
 
-  // computeDueSummary (lib/workshop-dues.ts) es la única fuente de verdad
-  // para el estado de una cuota — Talleres, la ficha de alumna y esto
-  // calculan exactamente lo mismo, nunca una columna is_paid separada.
-  // No se filtra por período/atributo: es un conteo de "ahora mismo",
-  // como el resto de "Necesita atención". pendingDuesDetail trae todo lo
-  // que "Necesita atención" (sección 12/13) necesita para ser accionable
-  // sin una segunda consulta: Alumna/Grupo/Período/Total/Pagado/Pendiente
-  // + los pagos completos de cada cuota, para reusar RegisterPaymentDialog
-  // (talleres/[groupId]/dues-panel.tsx) tal cual.
-  const pendingDues: (PendingDueRow & { status: string })[] = (allDueRows ?? [])
+  // workshop_due_balances (vista, perf audit P1) ya filtró server-side
+  // `status<>'cancelled' AND balance>0` — por construcción, toda fila que
+  // llega acá computa a display-status 'pending' o 'partial', nunca
+  // 'paid'/'cancelled'. Igual se pasa por computeDueDisplayStatus (nunca
+  // se infiere el estado "porque el SQL ya filtró") — sigue siendo la
+  // única función que decide pendiente/parcial/pagada/cancelada, ahora
+  // alimentada por los agregados de la vista en vez de arrays crudos de
+  // payments/items. pendingDuesCount es el conteo real (exact, nunca
+  // topeado por el límite de página de PostgREST); pendingDuesDetail son
+  // sólo las `PENDING_DUES_DETAIL_LIMIT` más antiguas — "Necesita
+  // atención" ya no puede mostrar más pedidos de los que realmente
+  // trajo, ambos números viajan por separado para que la UI lo diga.
+  const shownDuePaymentsByDue = new Map<string, PendingDuePayment[]>();
+  for (const p of (shownDuePayments ?? []) as (PendingDuePayment & { workshop_due_id: string })[]) {
+    const list = shownDuePaymentsByDue.get(p.workshop_due_id) ?? [];
+    list.push({
+      id: p.id,
+      amount: p.amount,
+      paid_at: p.paid_at,
+      method_id: p.method_id,
+      account_id: p.account_id,
+      reference: p.reference,
+      notes: p.notes,
+    });
+    shownDuePaymentsByDue.set(p.workshop_due_id, list);
+  }
+  const shownEnrollmentById = new Map(
+    ((shownEnrollments ?? []) as unknown as {
+      id: string;
+      group_id: string;
+      customers: { first_name: string; last_name: string | null } | null;
+      workshop_groups: { name: string } | null;
+    }[]).map((e) => [e.id, e])
+  );
+
+  const pendingDuesCount = pendingDuesCountRaw ?? 0;
+  const pendingDuesDetail: PendingDueRow[] = (pendingDueBalances ?? [])
+    .filter((d) => {
+      // Defensivo, nunca debería excluir nada (la vista ya garantiza
+      // balance>0 y status<>cancelled) — pero el estado nunca se infiere
+      // sin pasar por la función canónica, así que se vuelve a chequear acá.
+      const displayStatus = computeDueDisplayStatus(
+        d.status as "pending" | "cancelled",
+        d.total_due as number,
+        d.paid_total as number
+      );
+      return displayStatus === "pending" || displayStatus === "partial";
+    })
     .map((d) => {
-      const payments = (d.payments ?? []) as PendingDuePayment[];
-      const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
-      const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
-      const enrollment = d.workshop_enrollments as unknown as {
-        group_id: string;
-        customers: { first_name: string; last_name: string | null } | null;
-        workshop_groups: { name: string } | null;
-      } | null;
+      const enrollment = shownEnrollmentById.get(d.enrollment_id as string);
       return {
-        id: d.id as string,
+        id: d.due_id as string,
         groupId: enrollment?.group_id ?? "",
         groupName: enrollment?.workshop_groups?.name ?? "—",
         customerName: enrollment?.customers ? customerDisplayName(enrollment.customers) : "—",
         period: d.period as string,
-        totalDue: summary.totalDue,
-        paidTotal: summary.paidTotal,
-        balance: summary.balance,
-        status: summary.status,
-        payments,
+        totalDue: d.total_due as number,
+        paidTotal: d.paid_total as number,
+        balance: d.balance as number,
+        payments: shownDuePaymentsByDue.get(d.due_id as string) ?? [],
       };
-    })
-    .filter((d) => d.status === "pending" || d.status === "partial");
-
-  const pendingDuesCount = pendingDues.length;
-  const pendingDuesDetail: PendingDueRow[] = pendingDues.map((row) => ({
-    id: row.id,
-    groupId: row.groupId,
-    groupName: row.groupName,
-    customerName: row.customerName,
-    period: row.period,
-    totalDue: row.totalDue,
-    paidTotal: row.paidTotal,
-    balance: row.balance,
-    payments: row.payments,
-  }));
+    });
 
   return {
     salesThisMonth,
