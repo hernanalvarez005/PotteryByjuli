@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
@@ -18,8 +19,23 @@ export type CurrentUser = {
  * enforces this too (has_role()/is_owner() both check is_active), so this
  * is about giving a clear "your access was revoked" redirect instead of a
  * dashboard full of buttons that fail with a raw Postgres error.
+ *
+ * Wrapped in React's `cache()` (perf audit, P0.1 — 2026-09-23): every
+ * protected route already calls this at least twice per navigation (once
+ * in `app/(app)/layout.tsx`, once again in its own `page.tsx`) — without
+ * memoization each call re-does `auth.getUser()` + the profiles/user_roles
+ * reads from scratch. `cache()` dedupes by call (no arguments here, so one
+ * shared result) *within a single request/render pass only* — it never
+ * leaks across requests or users, and it changes nothing about what gets
+ * validated: `auth.getUser()` still runs and is still the source of
+ * truth, exactly as often as the request actually needs it (once), not
+ * "less than a real check". `proxy.ts`'s own `auth.getUser()` call is a
+ * separate concern (a different runtime, refreshing the session cookie
+ * before the request even reaches Server Components) and is deliberately
+ * left untouched — it is not redundant with this one, it does different
+ * work at a different boundary.
  */
-export async function getCurrentUser(): Promise<CurrentUser | null> {
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -47,7 +63,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     fullName: (profile?.full_name as string | null) ?? null,
     roles: (roleRows?.map((r) => r.role) ?? []) as AppRole[],
   };
-}
+});
 
 /** Use in Server Components/Actions that must never render for a guest. */
 export async function requireUser(): Promise<CurrentUser> {

@@ -44,10 +44,28 @@ export async function getOrders(options?: {
     query = query.is("archived_at", null);
   }
 
-  const [{ data: orders }, { data: payments }] = await Promise.all([
-    query,
-    supabase.from("payments").select("order_id,amount"),
-  ]);
+  // Sólo los pagos de pedidos que esta consulta realmente muestra — antes
+  // traía `payments` entera sin ningún filtro (perf audit, P0.2 —
+  // 2026-09-23): cada cuota de taller, cada venta minorista, cada pago de
+  // cualquier unidad de negocio, sin relación con lo que esta pantalla
+  // pinta. Se filtra con el MISMO criterio que `query` de arriba, pero vía
+  // un embed (`orders!inner(...)`) — nunca `.in("order_id", orderIds)`:
+  // con miles de pedidos esa lista de ids satura la URL (probado: HTTP 414
+  // a partir de ~1.500 ids). El embed filtra en el servidor sin mandar
+  // ningún id por la red, y de paso permite volver a correr ambas
+  // consultas en paralelo (ninguna depende del resultado de la otra).
+  let paymentsQuery = supabase
+    .from("payments")
+    .select("order_id,amount,orders!inner(operation_type,archived_at)")
+    .not("order_id", "is", null);
+  if (options?.operationType) {
+    paymentsQuery = paymentsQuery.eq("orders.operation_type", options.operationType);
+  }
+  if (!options?.includeArchived) {
+    paymentsQuery = paymentsQuery.is("orders.archived_at", null);
+  }
+
+  const [{ data: orders }, { data: payments }] = await Promise.all([query, paymentsQuery]);
 
   const paidByOrder: Record<string, number> = {};
   for (const p of (payments ?? []) as { order_id: string; amount: number }[]) {
