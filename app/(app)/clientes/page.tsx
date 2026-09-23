@@ -41,7 +41,10 @@ export default async function ClientesPage({
   const canEdit = isOwner(user) || hasRole(user, "operations");
   const { segment = "all", q = "" } = await searchParams;
 
-  const customers = await getCustomers(q);
+  // Sólo el segmento "students" usa el roster de talleres — pedir
+  // getCustomers() en ese caso sería una query completa descartada,
+  // nunca renderizada (perf audit H-07).
+  const customers = segment === "students" ? [] : await getCustomers(q);
   const filteredCustomers =
     segment === "wholesale"
       ? customers.filter((c) => c.customer_tag_links.some((l) => l.customer_tags.code === "wholesale"))
