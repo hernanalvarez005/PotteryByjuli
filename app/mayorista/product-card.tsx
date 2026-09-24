@@ -242,7 +242,6 @@ function ProductCarousel({
               fill
               sizes="(max-width: 640px) 50vw, 300px"
               className="object-cover"
-              unoptimized
             />
           </div>
         ))}
