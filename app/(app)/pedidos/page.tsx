@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Plus, LayoutGrid, List } from "lucide-react";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getOrders } from "@/lib/orders";
+import { getOrders, getOrdersPage, type OrdersPageCursor } from "@/lib/orders";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { ORDER_STATUS_LABELS } from "@/schemas/orders";
@@ -20,19 +20,31 @@ import { PedidosKanban } from "./pedidos-kanban";
 export default async function PedidosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string; archived?: string }>;
+  searchParams: Promise<{ view?: string; archived?: string; cursorCreatedAt?: string; cursorId?: string }>;
 }) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
   const params = await searchParams;
   const view = params.view === "kanban" ? "kanban" : "list";
   const showArchived = params.archived === "1";
-  const { orders, paidByOrder } = await getOrders({ operationType: "order", includeArchived: showArchived });
+  // El cursor sólo tiene sentido en Lista — Kanban sigue usando
+  // getOrders() sin paginar (H-08 bloque 2 acotado explícitamente a no
+  // tocar Kanban todavía).
+  const cursor: OrdersPageCursor =
+    view === "list" && params.cursorCreatedAt && params.cursorId
+      ? { createdAt: params.cursorCreatedAt, id: params.cursorId }
+      : null;
+
+  const { orders, paidByOrder, nextCursor } =
+    view === "kanban"
+      ? { ...(await getOrders({ operationType: "order", includeArchived: showArchived })), nextCursor: null }
+      : await getOrdersPage({ operationType: "order", includeArchived: showArchived }, cursor);
 
   function viewHref(nextView: "list" | "kanban") {
     const qs = new URLSearchParams();
     if (nextView !== "list") qs.set("view", nextView);
     if (showArchived) qs.set("archived", "1");
+    // Cambiar de vista siempre vuelve a la primera página.
     const query = qs.toString();
     return query ? `/pedidos?${query}` : "/pedidos";
   }
@@ -41,8 +53,20 @@ export default async function PedidosPage({
     const qs = new URLSearchParams();
     if (view !== "list") qs.set("view", view);
     if (next) qs.set("archived", "1");
+    // Cambiar el filtro de archivados también vuelve a la primera página
+    // — el cursor de la página anterior ya no representa un límite
+    // válido para el nuevo conjunto de resultados.
     const query = qs.toString();
     return query ? `/pedidos?${query}` : "/pedidos";
+  }
+
+  function nextPageHref(): string | null {
+    if (!nextCursor) return null;
+    const qs = new URLSearchParams();
+    if (showArchived) qs.set("archived", "1");
+    qs.set("cursorCreatedAt", nextCursor.createdAt);
+    qs.set("cursorId", nextCursor.id);
+    return `/pedidos?${qs.toString()}`;
   }
 
   return (
@@ -143,6 +167,14 @@ export default async function PedidosPage({
             })}
           </TableBody>
         </Table>
+      )}
+
+      {view === "list" && nextPageHref() && (
+        <Link href={nextPageHref()!} className="self-center">
+          <Button variant="outline" size="sm">
+            Cargar más
+          </Button>
+        </Link>
       )}
     </div>
   );
