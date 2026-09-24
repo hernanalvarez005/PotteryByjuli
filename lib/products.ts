@@ -61,6 +61,33 @@ export async function getPricesForVariants(variantIds: string[]): Promise<PriceB
   return byVariant;
 }
 
+/**
+ * Precio por `${price_list_id}:${variant_id}`, para TODAS las listas de
+ * precio (no sólo retail/wholesale) — /precios (perf audit H-08 bloque
+ * 5) muestra una columna por cada `price_lists` fila, que puede ser más
+ * de dos. Igual que getPricesForVariants(): siempre acotado a los
+ * `variantIds` de la página actual, nunca el catálogo completo.
+ */
+export async function getAllListPricesForVariants(variantIds: string[]): Promise<Record<string, number>> {
+  if (variantIds.length === 0) return {};
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("price_list_items")
+    .select("price_list_id,product_variant_id,unit_price")
+    .in("product_variant_id", variantIds);
+
+  const prices: Record<string, number> = {};
+  for (const row of (data ?? []) as unknown as {
+    price_list_id: string;
+    product_variant_id: string;
+    unit_price: number;
+  }[]) {
+    prices[`${row.price_list_id}:${row.product_variant_id}`] = row.unit_price;
+  }
+  return prices;
+}
+
 /** `name` + `id` (nunca sólo `name`) — dos productos pueden compartir
  * nombre exacto (no hay unicidad en la tabla), y un cursor de un solo
  * campo saltearía/repetiría filas ahí, mismo motivo que el cursor

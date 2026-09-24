@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getProductsWithVariants, getPricesForVariants } from "@/lib/products";
 import { customerDisplayName } from "@/lib/customers";
 import { OrderForm } from "./order-form";
 
@@ -11,7 +10,13 @@ export default async function NewOrderPage() {
   const canEdit = isOwner(user) || hasRole(user, "operations");
 
   const supabase = await createClient();
-  const [{ data: customers }, { data: businessUnits }, { data: channels }, { data: locations }, { data: methods }, { data: accounts }, products] =
+  // El catálogo ya NO se precarga acá (perf audit H-08 bloque 5) — cada
+  // fila de producto busca server-side vía VariantPicker
+  // (searchSaleVariants(), lib/product-search.ts), igual que
+  // /ventas/nueva. Con 3.352 productos activos, traer el catálogo
+  // completo + sus precios acá ya rompía con HTTP 414 antes de este
+  // cambio (confirmado por medición).
+  const [{ data: customers }, { data: businessUnits }, { data: channels }, { data: locations }, { data: methods }, { data: accounts }] =
     await Promise.all([
       supabase
         .from("customers")
@@ -23,25 +28,7 @@ export default async function NewOrderPage() {
       supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
       supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),
       supabase.from("payment_accounts").select("id,name").eq("is_active", true).order("code"),
-      getProductsWithVariants(),
     ]);
-
-  const activeVariantIds = products
-    .filter((p) => p.is_active)
-    .flatMap((p) => p.product_variants.filter((v) => v.is_active).map((v) => v.id));
-  const prices = await getPricesForVariants(activeVariantIds);
-
-  const variantOptions = products
-    .filter((p) => p.is_active)
-    .flatMap((p) =>
-      p.product_variants
-        .filter((v) => v.is_active)
-        .map((v) => ({
-          id: v.id,
-          label: v.name === "Único" ? p.name : `${p.name} — ${v.name}`,
-          retailPrice: prices[v.id]?.retail ?? null,
-        }))
-    );
 
   return (
     <div className="flex flex-col gap-6">
@@ -66,7 +53,6 @@ export default async function NewOrderPage() {
           businessUnits={businessUnits ?? []}
           channels={channels ?? []}
           locations={locations ?? []}
-          variants={variantOptions}
           paymentMethods={methods ?? []}
           paymentAccounts={accounts ?? []}
         />
