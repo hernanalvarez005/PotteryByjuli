@@ -429,12 +429,34 @@ Decisiones tomadas para no sobrediseñar antes de tener uso real (sección
 
 ## Auditorías cerradas
 
-- [x] **Auditoría de performance** — cerrada: `/pedidos`, `/ventas`,
-      `/productos`, `/ventas/nueva`, `/precios` y `/pedidos/nuevo` dejaron
-      de cargar listados completos (H-08, bloques 1–5) y la entrega de
-      imágenes quedó resuelta (H-05A). PRs #31 y #33–#37.
-- [x] **Hardening de tests de integración** — cerrado (PR #38): cleanup
-      por IDs exactos desde `afterAll`, gate explícito de entorno local y
-      scripts `test` / `test:integration` / `test:all` (ver
-      `docs/testing.md`). Sin pendientes materiales.
-
+- [x] **Auditoría madre de rendimiento** — cerrada, 0 pendientes
+      materiales. Alcance total: 23 ítems auditados — 9 implementados y en
+      producción, 11 validados / sin cambio necesario y 3 en vigilancia
+      preventiva. El informe completo vive fuera de este roadmap; acá sólo
+      queda el alcance y lo ejecutado en la línea de trabajo derivada
+      (abajo).
+  - Implementados (PRs): H-01 auth duplicada (#27) · H-02 payments sin
+    filtrar (#27) · H-03 cascada del Dashboard (#29) · H-04 cuotas de
+    taller / truncamiento (#28) · H-05A imágenes (#31) · H-07 query
+    descartada en clientes (#29) · H-08 catálogo y listados (#33, #36,
+    #37) · H-11A loading states (#30) · H-12 pedidos / ventas / Kanban
+    (#34, #35).
+  - Validados, no tocar: RPC de venta rápida, stock ledger, RLS,
+    `sale_date` / índice, bundle del PDF, N+1, caching / revalidation,
+    prefetch, H-11B.
+  - En vigilancia preventiva (sin trabajo agendado): H-06 trigram en
+    clientes, H-09 higiene de RLS, H-10 índices adicionales, H-05B resize
+    al subir imágenes, región / mobile como observabilidad.
+- [x] **Sub-bloque derivado de la auditoría madre** (H-08 / H-12, H-05A y
+      hardening de tests) — cerrado. Es una línea de trabajo dentro de la
+      auditoría madre, no una auditoría aparte:
+  - **H-08 / H-12** — `/ventas/nueva`, `/pedidos`, `/ventas`, el Kanban de
+    `/pedidos`, `/productos`, `/precios` y `/pedidos/nuevo` dejaron de
+    cargar listados o catálogos completos (búsqueda server-side y
+    paginación keyset). PRs #33–#37.
+  - **H-05A** — entrega / render de imágenes (`images.remotePatterns`, se
+    quitó `unoptimized`). PR #31.
+  - **Hardening de tests de integración** (surgió al medir lo anterior
+    contra la base local) — cleanup por IDs exactos desde `afterAll`, gate
+    explícito de entorno local y scripts `test` / `test:integration` /
+    `test:all` (ver `docs/testing.md`). PR #38.
