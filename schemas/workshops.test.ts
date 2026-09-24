@@ -121,4 +121,33 @@ describe("duePaymentSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.notes).toBe("Importe mal cargado, era $12.000");
   });
+
+  // fee_amount (comisión) — mismo contrato que schemas/orders.ts
+  // paymentSchema: nunca null (payments.fee_amount es NOT NULL default
+  // 0), nunca mayor al importe del pago.
+  describe("fee_amount", () => {
+    it("defaults to 0 when absent", () => {
+      const result = duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10" });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.fee_amount).toBe(0);
+    });
+
+    it("accepts a valid commission", () => {
+      const result = duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "30" });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.fee_amount).toBe(30);
+    });
+
+    it("rejects a negative commission", () => {
+      expect(
+        duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "-1" }).success
+      ).toBe(false);
+    });
+
+    it("rejects a commission greater than the payment amount", () => {
+      expect(
+        duePaymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "1001" }).success
+      ).toBe(false);
+    });
+  });
 });

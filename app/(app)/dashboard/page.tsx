@@ -199,6 +199,7 @@ export default async function DashboardPage({
                 totalCount={summary.pendingDuesCount}
                 paymentMethods={paymentMethods ?? []}
                 paymentAccounts={paymentAccounts ?? []}
+                canEdit={canSeeFinance}
               />
             )}
           </CardContent>

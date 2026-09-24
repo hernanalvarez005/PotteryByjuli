@@ -188,3 +188,51 @@ export async function addPayment(
   revalidatePath("/pedidos");
   return {};
 }
+
+/**
+ * Corrige un pago de pedido/venta ya cargado — mismo patrón que
+ * updateDuePayment (talleres/[groupId]/actions.ts): `payments` admite
+ * UPDATE directo (la RLS ya lo permite para cualquier pago, sin
+ * distinguir order_id de workshop_due_id) y el trigger
+ * payments_log_correction audita el cambio solo — nunca se anula ni se
+ * recrea la fila. Scopeado a `orderId` además de `paymentId` — nunca
+ * confía en que el id que llega del cliente pertenezca a este pedido.
+ * `/ventas` se revalida siempre (no sólo cuando el pedido es
+ * operation_type='retail_sale'): barato, y evita una consulta extra
+ * sólo para decidir si hace falta.
+ */
+export async function updatePayment(
+  orderId: string,
+  paymentId: string,
+  _prevState: OrderActionState,
+  formData: FormData
+): Promise<OrderActionState> {
+  await assertCanManageOrders();
+
+  const parsed = paymentSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("payments")
+    .update({
+      amount: parsed.data.amount,
+      paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
+      method_id: parsed.data.method_id,
+      account_id: parsed.data.account_id,
+      reference: parsed.data.reference,
+      notes: parsed.data.notes,
+      fee_amount: parsed.data.fee_amount,
+    })
+    .eq("id", paymentId)
+    .eq("order_id", orderId);
+  if (error) return { error: "No se pudo actualizar el pago." };
+
+  revalidatePath(`/pedidos/${orderId}`);
+  revalidatePath("/pedidos");
+  revalidatePath("/ventas");
+  revalidatePath("/dashboard");
+  return {};
+}

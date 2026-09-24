@@ -61,7 +61,7 @@ export default async function CuotasPage({
     supabase
       .from("workshop_dues")
       .select(
-        "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
+        "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes,fee_amount),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
       )
       .eq("period", period)
       .order("created_at"),
@@ -81,6 +81,7 @@ export default async function CuotasPage({
       account_id: string | null;
       reference: string | null;
       notes: string | null;
+      fee_amount: number;
     }[];
     const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
     const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
@@ -203,6 +204,7 @@ export default async function CuotasPage({
                       paymentAccounts={paymentAccounts ?? []}
                       payments={due.payments}
                       allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
+                      canEdit={canEdit}
                     />
                   )}
                 </TableCell>

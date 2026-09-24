@@ -154,6 +154,7 @@ export function PeriodDuesSummary({
                             paymentAccounts={paymentAccounts}
                             payments={due.payments}
                             allowNewPayment={due.status === "pending" || due.status === "partial"}
+                            canEdit={canEdit}
                           />
                         )}
                       </>

@@ -64,27 +64,43 @@ export const createOrderSchema = z.object({
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
-export const paymentSchema = z.object({
-  amount: z
-    .string()
-    .trim()
-    .min(1, "Requerido")
-    .transform((v) => Number(v))
-    .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
-  // Siempre explícito — nunca un atajo "si es hoy, se omite y cae el
-  // default now()". created_at = cuándo se cargó en Pottery; paid_at =
-  // cuándo pasó el pago de verdad (docs/business-rules.md § Argentina,
-  // moneda y horario). El action arma el timestamptz real desde esta
-  // fecha vía dateOnlyToArgentinaNoonISO.
-  paid_at: z
-    .string()
-    .trim()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
-  method_id: optionalUuid(),
-  account_id: optionalUuid(),
-  reference: optionalString(120),
-  notes: optionalString(500),
-});
+export const paymentSchema = z
+  .object({
+    amount: z
+      .string()
+      .trim()
+      .min(1, "Requerido")
+      .transform((v) => Number(v))
+      .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
+    // Siempre explícito — nunca un atajo "si es hoy, se omite y cae el
+    // default now()". created_at = cuándo se cargó en Pottery; paid_at =
+    // cuándo pasó el pago de verdad (docs/business-rules.md § Argentina,
+    // moneda y horario). El action arma el timestamptz real desde esta
+    // fecha vía dateOnlyToArgentinaNoonISO.
+    paid_at: z
+      .string()
+      .trim()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
+    method_id: optionalUuid(),
+    account_id: optionalUuid(),
+    reference: optionalString(120),
+    notes: optionalString(500),
+    // Comisión del método/cuenta que cobró el pago — nunca un descuento
+    // comercial (eso vive en price_conditions/orders.discount_total), un
+    // costo de procesar el cobro. Siempre un número real (nunca null:
+    // payments.fee_amount es NOT NULL default 0 en la DB), a diferencia
+    // de reference/notes que sí representan "sin dato".
+    fee_amount: z.preprocess(
+      (v) => (v === null || v === undefined || v === "" ? "0" : v),
+      z.string().trim()
+    )
+      .transform((v) => Number(v))
+      .refine((v) => Number.isFinite(v) && v >= 0, "Comisión inválida"),
+  })
+  .refine((data) => data.fee_amount <= data.amount, {
+    message: "La comisión no puede ser mayor al importe del pago.",
+    path: ["fee_amount"],
+  });
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   pending: "Pendiente",
