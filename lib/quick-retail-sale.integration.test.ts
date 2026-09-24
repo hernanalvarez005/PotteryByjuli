@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cleanupFixtures } from "@/tests/support/fixture-cleanup";
 
 // Corre exclusivamente contra Supabase LOCAL (nunca producción) — necesita
 // crear productos/stock/ventas de prueba de verdad para probar
@@ -52,7 +53,12 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
   let cashMethodId: string;
   let cardMethodId: string;
   let generalConditionId: string;
+  // Todo lo que crea la suite se registra por ID exacto para poder limpiarlo
+  // en afterAll aunque un assertion falle a mitad de un test (ver cleanup).
   const createdProductIds: string[] = [];
+  const createdConditionIds: string[] = [];
+  const createdCustomerIds: string[] = [];
+  const createdOrderIds: string[] = [];
 
   /** Producto con su variante única (auto-creada), precio minorista
    * cargado, y opcionalmente stock inicial ya cargado en `locationId`. */
@@ -104,8 +110,8 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     return (movements ?? []).reduce((sum, m) => sum + Number(m.quantity), 0);
   }
 
-  function callSale(overrides: Record<string, unknown> = {}) {
-    return owner.rpc("create_quick_retail_sale", {
+  async function callSale(overrides: Record<string, unknown> = {}) {
+    const result = await owner.rpc("create_quick_retail_sale", {
       p_location_id: locationId,
       p_items: [],
       p_payment_method_id: bankTransferMethodId,
@@ -118,6 +124,8 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
       p_price_condition_id: generalConditionId,
       ...overrides,
     });
+    for (const sale of (result.data as SaleResult[] | null) ?? []) createdOrderIds.push(sale.order_id);
+    return result;
   }
 
   beforeAll(async () => {
@@ -161,9 +169,21 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     generalConditionId = generalCondition!.id;
   });
 
+  // Limpieza por IDs exactos, en orden de FK, con error explícito si algo
+  // falla (ver tests/support/fixture-cleanup.ts). Antes esto era un único
+  // products.delete() cuyo error se ignoraba: order_items.product_variant_id
+  // es NO ACTION, así que en cuanto había una venta fallaba en silencio y
+  // dejaba productos, pedidos y (vía orders.price_condition_id, también NO
+  // ACTION) las price_lists `restricted-*` acumulándose en la base local.
   afterAll(async () => {
-    await admin.from("products").delete().in("id", createdProductIds);
-    await admin.from("product_categories").delete().eq("id", categoryId);
+    if (!admin) return;
+    await cleanupFixtures(admin, "quick-retail-sale", {
+      orderIds: createdOrderIds,
+      productIds: createdProductIds,
+      conditionIds: createdConditionIds,
+      customerIds: createdCustomerIds,
+      categoryIds: categoryId ? [categoryId] : [],
+    });
   });
 
   it("registers a basic sale: creates the order delivered, deducts stock, registers the payment", async () => {
@@ -210,6 +230,7 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
   it("associates the customer correctly when one is given", async () => {
     const { variantId } = await makeVariant("Con cliente", 1000, 5);
     const { data: customer } = await admin.from("customers").insert({ first_name: "Cliente Venta Rápida" }).select("id").single();
+    createdCustomerIds.push(customer!.id);
 
     const { data, error } = await callSale({
       p_items: [{ product_variant_id: variantId, quantity: 1 }],
@@ -218,9 +239,6 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     expect(error).toBeNull();
     const { data: order } = await admin.from("orders").select("customer_id").eq("id", (data as SaleResult[])[0].order_id).single();
     expect(order?.customer_id).toBe(customer!.id);
-
-    await admin.from("orders").delete().eq("id", (data as SaleResult[])[0].order_id);
-    await admin.from("customers").delete().eq("id", customer!.id);
   });
 
   it("updates stock for both variants in a two-product sale", async () => {
@@ -406,7 +424,7 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
       p_payment_method_ids: [],
     });
     const inactiveConditionId = created as string;
-    const { data: condition } = await admin.from("price_conditions").select("price_list_id").eq("id", inactiveConditionId).single();
+    createdConditionIds.push(inactiveConditionId);
     await admin.from("price_conditions").update({ is_active: false }).eq("id", inactiveConditionId);
 
     const { error } = await callSale({
@@ -415,11 +433,8 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
     });
     expect(error).not.toBeNull();
     expect(await physicalStock(variantId)).toBe(5);
-
-    // Limpieza: create_price_condition creó también su propia price_list
-    // dedicada — sin esto quedaría huérfana en la base local.
-    await admin.from("price_conditions").delete().eq("id", inactiveConditionId);
-    await admin.from("price_lists").delete().eq("id", condition!.price_list_id);
+    // create_price_condition creó también su propia price_list dedicada; se
+    // borra en afterAll (createdConditionIds).
   });
 
   // Bloque 3 — comisiones/neto: el fee vive en payments, nunca en el
@@ -578,12 +593,9 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
         .select("price_list_id")
         .eq("id", conditionId as string)
         .single();
-      return { conditionId: conditionId as string, priceListId: condition!.price_list_id as string };
-    }
-
-    async function cleanupCondition(conditionId: string, priceListId: string) {
-      await admin.from("price_conditions").delete().eq("id", conditionId);
-      await admin.from("price_lists").delete().eq("id", priceListId);
+      const created = { conditionId: conditionId as string, priceListId: condition!.price_list_id as string };
+      createdConditionIds.push(created.conditionId); // se borra en afterAll, aunque el test falle
+      return created;
     }
 
     it("efectivo + condición que sólo acepta efectivo: OK", async () => {
@@ -597,8 +609,6 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
         p_payment_method_id: cashMethodId,
       });
       expect(error).toBeNull();
-
-      await cleanupCondition(conditionId, priceListId);
     });
 
     it("tarjeta + condición que sólo acepta tarjeta: OK", async () => {
@@ -612,8 +622,6 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
         p_payment_method_id: cardMethodId,
       });
       expect(error).toBeNull();
-
-      await cleanupCondition(conditionId, priceListId);
     });
 
     it("tarjeta + condición que sólo acepta efectivo: se rechaza entera, sin filas parciales", async () => {
@@ -637,8 +645,6 @@ describe.skipIf(!hasCredentials)("create_quick_retail_sale (local)", () => {
         .eq("client_request_id", requestId);
       expect(ordersWithThisRequestId).toBe(0);
       expect(await physicalStock(variantId)).toBe(5);
-
-      await cleanupCondition(conditionId, priceListId);
     });
   });
 });

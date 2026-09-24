@@ -19,3 +19,15 @@ Reglas rápidas de este repo:
   `render={<Componente />}` en vez de `asChild`.
 - Antes de cerrar cualquier cambio: `npm run typecheck && npm run lint &&
   npm run build`.
+- Tests (estándar del repo, detalle en `docs/testing.md`):
+  - `npm test` → unit (sin base ni variables de entorno).
+  - `npm run test:integration` → integración contra **Supabase local**,
+    obligatoria cuando el cambio toca SQL/RPC o lógica que vive en Postgres.
+  - `npm run test:all` → gate completo (unit + integración).
+  - La integración **falla** (no se saltea) si faltan
+    `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` /
+    `SUPABASE_SERVICE_ROLE_KEY`, si la URL no es local o si Supabase no
+    responde. Nunca cargar el `.env.local` de producción para tests.
+  - Cada suite de integración limpia lo que crea con `cleanupFixtures()`
+    (`tests/support/fixture-cleanup.ts`) desde `afterAll`: IDs exactos,
+    nunca por patrón, y sin `.in()` gigantes.

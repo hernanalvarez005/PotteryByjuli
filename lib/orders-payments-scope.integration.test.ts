@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cleanupFixtures } from "@/tests/support/fixture-cleanup";
 
 // Corre exclusivamente contra Supabase LOCAL (nunca producción). Cubre
 // lib/orders.ts: getOrders() usa next/headers (cookies), así que no se
@@ -89,6 +90,10 @@ describe.skipIf(!hasCredentials)("getOrders() payments scoping (local)", () => {
   // igual aunque una aserción de ese test falle antes de llegar a su
   // propia limpieza.
   const bulkOrderIds: string[] = [];
+  // `notes` único de la venta masiva. Se registra ANTES del insert: si algo
+  // falla entre el insert y el registro de ids, afterAll igual recupera los
+  // pedidos por este marker exacto (único por corrida, no un patrón).
+  let bulkMarker: string | null = null;
 
   beforeAll(async () => {
     admin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
@@ -148,18 +153,37 @@ describe.skipIf(!hasCredentials)("getOrders() payments scoping (local)", () => {
     await admin.from("payments").insert({ workshop_due_id: dueId, amount: 45000, paid_at: new Date().toISOString() });
   });
 
+  // IDs exactos, en tandas de 50 (tests/support/fixture-cleanup.ts). Antes
+  // los 1.800 pedidos de la venta masiva se borraban con UN `.in()` de 1.800
+  // ids → HTTP 414 silencioso: cada corrida dejaba 1.800 pedidos, sus pagos
+  // y un cliente "Payments Scope Fixture" (48.600 pedidos acumulados).
   afterAll(async () => {
-    await admin.from("payments").delete().eq("workshop_due_id", dueId);
-    await admin.from("workshop_dues").delete().eq("id", dueId);
-    await admin.from("workshop_enrollments").delete().eq("group_id", groupId);
-    await admin.from("workshop_groups").delete().eq("id", groupId);
-    await admin.from("workshop_programs").delete().eq("id", programId);
-    if (bulkOrderIds.length > 0) {
-      await admin.from("payments").delete().in("order_id", bulkOrderIds);
-      await admin.from("orders").delete().in("id", bulkOrderIds);
+    if (!admin) return;
+    const orderIdsByMarker: string[] = [];
+    if (bulkMarker) {
+      for (let from = 0; ; from += 1000) {
+        const { data } = await admin.from("orders").select("id").eq("notes", bulkMarker).order("id").range(from, from + 999);
+        orderIdsByMarker.push(...(data ?? []).map((o) => o.id as string));
+        if ((data ?? []).length < 1000) break;
+      }
     }
-    await admin.from("orders").delete().in("id", [orderPedidoId, orderArchivedId, orderRetailSaleId]);
-    await admin.from("customers").delete().eq("id", customerId);
+    await cleanupFixtures(
+      admin,
+      "orders-payments-scope",
+      {
+        orderIds: [orderPedidoId, orderArchivedId, orderRetailSaleId, ...bulkOrderIds, ...orderIdsByMarker].filter(Boolean),
+        customerIds: customerId ? [customerId] : [],
+      },
+      async (step) => {
+        if (dueId) {
+          await step("payments(workshop_due)", () => admin.from("payments").delete().eq("workshop_due_id", dueId));
+          await step("workshop_dues", () => admin.from("workshop_dues").delete().eq("id", dueId));
+        }
+        if (groupId) await step("workshop_enrollments", () => admin.from("workshop_enrollments").delete().eq("group_id", groupId));
+        if (groupId) await step("workshop_groups", () => admin.from("workshop_groups").delete().eq("id", groupId));
+        if (programId) await step("workshop_programs", () => admin.from("workshop_programs").delete().eq("id", programId));
+      }
+    );
   });
 
   // Las primeras 4 aserciones se acotan con `scopeToOrderIds` a los ids de
@@ -234,6 +258,7 @@ describe.skipIf(!hasCredentials)("getOrders() payments scoping (local)", () => {
   // `operation_type='order'` al mismo tiempo.
   it("sigue funcionando con miles de pedidos coincidentes — nunca manda una lista de ids por la URL", async () => {
     const marker = `perf-audit-bulk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    bulkMarker = marker;
     const bulkOrders = Array.from({ length: 1800 }, () => ({
       business_unit_id: retailUnitId,
       customer_id: customerId,
@@ -264,7 +289,7 @@ describe.skipIf(!hasCredentials)("getOrders() payments scoping (local)", () => {
     expect(data!.length).toBeGreaterThan(0);
     expect(data!.every((p) => p.amount === 100)).toBe(true);
 
-    await admin.from("payments").delete().in("order_id", bulkIds);
-    await admin.from("orders").delete().in("id", bulkIds);
+    // Sin limpieza inline: un `.in()` de 1.800 ids revienta la URL (414).
+    // afterAll borra estos pedidos en tandas de 50 aunque una aserción falle.
   });
 });

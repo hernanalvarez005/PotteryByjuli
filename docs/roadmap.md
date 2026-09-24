@@ -426,3 +426,15 @@ Decisiones tomadas para no sobrediseñar antes de tener uso real (sección
 - **Repetir pedido mayorista** (recompra con un clic): se deja la
   arquitectura lista (historial de pedidos por cliente), pero la función
   en sí no es parte del release público inicial del portal.
+
+## Auditorías cerradas
+
+- [x] **Auditoría de performance** — cerrada: `/pedidos`, `/ventas`,
+      `/productos`, `/ventas/nueva`, `/precios` y `/pedidos/nuevo` dejaron
+      de cargar listados completos (H-08, bloques 1–5) y la entrega de
+      imágenes quedó resuelta (H-05A). PRs #31 y #33–#37.
+- [x] **Hardening de tests de integración** — cerrado (PR #38): cleanup
+      por IDs exactos desde `afterAll`, gate explícito de entorno local y
+      scripts `test` / `test:integration` / `test:all` (ver
+      `docs/testing.md`). Sin pendientes materiales.
+

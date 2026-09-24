@@ -13,6 +13,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["**/*.test.ts"],
-    exclude: ["node_modules", ".next"],
+    // Los tests de integración (Supabase local) tienen su propio config y
+    // gate: `npm run test:integration` — ver vitest.integration.config.mts.
+    exclude: ["node_modules", ".next", "**/*.integration.test.ts"],
   },
 });
