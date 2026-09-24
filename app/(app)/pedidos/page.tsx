@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Plus, LayoutGrid, List } from "lucide-react";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getOrders, getOrdersPage, type OrdersPageCursor } from "@/lib/orders";
+import { getOrdersKanbanBoard, getOrdersPage, type OrdersPageCursor } from "@/lib/orders";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { ORDER_STATUS_LABELS } from "@/schemas/orders";
@@ -27,18 +27,24 @@ export default async function PedidosPage({
   const params = await searchParams;
   const view = params.view === "kanban" ? "kanban" : "list";
   const showArchived = params.archived === "1";
-  // El cursor sólo tiene sentido en Lista — Kanban sigue usando
-  // getOrders() sin paginar (H-08 bloque 2 acotado explícitamente a no
-  // tocar Kanban todavía).
+  // El cursor sólo tiene sentido en Lista.
   const cursor: OrdersPageCursor =
     view === "list" && params.cursorCreatedAt && params.cursorId
       ? { createdAt: params.cursorCreatedAt, id: params.cursorId }
       : null;
 
-  const { orders, paidByOrder, nextCursor } =
+  // Kanban y Lista usan queries completamente separadas (perf audit
+  // H-08 bloque 3) — un Kanban es "todo el trabajo activo agrupado por
+  // estado", nunca "página 1 de N", así que no comparten estrategia de
+  // datos aunque compartan la misma pantalla.
+  const kanbanData = view === "kanban" ? await getOrdersKanbanBoard({ includeArchived: showArchived }) : null;
+  const listData = view === "list" ? await getOrdersPage({ operationType: "order", includeArchived: showArchived }, cursor) : null;
+
+  const isEmpty =
     view === "kanban"
-      ? { ...(await getOrders({ operationType: "order", includeArchived: showArchived })), nextCursor: null }
-      : await getOrdersPage({ operationType: "order", includeArchived: showArchived }, cursor);
+      ? Object.values(kanbanData!.counts).every((c) => c === 0)
+      : listData!.orders.length === 0;
+  const nextCursor = listData?.nextCursor ?? null;
 
   function viewHref(nextView: "list" | "kanban") {
     const qs = new URLSearchParams();
@@ -113,12 +119,17 @@ export default async function PedidosPage({
         )}
       </div>
 
-      {orders.length === 0 ? (
+      {isEmpty ? (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
           Todavía no hay pedidos cargados.
         </p>
       ) : view === "kanban" ? (
-        <PedidosKanban orders={orders} paidByOrder={paidByOrder} canEdit={canEdit} />
+        <PedidosKanban
+          ordersByStatus={kanbanData!.ordersByStatus}
+          counts={kanbanData!.counts}
+          paidByOrder={kanbanData!.paidByOrder}
+          canEdit={canEdit}
+        />
       ) : (
         <Table>
           <TableHeader>
@@ -133,8 +144,8 @@ export default async function PedidosPage({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {orders.map((order) => {
-              const paid = paidByOrder[order.id] ?? 0;
+            {listData!.orders.map((order) => {
+              const paid = listData!.paidByOrder[order.id] ?? 0;
               const balance = order.total - paid;
               return (
                 <TableRow key={order.id}>

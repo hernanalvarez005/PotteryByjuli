@@ -176,3 +176,103 @@ export async function getOrdersPage(
 
   return { orders: orders as unknown as OrderListRow[], paidByOrder, nextCursor };
 }
+
+/** Las 4 columnas de trabajo activo del Kanban — nunca 'pending' (vive
+ * en la Lista, no es trabajo confirmado) ni 'cancelled' (salida
+ * terminal, no una etapa). Mismo criterio ya documentado en
+ * pedidos-kanban.tsx, repetido acá porque ambos archivos necesitan la
+ * lista de estados de forma independiente. */
+export const KANBAN_STATUSES = ["confirmed", "in_production", "ready", "delivered"] as const;
+export type KanbanStatus = (typeof KANBAN_STATUSES)[number];
+
+/** Tope de tarjetas mostradas por columna — mismo patrón ya usado para
+ * "Necesita atención" (perf audit P1, PENDING_DUES_DETAIL_LIMIT): el
+ * conteo real de la columna nunca depende de esto, sale de su propio
+ * `count: "exact"` aparte. */
+export const KANBAN_DETAIL_LIMIT = 50;
+
+/**
+ * Datos del Kanban de /pedidos (perf audit H-08 bloque 3) — query
+ * propia, separada de getOrdersPage() (Lista): un Kanban no es "página
+ * 1 de N", es "todo el trabajo activo, agrupado por estado", así que
+ * necesita su propia estrategia, no una reutilización forzada de la
+ * paginación de la Lista.
+ *
+ * Antes: getOrders() sin ningún límite traía TODOS los pedidos activos
+ * en una sola query, y cada columna se armaba filtrando ese array en
+ * el cliente — a 23.400 pedidos 'confirmed' reales, PostgREST cortaba
+ * en 1.000 (4,3%) de forma silenciosa, y el badge de cada columna
+ * mostraba `columnOrders.length` sobre ese array ya truncado — un
+ * badge "1.000" que en realidad eran 23.400. Ni siquiera hacía falta
+ * que las otras columnas tuvieran pedidos para que esto pasara: alcanza
+ * con que UNA columna sea lo bastante grande para agotar el límite de
+ * página antes de que la query llegue a las demás.
+ *
+ * Ahora: dos baterías de queries independientes, una por columna
+ * (nunca una sola query de "todo el trabajo activo junto"):
+ * 1. Conteo exacto (`count: "exact", head: true`) — nunca topeado por
+ *    el límite de página de PostgREST, sea cual sea el volumen real.
+ * 2. Detalle acotado a KANBAN_DETAIL_LIMIT tarjetas, ordenado igual que
+ *    antes (`created_at desc`) — la UX de qué tarjeta aparece primero
+ *    no cambia, sólo cuántas se traen como máximo.
+ * `paidByOrder` se resuelve sólo para las tarjetas efectivamente
+ * mostradas (mismo patrón que getOrdersPage(), bloque 2) — nunca una
+ * query global de payments.
+ */
+export async function getOrdersKanbanBoard(options: {
+  includeArchived?: boolean;
+}): Promise<{
+  ordersByStatus: Record<KanbanStatus, OrderListRow[]>;
+  counts: Record<KanbanStatus, number>;
+  paidByOrder: Record<string, number>;
+}> {
+  const supabase = await createClient();
+  const includeArchived = options.includeArchived ?? false;
+
+  const [countResults, detailResults] = await Promise.all([
+    Promise.all(
+      KANBAN_STATUSES.map((status) => {
+        let q = supabase
+          .from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("operation_type", "order")
+          .eq("status", status);
+        if (!includeArchived) q = q.is("archived_at", null);
+        return q;
+      })
+    ),
+    Promise.all(
+      KANBAN_STATUSES.map((status) => {
+        let q = supabase
+          .from("orders")
+          .select(
+            "id,human_code,status,total,created_at,estimated_date,archived_at,customers(first_name,last_name),business_units(name)"
+          )
+          .eq("operation_type", "order")
+          .eq("status", status);
+        if (!includeArchived) q = q.is("archived_at", null);
+        return q.order("created_at", { ascending: false }).limit(KANBAN_DETAIL_LIMIT);
+      })
+    ),
+  ]);
+
+  const counts = Object.fromEntries(
+    KANBAN_STATUSES.map((status, i) => [status, countResults[i].count ?? 0])
+  ) as Record<KanbanStatus, number>;
+
+  const ordersByStatus = Object.fromEntries(
+    KANBAN_STATUSES.map((status, i) => [status, (detailResults[i].data ?? []) as unknown as OrderListRow[]])
+  ) as Record<KanbanStatus, OrderListRow[]>;
+
+  const allShownIds = KANBAN_STATUSES.flatMap((status) => ordersByStatus[status].map((o) => o.id));
+  const { data: payments } = allShownIds.length
+    ? await supabase.from("payments").select("order_id,amount").in("order_id", allShownIds)
+    : { data: [] as { order_id: string; amount: number }[] };
+
+  const paidByOrder: Record<string, number> = {};
+  for (const p of (payments ?? []) as { order_id: string; amount: number }[]) {
+    paidByOrder[p.order_id] = (paidByOrder[p.order_id] ?? 0) + p.amount;
+  }
+
+  return { ordersByStatus, counts, paidByOrder };
+}
