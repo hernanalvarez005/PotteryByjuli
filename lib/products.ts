@@ -60,3 +60,69 @@ export async function getPricesForVariants(variantIds: string[]): Promise<PriceB
   }
   return byVariant;
 }
+
+/** `name` + `id` (nunca sólo `name`) — dos productos pueden compartir
+ * nombre exacto (no hay unicidad en la tabla), y un cursor de un solo
+ * campo saltearía/repetiría filas ahí, mismo motivo que el cursor
+ * compuesto de getOrdersPage() (lib/orders.ts, H-08 bloque 2). */
+export type ProductsPageCursor = { name: string; id: string } | null;
+
+export const PRODUCTS_PAGE_SIZE = 50;
+
+/**
+ * Versión paginada + con búsqueda de la lista de /productos (perf audit
+ * H-08 bloque 4). getProductsWithVariants()/getPricesForVariants() de
+ * arriba NO se tocan — siguen usándose tal cual en /pedidos/nuevo y
+ * /precios (fuera de alcance de este bloque; con el dataset actual
+ * también rompen con HTTP 414, hallazgo nuevo a resolver aparte).
+ *
+ * Igual que getOrdersPage(): keyset con cursor compuesto, patrón "peek"
+ * (pedir pageSize+1 para saber si hay más sin depender de que el total
+ * sea un múltiplo exacto de pageSize), y los precios se resuelven
+ * SÓLO para las variantes de los productos de esta página — nunca un
+ * `.in()` con el catálogo completo (a 3.000+ variantes eso ya rompe con
+ * HTTP 414 hoy, confirmado antes de este cambio).
+ */
+export async function getProductsPage(
+  status: ProductStatusFilter,
+  search: string,
+  cursor: ProductsPageCursor = null,
+  pageSize: number = PRODUCTS_PAGE_SIZE
+): Promise<{ products: ProductListRow[]; nextCursor: ProductsPageCursor; prices: PriceByVariant }> {
+  const supabase = await createClient();
+
+  let query = supabase
+    .from("products")
+    .select(
+      "id,name,description,cost_estimate,is_active,category_id,product_categories(name),product_variants(id,name,sku,is_active)"
+    )
+    .order("name", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(pageSize + 1);
+
+  if (status !== "all") {
+    query = query.eq("is_active", status === "active");
+  }
+  const trimmedSearch = search.trim();
+  if (trimmedSearch) {
+    query = query.ilike("name", `%${trimmedSearch}%`);
+  }
+  if (cursor) {
+    // Equivalente a `(name, id) > (cursor.name, cursor.id)` — orden
+    // ascendente, así que acá es ">" en vez del "<" de getOrdersPage()
+    // (que ordena descendente).
+    query = query.or(`name.gt.${cursor.name},and(name.eq.${cursor.name},id.gt.${cursor.id})`);
+  }
+
+  const { data: fetched } = await query;
+  const hasNextPage = (fetched?.length ?? 0) > pageSize;
+  const products = (hasNextPage ? (fetched ?? []).slice(0, pageSize) : (fetched ?? [])) as unknown as ProductListRow[];
+
+  const lastRow = products.at(-1);
+  const nextCursor: ProductsPageCursor = lastRow && hasNextPage ? { name: lastRow.name, id: lastRow.id } : null;
+
+  const pageVariantIds = products.flatMap((p) => p.product_variants.map((v) => v.id));
+  const prices = await getPricesForVariants(pageVariantIds);
+
+  return { products, nextCursor, prices };
+}
