@@ -9,7 +9,7 @@ import { customerDisplayName } from "@/lib/customers-shared";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { StatusSelect } from "./[id]/status-select";
 import { archiveOrder, unarchiveOrder } from "./actions";
-import type { OrderListRow } from "@/lib/orders";
+import type { OrderListRow, KanbanStatus } from "@/lib/orders";
 
 // Kanban de Pedidos (Bloque 4) — toggle sobre el listado de siempre,
 // nunca lo reemplaza. Sólo 4 columnas de las 6 de order_status:
@@ -17,32 +17,46 @@ import type { OrderListRow } from "@/lib/orders";
 // y 'cancelled' es una salida terminal, no una etapa de producción.
 // Avanzar una tarjeta reusa StatusSelect (mismo set_order_status de
 // siempre) — nunca una segunda máquina de estados.
-const KANBAN_COLUMNS = [
+const KANBAN_COLUMNS: { status: KanbanStatus; label: string }[] = [
   { status: "confirmed", label: "Confirmado" },
   { status: "in_production", label: "En producción" },
   { status: "ready", label: "Listo para entregar" },
   { status: "delivered", label: "Entregado" },
-] as const;
+];
 
 export function PedidosKanban({
-  orders,
+  ordersByStatus,
+  counts,
   paidByOrder,
   canEdit,
 }: {
-  orders: OrderListRow[];
+  ordersByStatus: Record<KanbanStatus, OrderListRow[]>;
+  /** Conteo real por columna (perf audit H-08 bloque 3) — nunca
+   * `columnOrders.length`, que sólo refleja hasta KANBAN_DETAIL_LIMIT
+   * tarjetas. Antes de este fix, con 23.400 pedidos 'confirmed' reales,
+   * el badge mostraba "1000" (el límite de página de PostgREST sobre
+   * una query sin acotar), no el número real. */
+  counts: Record<KanbanStatus, number>;
   paidByOrder: Record<string, number>;
   canEdit: boolean;
 }) {
   return (
     <div className="flex gap-4 overflow-x-auto pb-2">
       {KANBAN_COLUMNS.map((col) => {
-        const columnOrders = orders.filter((o) => o.status === col.status);
+        const columnOrders = ordersByStatus[col.status];
+        const count = counts[col.status];
+        const isTruncated = count > columnOrders.length;
         return (
           <div key={col.status} className="flex w-72 shrink-0 flex-col gap-3">
             <div className="flex items-center justify-between px-1">
               <h3 className="text-sm font-semibold">{col.label}</h3>
-              <Badge variant="outline">{columnOrders.length}</Badge>
+              <Badge variant="outline">{count}</Badge>
             </div>
+            {isTruncated && (
+              <p className="px-1 text-xs text-muted-foreground">
+                Mostrando las {columnOrders.length} más recientes de {count}.
+              </p>
+            )}
             <div className="flex flex-col gap-3">
               {columnOrders.length === 0 ? (
                 <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
