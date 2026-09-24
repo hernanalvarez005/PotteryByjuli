@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getOrders } from "@/lib/orders";
+import { getOrdersPage, type OrdersPageCursor } from "@/lib/orders";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
@@ -14,10 +14,22 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 
-export default async function VentasPage() {
+export default async function VentasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursorCreatedAt?: string; cursorId?: string }>;
+}) {
   const user = await requireUser();
   const canSell = isOwner(user) || hasRole(user, "operations");
-  const { orders, paidByOrder } = await getOrders({ operationType: "retail_sale" });
+  const params = await searchParams;
+  const cursor: OrdersPageCursor =
+    params.cursorCreatedAt && params.cursorId
+      ? { createdAt: params.cursorCreatedAt, id: params.cursorId }
+      : null;
+  const { orders, paidByOrder, nextCursor } = await getOrdersPage({ operationType: "retail_sale" }, cursor);
+  const nextPageHref = nextCursor
+    ? `/ventas?cursorCreatedAt=${encodeURIComponent(nextCursor.createdAt)}&cursorId=${nextCursor.id}`
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -87,6 +99,14 @@ export default async function VentasPage() {
             })}
           </TableBody>
         </Table>
+      )}
+
+      {nextPageHref && (
+        <Link href={nextPageHref} className="self-center">
+          <Button variant="outline" size="sm">
+            Cargar más
+          </Button>
+        </Link>
       )}
     </div>
   );
