@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cleanupFixtures } from "@/tests/support/fixture-cleanup";
 
 // Corre exclusivamente contra Supabase LOCAL (nunca producción). Cubre
 // orders.operation_type (auditoría "Próxima evolución operativa de
@@ -76,10 +77,16 @@ describe.skipIf(!hasCredentials)("orders.operation_type (local)", () => {
     categoryId = category!.id;
   });
 
+  // IDs exactos, orden de FK, error explícito (tests/support/fixture-cleanup.ts).
+  // Antes: products.delete() fallaba en silencio por los inventory_movements
+  // del producto y dejaba "Op-type retail sale" acumulándose en la base local.
   afterAll(async () => {
-    await admin.from("orders").delete().in("id", createdOrderIds);
-    await admin.from("products").delete().in("id", createdProductIds);
-    await admin.from("product_categories").delete().eq("id", categoryId);
+    if (!admin) return;
+    await cleanupFixtures(admin, "orders-operation-type", {
+      orderIds: createdOrderIds,
+      productIds: createdProductIds,
+      categoryIds: categoryId ? [categoryId] : [],
+    });
   });
 
   it("create_order always sets operation_type='order', regardless of business unit", async () => {

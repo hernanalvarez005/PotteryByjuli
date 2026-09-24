@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cleanupFixtures } from "@/tests/support/fixture-cleanup";
 
 // Corre exclusivamente contra Supabase LOCAL (nunca producción). Cubre el
 // motor de cotización del Bloque 3 ("Próxima evolución operativa de
@@ -36,6 +37,7 @@ describe.skipIf(!hasCredentials)("price conditions + quote_retail_sale (local)",
   let generalConditionId: string;
   const createdProductIds: string[] = [];
   const createdConditionIds: string[] = [];
+  const createdOrderIds: string[] = [];
 
   beforeAll(async () => {
     admin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
@@ -63,15 +65,19 @@ describe.skipIf(!hasCredentials)("price conditions + quote_retail_sale (local)",
     generalConditionId = generalCondition!.id;
   });
 
+  // IDs exactos, orden de FK, error explícito (tests/support/fixture-cleanup.ts).
+  // Cada condición creada por create_price_condition trae su propia
+  // price_list dedicada — el helper la borra también. Antes el
+  // products.delete() fallaba en silencio por los inventory_movements del
+  // último test y dejaba "Quote engine fixture" acumulándose.
   afterAll(async () => {
-    // Cada condición creada por create_price_condition trae consigo su
-    // propia price_list dedicada — hay que borrarla también, o queda
-    // huérfana en la base local (nunca en producción, esto es sólo local).
-    const { data: conditions } = await admin.from("price_conditions").select("price_list_id").in("id", createdConditionIds);
-    await admin.from("price_conditions").delete().in("id", createdConditionIds);
-    await admin.from("price_lists").delete().in("id", (conditions ?? []).map((c) => c.price_list_id));
-    await admin.from("products").delete().in("id", createdProductIds);
-    await admin.from("product_categories").delete().eq("id", categoryId);
+    if (!admin) return;
+    await cleanupFixtures(admin, "price-conditions", {
+      orderIds: createdOrderIds,
+      productIds: createdProductIds,
+      conditionIds: createdConditionIds,
+      categoryIds: categoryId ? [categoryId] : [],
+    });
   });
 
   it("quote_retail_sale returns the seeded 'general' condition with the real price_list_items total", async () => {
@@ -195,6 +201,7 @@ describe.skipIf(!hasCredentials)("price conditions + quote_retail_sale (local)",
     });
     expect(saleError).toBeNull();
     const orderId = (sale as { order_id: string }[])[0].order_id;
+    createdOrderIds.push(orderId); // se borra en afterAll aunque una aserción falle
 
     // Cambia el precio de 'general' DESPUÉS de la venta — la venta ya
     // confirmada nunca debe reflejar el precio nuevo.
@@ -214,6 +221,5 @@ describe.skipIf(!hasCredentials)("price conditions + quote_retail_sale (local)",
       .update({ unit_price: 1000 })
       .eq("price_list_id", generalList!.price_list_id)
       .eq("product_variant_id", variantId);
-    await admin.from("orders").delete().eq("id", orderId);
   });
 });

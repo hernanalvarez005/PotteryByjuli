@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cleanupFixtures } from "@/tests/support/fixture-cleanup";
 
 // Corre exclusivamente contra Supabase LOCAL (nunca producción). Cubre
 // orders.sale_date / sale_date_declared (Bloque 2 — "Ventas: fecha
@@ -50,7 +51,8 @@ describe.skipIf(!hasCredentials)("orders.sale_date via create_order (local)", ()
   });
 
   afterAll(async () => {
-    await admin.from("orders").delete().in("id", createdOrderIds);
+    if (!admin) return;
+    await cleanupFixtures(admin, "orders-sale-date", { orderIds: createdOrderIds });
   });
 
   it("without p_sale_date, defaults to today in Argentina time and is marked declared", async () => {
@@ -141,10 +143,16 @@ describe.skipIf(!hasCredentials)("orders.sale_date via create_quick_retail_sale 
     bankTransferMethodId = bankTransfer!.id;
   });
 
+  // IDs exactos, orden de FK, error explícito (tests/support/fixture-cleanup.ts).
+  // Antes: products.delete() fallaba en silencio por los inventory_movements
+  // y dejaba "Sale date quick sale" / "Sale date default quick sale".
   afterAll(async () => {
-    await admin.from("orders").delete().in("id", createdOrderIds);
-    await admin.from("products").delete().in("id", createdProductIds);
-    await admin.from("product_categories").delete().eq("id", categoryId);
+    if (!admin) return;
+    await cleanupFixtures(admin, "orders-sale-date", {
+      orderIds: createdOrderIds,
+      productIds: createdProductIds,
+      categoryIds: categoryId ? [categoryId] : [],
+    });
   });
 
   async function makeVariant(name: string, retailPrice: number, initialStock = 5) {
@@ -217,7 +225,8 @@ describe.skipIf(!hasCredentials)("orders.sale_date historical backfill (local)",
   });
 
   afterAll(async () => {
-    await admin.from("orders").delete().in("id", createdOrderIds);
+    if (!admin) return;
+    await cleanupFixtures(admin, "orders-sale-date", { orderIds: createdOrderIds });
   });
 
   /** Mirror exacto de la expresión de backfill de la migración —

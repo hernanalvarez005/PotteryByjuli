@@ -2,13 +2,17 @@
 
 ## Qué se usa
 
-- **Unit**: Vitest (`npm test`), instalado en la Fase 10. Cubre lógica
+- **Unit**: Vitest (`npm test`), instalado en la Fase 10. No necesita
+  base ni variables de entorno; excluye `*.integration.test.ts`. Cubre lógica
   pura de TypeScript — schemas zod y funciones sin efectos secundarios.
   Deliberadamente **no** cubre las reglas que viven en Postgres (triggers,
   funciones RPC como `set_order_status`, `submit_wholesale_request`,
   `complete_stock_transfer`) — esas son las que realmente mueven stock,
   dinero y cupos, y probarlas de verdad requiere una base Supabase de test
   (integración), no un mock. Ver "Cobertura pendiente" abajo.
+- **Integración**: Vitest (`npm run test:integration`), archivos
+  `*.integration.test.ts` contra **Supabase local**. Ver "Tests de
+  integración" más abajo.
 - **E2E**: Playwright (`npm run test:e2e`), instalado en la extensión del
   checkout mayorista (comprador/PDF/WhatsApp). Corre **exclusivamente
   contra Supabase local** (`supabase start`), nunca contra producción —
@@ -194,14 +198,82 @@ son las pruebas de integración con más impacto, en orden:
    constraint `unique(enrollment_id, period)` debería bastar, pero no
    está probado bajo carrera real).
 
+## Tests de integración (Supabase local)
+
+Los `*.integration.test.ts` crean y borran datos de verdad (pedidos,
+stock, pagos) llamando a los RPC reales, así que corren **sólo contra
+Supabase local**, nunca contra producción.
+
+| Comando | Qué corre |
+| --- | --- |
+| `npm test` | Unit (31 archivos). Sin base, sin variables. |
+| `npm run test:integration` | Integración (39 archivos), con gate de entorno. |
+| `npm run test:all` | Los dos, en ese orden. |
+
+**Gate.** `npm run test:integration` arranca con
+`tests/support/integration-global-setup.ts` y **falla sin correr nada** si:
+
+- falta alguna de `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  o `SUPABASE_SERVICE_ROLE_KEY`;
+- la URL no es local (se parsea el hostname: sólo `127.0.0.1`, `localhost`
+  o `[::1]` — un `.includes("localhost")` no alcanza);
+- Supabase local no responde (`supabase start`).
+
+Las variables se toman del shell o, si faltan, de `.env.development.local`
+en la raíz del repo (Supabase local). **Nunca** se lee `.env.local`: apunta
+a producción. Antes cada archivo hacía `describe.skipIf(!hasCredentials)` y
+un `npm test` sin variables los salteaba en silencio y daba verde sin haber
+probado nada; ahora el skip por entorno es un error. Los tests del propio
+gate: `tests/integration-env.test.ts`.
+
+> **Git worktrees:** `.env.development.local` está en `.gitignore`, así que
+> un worktree nuevo no lo tiene. Copialo (o exportá las variables) desde el
+> checkout principal antes de correr la integración.
+
+**Regla: cada suite limpia lo que crea.** Usar `cleanupFixtures()` de
+`tests/support/fixture-cleanup.ts` desde un `afterAll` (corre aunque un
+assertion falle):
+
+- registrar en cada `it`/helper los IDs exactos que se crean
+  (productos, pedidos, condiciones, clientes, categorías) — nunca borrar por
+  patrón de nombre;
+- el helper borra en orden de FK (pedidos → movimientos/reservas →
+  productos → condiciones y sus `price_lists` → clientes/categorías), en
+  tandas de 50 ids y **lanza si algún borrado falla**;
+- nunca toca `retail`, `wholesale` ni la condición `general`;
+- no dejar el cleanup inline al final de un `it`: si un assertion falla
+  antes, no corre. Y nunca un `.in()` con cientos de ids (HTTP 414).
+
+Por qué importa (bugs reales, 2026-09): `products.delete()` falla en
+silencio si el producto tiene ventas (`order_items`) o movimientos
+(`inventory_movements`, ambos `NO ACTION`); borrar una `price_condition`
+falla mientras un pedido la referencia (`orders.price_condition_id`); y un
+`.in()` de 1.800 ids da 414. Sin mirar el error, cada corrida dejaba
+basura: 48.600 pedidos sintéticos, ~700 productos y decenas de
+`price_lists` `restricted-*` que ensuciaban `/precios`.
+
+Un test tampoco puede depender de esa basura: el umbral de "catálogo
+grande" en `product-search.integration.test.ts` es 2.000 variantes (el bug
+de URL larga aparece ya con ~1.000), no un número que sólo se alcance con
+fixtures viejos sin limpiar.
+
+**CI remota:** todavía no corre integración (falta definir cómo provisionar
+Supabase local ahí). Hasta entonces `npm run test:all` es un paso manual
+obligatorio antes de mergear cambios que toquen SQL/RPC.
+
 ## Checks obligatorios antes de cerrar cualquier fase
 
 ```bash
 npm run typecheck
 npm run lint
-npm test
+npm run test:all   # unit + integración (Supabase local levantado)
 npm run build
 ```
+
+> **Worktrees y `typecheck`:** un worktree recién creado no tiene `.next`,
+> y `app/layout.tsx` usa el tipo global `LayoutProps` que Next genera. Ahí
+> `npm run typecheck` da `Cannot find name 'LayoutProps'` hasta correr
+> `npm run build` (o `npx next typegen`). No es un bug del código.
 
 Nunca se ignoran errores de TypeScript ni se desactiva ESLint para
 destrabar un commit.
