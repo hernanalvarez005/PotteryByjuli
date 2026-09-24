@@ -21,18 +21,27 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Minus, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
+import { AlertCircle, Loader2, Minus, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
 import { formatCurrency, todayInArgentina } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import { createCustomer } from "@/app/(app)/clientes/actions";
 import { createQuickSale } from "./actions";
 import { quickSaleSessionReducer } from "@/lib/quick-sale-session";
+import {
+  searchSaleVariants,
+  resolveSaleVariantsByIds,
+  MIN_SEARCH_CHARS,
+  type VariantSearchResult,
+} from "./product-search";
 
 type Option = { id: string; name: string };
 type Channel = { id: string; name: string; code: string };
-type VariantOption = { id: string; label: string; retailPrice: number };
+type VariantOption = VariantSearchResult;
 type Quote = { price_condition_id: string; price_condition_name: string; total: number };
 type FeeSuggestion = { payment_method_id: string; account_id: string | null; suggested_percentage: number };
+type SearchStatus = "idle" | "loading" | "success" | "error";
+
+const SEARCH_DEBOUNCE_MS = 250;
 
 type CartLine = { key: string; variantId: string; label: string; quantity: number; unitPrice: number };
 
@@ -66,7 +75,6 @@ function bumpFrequent(variantId: string) {
 }
 
 export function QuickSaleForm({
-  variants,
   customers,
   locations,
   methods,
@@ -76,7 +84,6 @@ export function QuickSaleForm({
   priceConditions,
   feeSuggestions,
 }: {
-  variants: VariantOption[];
   customers: Option[];
   locations: Option[];
   methods: Option[];
@@ -90,7 +97,15 @@ export function QuickSaleForm({
 
   const [cart, setCart] = useState<CartLine[]>([]);
   const [search, setSearch] = useState("");
-  const [frequentIds, setFrequentIds] = useState<string[]>([]);
+  // Búsqueda server-side (perf audit H-08) — nunca el catálogo completo
+  // en memoria. `searchStatus` distingue explícitamente "cargando" de
+  // "sin resultados" de "error" — un fallo de backend nunca debe verse
+  // como catálogo vacío. `searchRetryKey` fuerza un reintento del mismo
+  // término sin que el usuario tenga que volver a tipear.
+  const [searchStatus, setSearchStatus] = useState<SearchStatus>("idle");
+  const [searchResults, setSearchResults] = useState<VariantOption[]>([]);
+  const [searchRetryKey, setSearchRetryKey] = useState(0);
+  const [frequentVariants, setFrequentVariants] = useState<VariantOption[]>([]);
   const [locationId, setLocationId] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [paymentAccountId, setPaymentAccountId] = useState("");
@@ -136,13 +151,27 @@ export function QuickSaleForm({
     }
   }, [state.result]);
 
+  // Resuelve recientes/frecuentes contra el catálogo actual — nunca más
+  // de MAX_FREQUENT ids, así que esto nunca arriesga una URL larga. Un
+  // id que ya no existe/está inactivo/perdió su precio simplemente no
+  // vuelve en el resultado (resolveSaleVariantsByIds ya lo filtra).
+  async function refreshFrequentVariants() {
+    const ids = loadFrequentIds();
+    if (ids.length === 0) {
+      setFrequentVariants([]);
+      return;
+    }
+    const resolved = await resolveSaleVariantsByIds(ids);
+    setFrequentVariants(resolved);
+  }
+
   useEffect(() => {
     // Leer localStorage sólo puede pasar después del montaje (no hay
     // `window` durante SSR), así que esto no puede ser un inicializador
     // lazy de useState — un efecto es el único lugar donde esta lectura
     // única puede correr (mismo patrón ya usado en cart-context.tsx).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFrequentIds(loadFrequentIds());
+    refreshFrequentVariants();
     try {
       const savedLocation = localStorage.getItem(LOCATION_KEY);
       if (savedLocation) setLocationId(savedLocation);
@@ -150,6 +179,41 @@ export function QuickSaleForm({
       // ignore
     }
   }, []);
+
+  // Búsqueda debounced, mínimo 2 caracteres — nunca dispara una query
+  // por debajo de eso (loadFrequentIds/recientes cubren ese caso). El
+  // flag `cancelled` descarta una respuesta que llega después de que el
+  // usuario ya escribió otra cosa (mismo patrón que el efecto de
+  // cotización más abajo).
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < MIN_SEARCH_CHARS) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSearchStatus("idle");
+      setSearchResults([]);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchStatus("loading");
+    const timeout = window.setTimeout(() => {
+      searchSaleVariants(q).then((outcome) => {
+        if (cancelled) return;
+        if ("error" in outcome) {
+          setSearchStatus("error");
+          setSearchResults([]);
+        } else {
+          setSearchStatus("success");
+          setSearchResults(outcome.results);
+        }
+      });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [search, searchRetryKey]);
 
   // Firma estable del carrito (variante+cantidad) — dispara una recotización
   // sólo cuando lo que hay para vender realmente cambió, nunca por un
@@ -244,22 +308,10 @@ export function QuickSaleForm({
   const feeAmount = feeTouched ? manualFeeAmount : estimatedFee;
   const estimatedNet = selectedQuote ? selectedQuote.total - feeAmount : 0;
 
-  const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
   const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
   const methodLabels = useMemo(() => Object.fromEntries(methods.map((m) => [m.id, m.name])), [methods]);
   const accountLabels = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.name])), [accounts]);
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.id, c.name])), [channels]);
-
-  const filteredVariants = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return variants.filter((v) => v.label.toLowerCase().includes(q)).slice(0, 20);
-  }, [search, variants]);
-
-  const frequentVariants = useMemo(
-    () => frequentIds.map((id) => variantById.get(id)).filter((v): v is VariantOption => Boolean(v)),
-    [frequentIds, variantById]
-  );
 
   function addVariant(variant: VariantOption) {
     setCart((prev) => {
@@ -275,7 +327,7 @@ export function QuickSaleForm({
       ];
     });
     bumpFrequent(variant.id);
-    setFrequentIds(loadFrequentIds());
+    refreshFrequentVariants();
     setSearch("");
   }
 
@@ -391,12 +443,34 @@ export function QuickSaleForm({
           />
         </div>
 
-        {search.trim() ? (
+        {search.trim().length > 0 && search.trim().length < MIN_SEARCH_CHARS ? (
+          <p className="px-1 text-xs text-muted-foreground">Escribí al menos {MIN_SEARCH_CHARS} caracteres.</p>
+        ) : search.trim().length >= MIN_SEARCH_CHARS ? (
           <div className="flex flex-col gap-1 rounded-md border">
-            {filteredVariants.length === 0 ? (
+            {searchStatus === "loading" ? (
+              <p className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Buscando...
+              </p>
+            ) : searchStatus === "error" ? (
+              <div className="flex items-center justify-between gap-2 p-3 text-sm">
+                <span className="flex items-center gap-2 text-destructive">
+                  <AlertCircle className="size-4 shrink-0" />
+                  No se pudo buscar. Intentá de nuevo.
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setSearchRetryKey((k) => k + 1)}
+                >
+                  Reintentar
+                </Button>
+              </div>
+            ) : searchResults.length === 0 ? (
               <p className="p-3 text-sm text-muted-foreground">Sin resultados.</p>
             ) : (
-              filteredVariants.map((v) => (
+              searchResults.map((v) => (
                 <button
                   key={v.id}
                   type="button"
