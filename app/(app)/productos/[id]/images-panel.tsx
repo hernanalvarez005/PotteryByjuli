@@ -108,7 +108,6 @@ export function ImagesPanel({
                       fill
                       sizes="112px"
                       className="object-cover"
-                      unoptimized
                     />
                   </div>
                   {img.is_primary && (

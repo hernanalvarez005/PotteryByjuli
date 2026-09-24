@@ -37,7 +37,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({ from: mockFrom }),
 }));
 
-const { getProductsPage } = await import("./products");
+const { getProductsPage, getAllListPricesForVariants } = await import("./products");
 
 function fakeProduct(i: number) {
   const id = `product-${String(i).padStart(4, "0")}`;
@@ -116,5 +116,30 @@ describe("getProductsPage — casos límite de paginación (mock)", () => {
     expect(prices["product-0001-v1"]).toEqual({ retail: 1000 });
     expect(prices["product-0002-v1"]).toEqual({ wholesale: 2000 });
     expect(prices["product-0003-v1"]).toBeUndefined();
+  });
+});
+
+describe("getAllListPricesForVariants — precios de /precios, todas las listas (mock)", () => {
+  it("devuelve {} sin consultar la base si no hay variantes", async () => {
+    const prices = await getAllListPricesForVariants([]);
+    expect(prices).toEqual({});
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("clave por `${price_list_id}:${variant_id}`, para más de dos listas de precio (no sólo retail/wholesale)", async () => {
+    const rows = [
+      { price_list_id: "list-retail", product_variant_id: "v1", unit_price: 1000 },
+      { price_list_id: "list-wholesale", product_variant_id: "v1", unit_price: 800 },
+      { price_list_id: "list-mayorista-plus", product_variant_id: "v1", unit_price: 700 },
+      { price_list_id: "list-retail", product_variant_id: "v2", unit_price: 2000 },
+    ];
+    mockFrom.mockReturnValueOnce(makePricesBuilder(rows));
+
+    const prices = await getAllListPricesForVariants(["v1", "v2"]);
+    expect(prices["list-retail:v1"]).toBe(1000);
+    expect(prices["list-wholesale:v1"]).toBe(800);
+    expect(prices["list-mayorista-plus:v1"]).toBe(700);
+    expect(prices["list-retail:v2"]).toBe(2000);
+    expect(prices["list-wholesale:v2"]).toBeUndefined();
   });
 });

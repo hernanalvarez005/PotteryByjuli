@@ -41,7 +41,6 @@ export default async function PublicWorkshopPage({
             fill
             sizes="(max-width: 640px) 100vw, 640px"
             className="object-cover"
-            unoptimized
             priority
           />
         </div>

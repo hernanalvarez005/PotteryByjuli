@@ -32,7 +32,7 @@ import {
   resolveSaleVariantsByIds,
   MIN_SEARCH_CHARS,
   type VariantSearchResult,
-} from "./product-search";
+} from "@/lib/product-search";
 
 type Option = { id: string; name: string };
 type Channel = { id: string; name: string; code: string };

@@ -93,9 +93,25 @@ async function fetchProductsPage(
   return { products, prices, nextCursor };
 }
 
+/** Misma query que getAllListPricesForVariants() (lib/products.ts, /precios). */
+async function fetchAllListPrices(client: SupabaseClient, variantIds: string[]) {
+  if (variantIds.length === 0) return {} as Record<string, number>;
+  const { data, error } = await client
+    .from("price_list_items")
+    .select("price_list_id,product_variant_id,unit_price")
+    .in("product_variant_id", variantIds);
+  if (error) throw error;
+  const prices: Record<string, number> = {};
+  for (const row of data ?? []) {
+    prices[`${row.price_list_id}:${row.product_variant_id}`] = row.unit_price;
+  }
+  return prices;
+}
+
 describe.skipIf(!hasCredentials)("getProductsPage keyset pagination + precios acotados (local)", () => {
   let admin: SupabaseClient;
   let retailListId: string;
+  let wholesaleListId: string;
   const FIXTURE_PREFIX = "Products Page Fixture";
   const FIXTURE_COUNT = 25;
   const fixtureProductIds: string[] = [];
@@ -109,6 +125,8 @@ describe.skipIf(!hasCredentials)("getProductsPage keyset pagination + precios ac
 
     const { data: retailList } = await admin.from("price_lists").select("id").eq("code", "retail").single();
     retailListId = retailList!.id;
+    const { data: wholesaleList } = await admin.from("price_lists").select("id").eq("code", "wholesale").single();
+    wholesaleListId = wholesaleList!.id;
 
     for (let i = 1; i <= FIXTURE_COUNT; i++) {
       const name = `${FIXTURE_PREFIX} ${String(i).padStart(3, "0")}`;
@@ -130,11 +148,10 @@ describe.skipIf(!hasCredentials)("getProductsPage keyset pagination + precios ac
       // sin precio a propósito, para confirmar que eso nunca rompe nada.
       if (i === 1) {
         pricedVariantId = variant!.id;
-        await admin.from("price_list_items").insert({
-          price_list_id: retailListId,
-          product_variant_id: variant!.id,
-          unit_price: 1234,
-        });
+        await admin.from("price_list_items").insert([
+          { price_list_id: retailListId, product_variant_id: variant!.id, unit_price: 1234 },
+          { price_list_id: wholesaleListId, product_variant_id: variant!.id, unit_price: 999 },
+        ]);
       } else if (i === 2) {
         noPriceVariantId = variant!.id;
       }
@@ -186,7 +203,7 @@ describe.skipIf(!hasCredentials)("getProductsPage keyset pagination + precios ac
 
   it("los precios de la página cubren sólo las variantes mostradas, nunca todo el catálogo", async () => {
     const page1 = await fetchProductsPage(admin, "active", FIXTURE_PREFIX, null, 10);
-    expect(page1.prices[pricedVariantId]).toEqual({ retail: 1234 });
+    expect(page1.prices[pricedVariantId]).toEqual({ retail: 1234, wholesale: 999 });
     // Una variante real de OTRA sesión (fuera de este fixture) nunca
     // puede aparecer acá — la query nunca pide el catálogo completo.
     const realVariantIds = Object.keys(page1.prices);
@@ -217,5 +234,14 @@ describe.skipIf(!hasCredentials)("getProductsPage keyset pagination + precios ac
       .order("name", { ascending: true });
     expect((unboundedList ?? []).length).toBeLessThanOrEqual(1000);
     expect((unboundedList ?? []).some((p) => p.name === "Perf Fixture Producto 2102")).toBe(false);
+  });
+
+  it("getAllListPricesForVariants (/precios) resuelve TODAS las listas de precio, no sólo retail/wholesale, acotado a la página", async () => {
+    const prices = await fetchAllListPrices(admin, fixtureVariantIds.slice(0, 10));
+    expect(prices[`${retailListId}:${pricedVariantId}`]).toBe(1234);
+    expect(prices[`${wholesaleListId}:${pricedVariantId}`]).toBe(999);
+    // Nunca una variante fuera del conjunto pedido.
+    const keys = Object.keys(prices);
+    expect(keys.every((k) => fixtureVariantIds.slice(0, 10).includes(k.split(":")[1]))).toBe(true);
   });
 });

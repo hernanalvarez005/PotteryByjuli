@@ -52,7 +52,7 @@ export function EventImagePanel({
       <CardContent className="flex flex-col gap-3">
         {imageUrl ? (
           <div className="relative h-40 w-full overflow-hidden rounded-md border bg-muted">
-            <Image src={imageUrl} alt="" fill sizes="400px" className="object-cover" unoptimized />
+            <Image src={imageUrl} alt="" fill sizes="400px" className="object-cover" />
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">Todavía no hay imagen.</p>

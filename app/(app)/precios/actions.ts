@@ -6,6 +6,12 @@ import { requireUser, isOwner } from "@/lib/auth";
 import { priceSchema } from "@/schemas/products";
 import { createPriceConditionSchema } from "@/schemas/price-conditions";
 import { slugify } from "@/lib/slug";
+import {
+  getProductsPage,
+  getAllListPricesForVariants,
+  type ProductStatusFilter,
+  type ProductsPageCursor,
+} from "@/lib/products";
 
 export type PriceActionState = { error?: string };
 
@@ -86,6 +92,23 @@ export async function createPriceCondition(
   revalidatePath("/precios");
   revalidatePath("/ventas/nueva");
   return {};
+}
+
+/**
+ * "Cargar más" de /precios (perf audit H-08 bloque 5) — mismo patrón de
+ * apéndice-en-memoria que /productos: sólo lectura, gateada por
+ * requireUser() (ver la tabla de precios no está restringido por rol,
+ * sólo editarla). Reusa getProductsPage() (lib/products.ts) para la
+ * paginación/búsqueda — nunca una segunda arquitectura de catálogo — y
+ * resuelve precios de TODAS las listas (no sólo retail/wholesale) para
+ * las variantes de esta página únicamente.
+ */
+export async function loadMorePrices(status: ProductStatusFilter, search: string, cursor: ProductsPageCursor) {
+  await requireUser();
+  const page = await getProductsPage(status, search, cursor);
+  const variantIds = page.products.flatMap((p) => p.product_variants.map((v) => v.id));
+  const prices = await getAllListPricesForVariants(variantIds);
+  return { products: page.products, nextCursor: page.nextCursor, prices };
 }
 
 export async function setPriceConditionActive(id: string, isActive: boolean) {
