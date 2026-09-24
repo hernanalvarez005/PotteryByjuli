@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getProductsWithVariants, getPricesForVariants } from "@/lib/products";
 import { customerDisplayName } from "@/lib/customers";
 import { QuickSaleForm } from "./quick-sale-form";
 
@@ -19,7 +18,6 @@ export default async function QuickSalePage() {
     { data: channels },
     { data: priceConditions },
     { data: feeSuggestions },
-    products,
   ] = await Promise.all([
     supabase
       .from("customers")
@@ -35,29 +33,12 @@ export default async function QuickSalePage() {
     // nunca lo que decide el fee real, eso lo confirma la usuaria en el
     // momento del cobro.
     supabase.from("payment_method_fee_suggestions").select("payment_method_id,account_id,suggested_percentage"),
-    getProductsWithVariants(),
   ]);
 
-  const activeVariantIds = products
-    .filter((p) => p.is_active)
-    .flatMap((p) => p.product_variants.filter((v) => v.is_active).map((v) => v.id));
-  const prices = await getPricesForVariants(activeVariantIds);
-
-  // Sólo variantes con precio minorista cargado — sin eso la venta rápida
-  // no tiene nada que resolver del lado del servidor.
-  const variantOptions = products
-    .filter((p) => p.is_active)
-    .flatMap((p) =>
-      p.product_variants
-        .filter((v) => v.is_active)
-        .map((v) => ({
-          id: v.id,
-          label: v.name === "Único" ? p.name : `${p.name} — ${v.name}`,
-          retailPrice: prices[v.id]?.retail ?? null,
-        }))
-    )
-    .filter((v) => v.retailPrice !== null) as { id: string; label: string; retailPrice: number }[];
-
+  // El catálogo YA NO se carga acá (perf audit H-08) — a ~1.500+
+  // variantes activas, traer todo + sus precios rompía con HTTP 414 en
+  // getPricesForVariants(). QuickSaleForm busca server-side bajo demanda
+  // (product-search.ts), nunca descarga el catálogo completo.
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -85,7 +66,6 @@ export default async function QuickSalePage() {
         </p>
       ) : (
         <QuickSaleForm
-          variants={variantOptions}
           customers={(customers ?? []).map((c) => ({ id: c.id, name: customerDisplayName(c) }))}
           locations={locations ?? []}
           methods={methods ?? []}
