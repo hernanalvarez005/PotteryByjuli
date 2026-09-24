@@ -24,19 +24,23 @@ import { Trash2, Plus, UserPlus, Sparkles } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { createOrder } from "../actions";
 import { CustomerQuickCreate } from "@/app/(app)/clientes/customer-quick-create";
+import { VariantPicker } from "./variant-picker";
+import type { VariantSearchResult } from "@/lib/product-search";
 
 type Option = { id: string; name: string };
-type VariantOption = {
-  id: string;
-  label: string;
-  retailPrice: number | null;
-};
 
 // Un pedido puede tener ítems de catálogo o ítems no inventariados/
 // personalizados — "custom_name" en vez de "product_variant_id" (ver
 // schemas/orders.ts). Un ítem custom nunca descuenta stock ni crea un
 // producto permanente en /productos — participa del total nomás.
-type CatalogItemRow = { key: string; kind: "catalog"; product_variant_id: string; quantity: number; unit_price: number };
+type CatalogItemRow = {
+  key: string;
+  kind: "catalog";
+  product_variant_id: string;
+  variant_label: string | null;
+  quantity: number;
+  unit_price: number;
+};
 type CustomItemRow = { key: string; kind: "custom"; custom_name: string; custom_description: string; quantity: number; unit_price: number };
 type ItemRow = CatalogItemRow | CustomItemRow;
 
@@ -51,7 +55,6 @@ export function OrderForm({
   businessUnits,
   channels,
   locations,
-  variants,
   paymentMethods,
   paymentAccounts,
 }: {
@@ -59,7 +62,6 @@ export function OrderForm({
   businessUnits: Option[];
   channels: Option[];
   locations: Option[];
-  variants: VariantOption[];
   paymentMethods: Option[];
   paymentAccounts: Option[];
 }) {
@@ -76,10 +78,9 @@ export function OrderForm({
   const [locationId, setLocationId] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState("");
   const [items, setItems] = useState<ItemRow[]>([
-    { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", quantity: 1, unit_price: 0 },
+    { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", variant_label: null, quantity: 1, unit_price: 0 },
   ]);
 
-  const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
   // Passed as each Select's `items` prop so the trigger can resolve a
   // label for a value that's already selected before the popup has ever
   // registered its <Select.Item>s — without it, Base UI's <Select.Value>
@@ -91,7 +92,6 @@ export function OrderForm({
   const businessUnitLabels = useMemo(() => Object.fromEntries(businessUnits.map((b) => [b.id, b.name])), [businessUnits]);
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.id, c.name])), [channels]);
   const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
-  const variantLabels = useMemo(() => Object.fromEntries(variants.map((v) => [v.id, v.label])), [variants]);
   const methodLabels = useMemo(() => Object.fromEntries(paymentMethods.map((m) => [m.id, m.name])), [paymentMethods]);
   const accountLabels = useMemo(() => Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name])), [paymentAccounts]);
 
@@ -106,7 +106,7 @@ export function OrderForm({
   function addRow() {
     setItems((prev) => [
       ...prev,
-      { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", quantity: 1, unit_price: 0 },
+      { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", variant_label: null, quantity: 1, unit_price: 0 },
     ]);
   }
 
@@ -285,29 +285,16 @@ export function OrderForm({
               <div key={item.key} className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                   <Label className="text-xs text-muted-foreground">Producto</Label>
-                  <Select
-                    items={variantLabels}
-                    value={item.product_variant_id}
-                    onValueChange={(value) => {
-                      if (!value) return;
-                      const variant = variantById.get(value);
+                  <VariantPicker
+                    selectedLabel={item.variant_label}
+                    onSelect={(variant: VariantSearchResult) =>
                       updateCatalogItem(item.key, {
-                        product_variant_id: value,
-                        unit_price: variant?.retailPrice ?? 0,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Elegir producto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {variants.map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {v.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                        product_variant_id: variant.id,
+                        variant_label: variant.label,
+                        unit_price: variant.retailPrice,
+                      })
+                    }
+                  />
                 </div>
                 <div className="w-20 space-y-1">
                   <Label className="text-xs text-muted-foreground">Cant.</Label>

@@ -16,7 +16,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 function loadEnvLocal() {
   if (process.env.NEXT_PUBLIC_SUPABASE_URL) return;
-  const envPath = path.resolve(__dirname, "..", "..", "..", "..", ".env.development.local");
+  const envPath = path.resolve(__dirname, "..", ".env.development.local");
   if (!existsSync(envPath)) return;
   for (const line of readFileSync(envPath, "utf-8").split("\n")) {
     const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
