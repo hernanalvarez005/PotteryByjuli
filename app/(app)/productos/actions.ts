@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { productSchema } from "@/schemas/products";
+import { getProductsPage, type ProductStatusFilter, type ProductsPageCursor } from "@/lib/products";
 
 export type ProductActionState = { error?: string };
 
@@ -192,4 +193,23 @@ export async function applyBulkPriceAdjustment(
   return auditError
     ? { applied, warning: `Los precios se actualizaron, pero no se pudo registrar la auditoría: ${auditError}` }
     : { applied };
+}
+
+/**
+ * "Cargar más" de /productos (perf audit H-08 bloque 4) — a diferencia
+ * de /pedidos y /ventas (donde "Cargar más" navega a una URL nueva,
+ * reemplazando la página), acá necesita ser una Server Action invocable
+ * desde el cliente SIN remontar la página: /productos tiene selección
+ * masiva (BulkPriceBar/BulkDeleteBar) que debe sobrevivir a "Cargar
+ * más" — un remount perdería la selección de la tanda anterior. Sólo
+ * lectura, cualquier usuaria autenticada puede ver el catálogo (mismo
+ * criterio que la propia página).
+ */
+export async function loadMoreProducts(
+  status: ProductStatusFilter,
+  search: string,
+  cursor: ProductsPageCursor
+) {
+  await requireUser();
+  return getProductsPage(status, search, cursor);
 }

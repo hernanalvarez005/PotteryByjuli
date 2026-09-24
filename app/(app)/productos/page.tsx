@@ -1,21 +1,11 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getProductsWithVariants, getPricesForVariants, type ProductStatusFilter } from "@/lib/products";
+import { getProductsPage, type ProductStatusFilter } from "@/lib/products";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { NewProductDialog } from "./new-product-dialog";
-import { ProductRow } from "./product-row";
-import { SelectionProvider } from "./selection-context";
-import { BulkPriceBar, type ProductVariantForBulk } from "./bulk-price-bar";
-import { BulkDeleteBar } from "./bulk-delete-bar";
-import { SelectAllCheckbox } from "./select-all-checkbox";
+import { ProductsList } from "./products-list";
+import { ProductsSearch } from "./products-search";
 
 const STATUS_FILTERS: { value: ProductStatusFilter; label: string }[] = [
   { value: "active", label: "Activos" },
@@ -23,125 +13,80 @@ const STATUS_FILTERS: { value: ProductStatusFilter; label: string }[] = [
   { value: "all", label: "Todos" },
 ];
 
+function statusFilterHref(status: ProductStatusFilter, search: string) {
+  const params = new URLSearchParams();
+  if (status !== "active") params.set("estado", status);
+  if (search) params.set("q", search);
+  const query = params.toString();
+  return query ? `/productos?${query}` : "/productos";
+}
+
 export default async function ProductosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ estado?: string }>;
+  searchParams: Promise<{ estado?: string; q?: string }>;
 }) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
+  const canDelete = isOwner(user);
 
-  const { estado } = await searchParams;
+  const { estado, q } = await searchParams;
   const status: ProductStatusFilter =
     estado === "inactive" || estado === "all" ? estado : "active";
+  const search = q ?? "";
 
   const supabase = await createClient();
-  const [{ data: categories }, products] = await Promise.all([
+  const [{ data: categories }, firstPage] = await Promise.all([
     supabase.from("product_categories").select("id,name").order("name"),
-    getProductsWithVariants(status),
+    getProductsPage(status, search, null),
   ]);
 
-  const allVariantIds = products.flatMap((p) => p.product_variants.map((v) => v.id));
-  const prices = await getPricesForVariants(allVariantIds);
-
-  const variantsForBulk: ProductVariantForBulk[] = products.flatMap((product) =>
-    product.product_variants.map((v) => ({
-      variantId: v.id,
-      productId: product.id,
-      label: product.product_variants.length > 1 ? `${product.name} — ${v.name}` : product.name,
-      retail: prices[v.id]?.retail ?? null,
-      wholesale: prices[v.id]?.wholesale ?? null,
-    }))
-  );
+  const emptyMessage = search.trim()
+    ? `Sin resultados para "${search.trim()}".`
+    : status === "active"
+      ? "No hay productos activos con este filtro."
+      : status === "inactive"
+        ? "No hay productos inactivos."
+        : "Todavía no cargaste ningún producto.";
 
   return (
-    <SelectionProvider>
-      <div className="flex flex-col gap-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Productos</h1>
-            <p className="text-muted-foreground">
-              Un producto, sus variantes, y sus precios — la misma ficha para
-              minorista y mayorista.
-            </p>
-          </div>
-          {canEdit && <NewProductDialog categories={categories ?? []} />}
+    <div className="flex flex-col gap-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Productos</h1>
+          <p className="text-muted-foreground">
+            Un producto, sus variantes, y sus precios — la misma ficha para
+            minorista y mayorista.
+          </p>
         </div>
+        {canEdit && <NewProductDialog categories={categories ?? []} />}
+      </div>
 
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Estado</span>
           {STATUS_FILTERS.map((f) => (
-            <Link key={f.value} href={f.value === "active" ? "/productos" : `/productos?estado=${f.value}`}>
+            <Link key={f.value} href={statusFilterHref(f.value, search)}>
               <Badge variant={status === f.value ? "secondary" : "outline"} className="cursor-pointer">
                 {f.label}
               </Badge>
             </Link>
           ))}
         </div>
-
-        {canEdit && (
-          <div className="flex flex-wrap items-center gap-2">
-            <BulkPriceBar variants={variantsForBulk} />
-            <BulkDeleteBar canDelete={isOwner(user)} />
-          </div>
-        )}
-
-        {products.length === 0 ? (
-          <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            {status === "active"
-              ? "No hay productos activos con este filtro."
-              : status === "inactive"
-                ? "No hay productos inactivos."
-                : "Todavía no cargaste ningún producto."}
-          </p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {canEdit && (
-                  <TableHead className="w-8">
-                    <SelectAllCheckbox ids={products.map((p) => p.id)} />
-                  </TableHead>
-                )}
-                <TableHead>Producto</TableHead>
-                <TableHead>Categoría</TableHead>
-                <TableHead>Precio minorista</TableHead>
-                <TableHead>Precio mayorista</TableHead>
-                <TableHead>Estado</TableHead>
-                {canEdit && <TableHead className="text-right">Acciones</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {products.map((product) => {
-                const variantIds = product.product_variants.map((v) => v.id);
-                const retailPrices = variantIds
-                  .map((id) => prices[id]?.retail)
-                  .filter((v): v is number => v != null);
-                const wholesalePrices = variantIds
-                  .map((id) => prices[id]?.wholesale)
-                  .filter((v): v is number => v != null);
-
-                return (
-                  <ProductRow
-                    key={product.id}
-                    id={product.id}
-                    name={product.name}
-                    categoryName={product.product_categories?.name ?? null}
-                    variantCount={product.product_variants.length}
-                    retailPrice={retailPrices.length ? Math.min(...retailPrices) : null}
-                    wholesalePrice={
-                      wholesalePrices.length ? Math.min(...wholesalePrices) : null
-                    }
-                    isActive={product.is_active}
-                    canEdit={canEdit}
-                    canDelete={isOwner(user)}
-                  />
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
+        <ProductsSearch key={`${status}:${search}`} initialValue={search} status={status} />
       </div>
-    </SelectionProvider>
+
+      <ProductsList
+        key={`${status}:${search}`}
+        initialProducts={firstPage.products}
+        initialPrices={firstPage.prices}
+        initialCursor={firstPage.nextCursor}
+        status={status}
+        search={search}
+        emptyMessage={emptyMessage}
+        canEdit={canEdit}
+        canDelete={canDelete}
+      />
+    </div>
   );
 }
