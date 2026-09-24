@@ -12,14 +12,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency, formatDateTime, todayInArgentina } from "@/lib/format";
-import { addPayment } from "../actions";
+import { PaymentEditRow } from "@/components/payment-edit-row";
+import { todayInArgentina } from "@/lib/format";
+import { addPayment, updatePayment } from "../actions";
 
 export type Payment = {
   id: string;
   amount: number;
   paid_at: string;
+  method_id: string | null;
+  account_id: string | null;
   reference: string | null;
+  notes: string | null;
+  fee_amount: number;
   payment_methods: { name: string } | null;
 };
 
@@ -58,16 +63,14 @@ export function PaymentsPanel({
         ) : (
           <ul className="flex flex-col gap-2">
             {payments.map((p) => (
-              <li key={p.id} className="flex items-center justify-between text-sm">
-                <span>
-                  {formatCurrency(p.amount)}
-                  {p.payment_methods && (
-                    <span className="text-muted-foreground"> · {p.payment_methods.name}</span>
-                  )}
-                  {p.reference && <span className="text-muted-foreground"> · {p.reference}</span>}
-                </span>
-                <span className="text-xs text-muted-foreground">{formatDateTime(p.paid_at)}</span>
-              </li>
+              <PaymentEditRow
+                key={p.id}
+                payment={p}
+                paymentMethods={methods}
+                paymentAccounts={accounts}
+                action={updatePayment.bind(null, orderId, p.id)}
+                canEdit={canEdit}
+              />
             ))}
           </ul>
         )}

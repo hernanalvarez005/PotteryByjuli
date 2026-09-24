@@ -55,7 +55,7 @@ export default async function GroupDetailPage({
       ? supabase
           .from("workshop_dues")
           .select(
-            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes),workshop_enrollments(customers(first_name,last_name))"
+            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes,fee_amount),workshop_enrollments(customers(first_name,last_name))"
           )
           .in("enrollment_id", enrollmentIds)
           .order("period", { ascending: false })
@@ -130,6 +130,7 @@ export default async function GroupDetailPage({
       account_id: string | null;
       reference: string | null;
       notes: string | null;
+      fee_amount: number;
     }[];
     const items = itemsByDue.get(d.id) ?? [];
     const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);

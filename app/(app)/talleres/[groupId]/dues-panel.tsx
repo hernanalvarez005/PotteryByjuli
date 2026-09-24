@@ -30,6 +30,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ConfirmAction } from "@/components/confirm-action";
+import { PaymentEditRow } from "@/components/payment-edit-row";
 import { Plus, Receipt } from "lucide-react";
 import { formatCurrency, formatDate, todayInArgentina } from "@/lib/format";
 import { DUE_STATUS_LABELS, type DueDisplayStatus } from "@/lib/workshop-dues";
@@ -51,6 +52,7 @@ export type DuePaymentRow = {
   account_id: string | null;
   reference: string | null;
   notes: string | null;
+  fee_amount: number;
 };
 
 export type DueRow = {
@@ -168,6 +170,7 @@ export function DuesPanel({
                           paymentAccounts={paymentAccounts}
                           payments={due.payments}
                           allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
+                          canEdit={canEdit}
                         />
                       )}
                       {due.displayStatus === "pending" && (
@@ -276,6 +279,7 @@ export function RegisterPaymentDialog({
   paymentAccounts,
   payments,
   allowNewPayment = true,
+  canEdit = true,
 }: {
   groupId: string;
   dueId: string;
@@ -288,6 +292,13 @@ export function RegisterPaymentDialog({
    * abriéndose para ver/corregir pagos existentes, pero no ofrece
    * cargar uno nuevo. */
   allowNewPayment?: boolean;
+  /** Sólo owner/operations pueden cargar o corregir pagos — mismo
+   * chequeo que assertCanManageDues() y la RLS de `payments`. Default
+   * `true` porque el llamador de DuesPanel/period-dues-summary ya sólo
+   * renderiza este diálogo detrás de su propio `canEdit`; Dashboard
+   * (pending-dues-attention.tsx, sin ese gate) es quien realmente
+   * necesita pasar `false` para viewer/workshop_staff. */
+  canEdit?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const boundAction = registerDuePayment.bind(null, groupId, dueId);
@@ -309,7 +320,7 @@ export function RegisterPaymentDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button size="sm" variant="ghost" />}>
-        {allowNewPayment ? "Registrar pago" : "Ver pagos"}
+        {allowNewPayment && canEdit ? "Registrar pago" : "Ver pagos"}
       </DialogTrigger>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
@@ -319,19 +330,19 @@ export function RegisterPaymentDialog({
         {payments.length > 0 && (
           <ul className="flex flex-col gap-2 border-b pb-4">
             {payments.map((p) => (
-              <PaymentRow
+              <PaymentEditRow
                 key={p.id}
-                groupId={groupId}
-                dueId={dueId}
                 payment={p}
                 paymentMethods={paymentMethods}
                 paymentAccounts={paymentAccounts}
+                action={updateDuePayment.bind(null, groupId, dueId, p.id)}
+                canEdit={canEdit}
               />
             ))}
           </ul>
         )}
 
-        {allowNewPayment && (
+        {allowNewPayment && canEdit && (
         <form action={formAction} className="flex flex-col gap-4">
           <p className="text-sm font-medium">Registrar pago nuevo</p>
           <div className="space-y-2">
@@ -397,156 +408,6 @@ export function RegisterPaymentDialog({
   );
 }
 
-/**
- * Un pago ya cargado, con un botón "Editar" que revela un formulario
- * corto (importe/fecha/medio/referencia) para corregirlo en el lugar —
- * a diferencia de los cargos extra (workshop_due_items, append-only a
- * propósito), `payments` sí admite corregirse directamente: un pago mal
- * cargado no necesita anularse y recargarse.
- */
-function PaymentRow({
-  groupId,
-  dueId,
-  payment,
-  paymentMethods,
-  paymentAccounts,
-}: {
-  groupId: string;
-  dueId: string;
-  payment: DuePaymentRow;
-  paymentMethods: { id: string; name: string }[];
-  paymentAccounts: { id: string; name: string }[];
-}) {
-  const [editing, setEditing] = useState(false);
-  const boundAction = updateDuePayment.bind(null, groupId, dueId, payment.id);
-  const [state, formAction, isPending] = useActionState(boundAction, {});
-  const [methodId, setMethodId] = useState(payment.method_id ?? "");
-  const [accountId, setAccountId] = useState(payment.account_id ?? "");
-  const methodLabels = Object.fromEntries(paymentMethods.map((m) => [m.id, m.name]));
-  const accountLabels = Object.fromEntries(paymentAccounts.map((a) => [a.id, a.name]));
-  const methodName = payment.method_id
-    ? (paymentMethods.find((m) => m.id === payment.method_id)?.name ?? null)
-    : null;
-
-  const wasPending = useRef(false);
-  useEffect(() => {
-    if (wasPending.current && !isPending && !state.error) setEditing(false);
-    wasPending.current = isPending;
-  }, [isPending, state.error]);
-
-  if (!editing) {
-    return (
-      <li className="flex items-center justify-between gap-3 text-sm">
-        <span>
-          {formatCurrency(payment.amount)}
-          {methodName && <span className="text-muted-foreground"> · {methodName}</span>}
-          {payment.reference && <span className="text-muted-foreground"> · {payment.reference}</span>}
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">{formatDate(payment.paid_at)}</span>
-          <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(true)}>
-            Editar
-          </Button>
-        </span>
-      </li>
-    );
-  }
-
-  return (
-    <li className="rounded-md border p-3">
-      <form action={formAction} className="flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label htmlFor={`edit-amount-${payment.id}`} className="text-xs text-muted-foreground">
-              Importe
-            </Label>
-            <Input
-              id={`edit-amount-${payment.id}`}
-              name="amount"
-              type="number"
-              min="0.01"
-              step="0.01"
-              defaultValue={payment.amount}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor={`edit-paid_at-${payment.id}`} className="text-xs text-muted-foreground">
-              Fecha del pago
-            </Label>
-            <Input
-              id={`edit-paid_at-${payment.id}`}
-              name="paid_at"
-              type="date"
-              defaultValue={payment.paid_at.slice(0, 10)}
-              required
-            />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Medio de pago</Label>
-            <input type="hidden" name="method_id" value={methodId} />
-            <Select items={methodLabels} value={methodId} onValueChange={(v) => setMethodId(v ?? "")}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Elegir (opcional)" />
-              </SelectTrigger>
-              <SelectContent>
-                {paymentMethods.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Cuenta</Label>
-            <input type="hidden" name="account_id" value={accountId} />
-            <Select items={accountLabels} value={accountId} onValueChange={(v) => setAccountId(v ?? "")}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Elegir (opcional)" />
-              </SelectTrigger>
-              <SelectContent>
-                {paymentAccounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`edit-reference-${payment.id}`} className="text-xs text-muted-foreground">
-            Referencia
-          </Label>
-          <Input id={`edit-reference-${payment.id}`} name="reference" defaultValue={payment.reference ?? ""} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`edit-notes-${payment.id}`} className="text-xs text-muted-foreground">
-            Nota de la corrección
-          </Label>
-          <Input
-            id={`edit-notes-${payment.id}`}
-            name="notes"
-            placeholder="Ej: importe mal cargado, era $12.000"
-            defaultValue={payment.notes ?? ""}
-          />
-        </div>
-        {state.error && <p className="text-xs text-destructive">{state.error}</p>}
-        <div className="flex gap-2">
-          <Button type="submit" size="sm" disabled={isPending}>
-            {isPending ? "Guardando..." : "Guardar"}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
-            Cancelar
-          </Button>
-        </div>
-      </form>
-    </li>
-  );
-}
 
 /**
  * Agregar/anular cargos extra de una cuota — sección 6. Dos acciones

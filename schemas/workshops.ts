@@ -71,32 +71,45 @@ export const dueSchema = z.object({
   due_date: optionalString(10),
 });
 
-export const duePaymentSchema = z.object({
-  amount: z
-    .string()
-    .trim()
-    .min(1, "Requerido")
-    .transform((v) => Number(v))
-    .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
-  // Siempre explícito — mismo contrato que schemas/orders.ts paymentSchema.
-  paid_at: z
-    .string()
-    .trim()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
-  method_id: optionalUuid(),
-  // El formulario de dues-panel.tsx nunca renderizó un campo Cuenta — sin
-  // el preprocesamiento null-safe de optionalUuid(), formData.get("account_id")
-  // devuelve `null` (campo ausente, no ""), y el patrón viejo
-  // `.optional().or(z.literal(""))` no tolera un `null` crudo: falla con
-  // el "Invalid input" genérico de Zod. Mismo bug real encontrado en
-  // schemas/orders.ts § delivery_address (2026-09-10).
-  account_id: optionalUuid(),
-  reference: optionalString(200),
-  // Nota de corrección (sección 14 de la tanda de usabilidad) — separada
-  // de `reference` (que es una referencia de la transacción, no una nota
-  // de por qué se corrigió el pago).
-  notes: optionalString(500),
-});
+export const duePaymentSchema = z
+  .object({
+    amount: z
+      .string()
+      .trim()
+      .min(1, "Requerido")
+      .transform((v) => Number(v))
+      .refine((v) => Number.isFinite(v) && v > 0, "Importe inválido"),
+    // Siempre explícito — mismo contrato que schemas/orders.ts paymentSchema.
+    paid_at: z
+      .string()
+      .trim()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
+    method_id: optionalUuid(),
+    // El formulario de dues-panel.tsx nunca renderizó un campo Cuenta — sin
+    // el preprocesamiento null-safe de optionalUuid(), formData.get("account_id")
+    // devuelve `null` (campo ausente, no ""), y el patrón viejo
+    // `.optional().or(z.literal(""))` no tolera un `null` crudo: falla con
+    // el "Invalid input" genérico de Zod. Mismo bug real encontrado en
+    // schemas/orders.ts § delivery_address (2026-09-10).
+    account_id: optionalUuid(),
+    reference: optionalString(200),
+    // Nota de corrección (sección 14 de la tanda de usabilidad) — separada
+    // de `reference` (que es una referencia de la transacción, no una nota
+    // de por qué se corrigió el pago).
+    notes: optionalString(500),
+    // Mismo campo/misma semántica que schemas/orders.ts paymentSchema —
+    // siempre un número real (payments.fee_amount es NOT NULL default 0).
+    fee_amount: z.preprocess(
+      (v) => (v === null || v === undefined || v === "" ? "0" : v),
+      z.string().trim()
+    )
+      .transform((v) => Number(v))
+      .refine((v) => Number.isFinite(v) && v >= 0, "Comisión inválida"),
+  })
+  .refine((data) => data.fee_amount <= data.amount, {
+    message: "La comisión no puede ser mayor al importe del pago.",
+    path: ["fee_amount"],
+  });
 
 // Cargo extra sobre una cuota (sección 6) — nunca un payment, un monto que
 // se SUMA a lo que se debe.

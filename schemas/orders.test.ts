@@ -168,3 +168,39 @@ describe("paymentSchema.paid_at", () => {
     expect(paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10T12:00:00Z" }).success).toBe(false);
   });
 });
+
+// fee_amount (comisión) — perf audit / corrección de pagos: nunca null
+// (payments.fee_amount es NOT NULL default 0 en la DB), y nunca mayor al
+// importe del pago (mismo CHECK que la DB, mensaje amigable antes de
+// llegar ahí).
+describe("paymentSchema.fee_amount", () => {
+  it("defaults to 0 when the field is absent from the form", () => {
+    const result = paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.fee_amount).toBe(0);
+  });
+
+  it("accepts a valid commission", () => {
+    const result = paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "50" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.fee_amount).toBe(50);
+  });
+
+  it("rejects a negative commission", () => {
+    expect(
+      paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "-10" }).success
+    ).toBe(false);
+  });
+
+  it("rejects a commission greater than the payment amount", () => {
+    expect(
+      paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "1500" }).success
+    ).toBe(false);
+  });
+
+  it("accepts a commission exactly equal to the amount", () => {
+    expect(
+      paymentSchema.safeParse({ amount: "1000", paid_at: "2026-09-10", fee_amount: "1000" }).success
+    ).toBe(true);
+  });
+});

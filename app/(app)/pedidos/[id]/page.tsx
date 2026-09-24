@@ -53,7 +53,7 @@ export default async function OrderDetailPage({
         .eq("order_id", id),
       supabase
         .from("payments")
-        .select("id,amount,paid_at,reference,payment_methods(name)")
+        .select("id,amount,paid_at,method_id,account_id,reference,notes,fee_amount,payment_methods(name)")
         .eq("order_id", id)
         .order("paid_at", { ascending: false }),
       supabase

@@ -33,6 +33,7 @@ export type PendingDuePayment = {
   account_id: string | null;
   reference: string | null;
   notes: string | null;
+  fee_amount: number;
 };
 
 export type PendingDueRow = {
@@ -295,7 +296,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     shownDueIds.length
       ? supabase
           .from("payments")
-          .select("id,amount,paid_at,method_id,account_id,reference,notes,workshop_due_id")
+          .select("id,amount,paid_at,method_id,account_id,reference,notes,fee_amount,workshop_due_id")
           .in("workshop_due_id", shownDueIds)
       : Promise.resolve({ data: [] as never[] }),
     shownDueIds.length
@@ -360,6 +361,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
       account_id: p.account_id,
       reference: p.reference,
       notes: p.notes,
+      fee_amount: p.fee_amount,
     });
     shownDuePaymentsByDue.set(p.workshop_due_id, list);
   }

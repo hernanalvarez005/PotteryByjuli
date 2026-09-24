@@ -19,6 +19,7 @@ export function PendingDuesAttention({
   totalCount,
   paymentMethods,
   paymentAccounts,
+  canEdit,
 }: {
   dues: PendingDueRow[];
   /** Cuenta real de `workshop_due_balances` (perf audit P1) — nunca
@@ -28,6 +29,13 @@ export function PendingDuesAttention({
   totalCount: number;
   paymentMethods: { id: string; name: string }[];
   paymentAccounts: { id: string; name: string }[];
+  /** A diferencia de DuesPanel/period-dues-summary (que sólo renderizan
+   * RegisterPaymentDialog detrás de su propio canEdit), esta card
+   * aparece para cualquier rol con `summary` — incluida "Solo lectura".
+   * Sin este prop, viewer/workshop_staff veían "Editar" y el submit
+   * fallaba recién en el servidor (assertCanManageDues lanza, no
+   * devuelve un {error} prolijo) — gap real de permisos en la UI. */
+  canEdit: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isTruncated = totalCount > dues.length;
@@ -75,6 +83,7 @@ export function PendingDuesAttention({
                 paymentMethods={paymentMethods}
                 paymentAccounts={paymentAccounts}
                 payments={due.payments}
+                canEdit={canEdit}
               />
             </li>
           ))}
