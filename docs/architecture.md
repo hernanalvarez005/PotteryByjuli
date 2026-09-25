@@ -252,6 +252,9 @@ lo vea a medio adaptar.
   `app/(auth)/layout.tsx` (login, ~176px), `app/(app)/layout.tsx` (sidebar
   desktop ~96px + header mobile ~44px) y `app/mayorista/layout.tsx`
   (~48px). Siempre con `object-fit: contain`, nunca deformado.
+  Para los PDFs (React PDF embebe la imagen completa) se usa la copia
+  reducida `public/brand/pottery-logo-pdf.png` (256×256, ~47 KB): con el
+  original de 2000×2000 cada PDF pesaba ~1,3 MB, ahora ~44 KB.
 - Favicon: `app/icon.tsx` (generado con `next/og`) — un cuadrado sage con
   una "P" blanca. El logo completo tiene demasiado detalle para 16–32px;
   esto es explícitamente temporal y **no** un isotipo inventado, sólo el

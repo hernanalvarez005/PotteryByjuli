@@ -27,7 +27,11 @@ const COLORS = {
   muted: "#687068",
 };
 
-const LOGO_PATH = path.join(process.cwd(), "public/brand/pottery-logo.png");
+// Versión reducida del logo (256×256) dedicada a los PDFs: React PDF
+// embebe la imagen completa, y el original de 2000×2000 (~1,29 MB) volvía
+// cada PDF de ~1,3 MB. Se dibuja a 48×48 pt, así que 256 px sobra (~5×,
+// ~380 dpi). El original se mantiene para el sitio (next/image).
+const LOGO_PATH = path.join(process.cwd(), "public/brand/pottery-logo-pdf.png");
 
 const styles = StyleSheet.create({
   page: { padding: 36, fontSize: 10, color: COLORS.ink, fontFamily: "Helvetica" },
