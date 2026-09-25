@@ -81,6 +81,29 @@ Un pedido de $100.000 no implica $100.000 cobrados. Ventas, cobros y saldo
 pendiente se muestran siempre como tres números separados, nunca
 colapsados en uno.
 
+### Pendiente de cobrar (KPI de `/pedidos`)
+
+Es el saldo REAL de la cartera: `sum(max(total − pagos, 0))` por pedido — nunca
+`sum(orders.total)` (eso es lo vendido, no lo que falta cobrar). Se calcula en
+Postgres (`order_balances` + `get_orders_receivable`) y la pantalla lo pide UNA
+vez (`getOrdersReceivable`) para Lista y Kanban: mismo valor en las dos vistas,
+mismo filtro de unidad de negocio, sin descargar pedidos ni pagos.
+
+- **Cuenta:** pedidos (`operation_type = 'order'`) con saldo > 0 en cualquier
+  estado **salvo `cancelled`** — incluye los `pending` (coherente con la columna
+  "Saldo"), los **archivados** (archivar es un concepto de tablero, no de deuda)
+  y los **entregados con deuda** (el KPI es financiero, no de producción).
+- **No cuenta:** cancelados y ventas rápidas (`retail_sale`, que se cobran en el
+  acto). Un pedido sobrepagado tiene saldo 0 y **no compensa** a otro.
+- **Filtro por unidad de negocio** (`/pedidos?unit=<código>`, por código
+  semántico): aplica a Lista, Kanban y KPI con el mismo `businessUnitId`.
+- **Aclaraciones:** cuando una vista no muestra parte de lo que el KPI cuenta
+  (archivados si no se pidió "ver archivados"; sin confirmar en el Kanban, que
+  nunca muestra `pending`), la tarjeta dice cuánto y cuántos, para que el total
+  no parezca inconsistente con las filas visibles.
+- Si la consulta falla, el KPI **no se muestra** (nunca un `$ 0` inventado) y
+  queda el log `orders_receivable_failed`.
+
 ## Stock: físico, reservado, disponible
 
 `disponible = físico − reservado`. Nunca se vende sobre el físico sin

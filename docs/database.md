@@ -133,6 +133,21 @@ lectura abierta a cualquier usuario autenticado.
   solicitud recién reserva/consume stock cuando efectivamente se
   confirma.
 
+## Pendiente de cobrar de pedidos (2026-09-26)
+
+Migration `20260926100000_orders_receivable.sql`. Regla de negocio en
+`docs/business-rules.md` § "Pendiente de cobrar".
+
+- `order_balances` (vista, `security_invoker = true`, misma idea que
+  `workshop_due_balances`): por pedido, `paid_total` y `balance = max(total −
+  pagos, 0)`; los pagos se pre-agregan por pedido ANTES del join. Sólo expone
+  números: qué es "por cobrar" lo decide la función.
+- `get_orders_receivable(p_business_unit_id default null)` (`security invoker`,
+  `stable`): `pending_total`, `orders_count` y el desglose de archivados y sin
+  confirmar. Sin `EXECUTE`/`SELECT` para `anon`.
+- Medido en local (23.100 pedidos, 23.200 pagos): ~14 ms, un solo hash
+  aggregate sobre `payments` + un seq scan de `orders`.
+
 ## Eliminación segura de pedidos (2026-09-26)
 
 Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en

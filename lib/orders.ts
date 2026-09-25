@@ -120,6 +120,8 @@ export async function getOrdersPage(
   options: {
     operationType?: "order" | "retail_sale";
     includeArchived?: boolean;
+    /** Filtro por unidad de negocio (id). null/undefined = todas. */
+    businessUnitId?: string | null;
   },
   cursor: OrdersPageCursor = null,
   pageSize: number = ORDERS_PAGE_SIZE
@@ -145,6 +147,9 @@ export async function getOrdersPage(
   }
   if (!options.includeArchived) {
     query = query.is("archived_at", null);
+  }
+  if (options.businessUnitId) {
+    query = query.eq("business_unit_id", options.businessUnitId);
   }
   if (cursor) {
     // Equivalente a `(created_at, id) < (cursor.createdAt, cursor.id)` —
@@ -221,6 +226,8 @@ export const KANBAN_DETAIL_LIMIT = 50;
  */
 export async function getOrdersKanbanBoard(options: {
   includeArchived?: boolean;
+  /** Filtro por unidad de negocio (id). null/undefined = todas. */
+  businessUnitId?: string | null;
 }): Promise<{
   ordersByStatus: Record<KanbanStatus, OrderListRow[]>;
   counts: Record<KanbanStatus, number>;
@@ -228,6 +235,7 @@ export async function getOrdersKanbanBoard(options: {
 }> {
   const supabase = await createClient();
   const includeArchived = options.includeArchived ?? false;
+  const businessUnitId = options.businessUnitId ?? null;
 
   const [countResults, detailResults] = await Promise.all([
     Promise.all(
@@ -238,6 +246,7 @@ export async function getOrdersKanbanBoard(options: {
           .eq("operation_type", "order")
           .eq("status", status);
         if (!includeArchived) q = q.is("archived_at", null);
+        if (businessUnitId) q = q.eq("business_unit_id", businessUnitId);
         return q;
       })
     ),
@@ -251,6 +260,7 @@ export async function getOrdersKanbanBoard(options: {
           .eq("operation_type", "order")
           .eq("status", status);
         if (!includeArchived) q = q.is("archived_at", null);
+        if (businessUnitId) q = q.eq("business_unit_id", businessUnitId);
         return q.order("created_at", { ascending: false }).limit(KANBAN_DETAIL_LIMIT);
       })
     ),
@@ -275,4 +285,54 @@ export async function getOrdersKanbanBoard(options: {
   }
 
   return { ordersByStatus, counts, paidByOrder };
+}
+
+/** Cartera por cobrar de Pedidos (ver `getOrdersReceivable`). */
+export type OrdersReceivable = {
+  /** Saldo total por cobrar: sum(max(total − pagado, 0)) de los pedidos con deuda. */
+  pendingTotal: number;
+  ordersCount: number;
+  /** De ese total, lo que corresponde a pedidos archivados. */
+  archivedPendingTotal: number;
+  archivedOrdersCount: number;
+  /** De ese total, lo que corresponde a pedidos todavía sin confirmar (`pending`). */
+  unconfirmedPendingTotal: number;
+  unconfirmedOrdersCount: number;
+};
+
+/**
+ * "Pendiente de cobrar" de /pedidos — UNA sola fuente de verdad para Lista,
+ * Kanban y el filtro por unidad de negocio: la página lo llama una vez, antes
+ * de decidir la vista, y a las dos les pasa el mismo valor.
+ *
+ * Es el saldo REAL (total − pagos válidos, nunca `sum(orders.total)`), agregado
+ * en Postgres (`get_orders_receivable` sobre `order_balances`): nunca se
+ * descargan pedidos ni pagos, así que no hay tope de 1.000 filas ni URLs
+ * enormes (H-02/H-12). Universo: pedidos (`operation_type = 'order'`) no
+ * cancelados con saldo > 0, incluidos los `pending`, los archivados y los
+ * entregados con deuda. `businessUnitId` null = todas las unidades.
+ *
+ * Nunca inventa un 0: si la consulta falla (p. ej. la migración todavía no
+ * está aplicada) devuelve `null`, la pantalla no muestra el KPI y queda un log
+ * estructurado.
+ */
+export async function getOrdersReceivable(businessUnitId: string | null): Promise<OrdersReceivable | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("get_orders_receivable", { p_business_unit_id: businessUnitId });
+  if (error) {
+    console.error(JSON.stringify({ event: "orders_receivable_failed", errorCode: error.code, errorMessage: error.message }));
+    return null;
+  }
+  const row = (data as Record<string, number | string>[] | null)?.[0];
+  if (!row) return null;
+  // numeric/bigint llegan como number o string según el valor: se normaliza.
+  const n = (v: number | string | undefined) => Number(v ?? 0);
+  return {
+    pendingTotal: n(row.pending_total),
+    ordersCount: n(row.orders_count),
+    archivedPendingTotal: n(row.archived_pending_total),
+    archivedOrdersCount: n(row.archived_orders_count),
+    unconfirmedPendingTotal: n(row.unconfirmed_pending_total),
+    unconfirmedOrdersCount: n(row.unconfirmed_orders_count),
+  };
 }
