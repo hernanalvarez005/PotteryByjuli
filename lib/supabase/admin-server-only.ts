@@ -1,4 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  ORDER_ATTACHMENTS_BUCKET,
+  loadWholesaleOrderForDocument,
+  storeWholesaleOrderPdf,
+  type LoadWholesaleOrderResult,
+} from "@/lib/wholesale-pdf-store";
 
 // Server-only. This is the ONE deliberate exception to the rule in
 // scripts/_supabase-admin.ts ("nothing under app/ or lib/supabase/
@@ -20,6 +26,10 @@ import { createClient } from "@supabase/supabase-js";
 // If a new use case needs the service role, add a new named function here
 // with the same care, don't reach for a raw client elsewhere.
 //
+// La lógica (leer el pedido, guardar el PDF de forma idempotente) vive en
+// lib/wholesale-pdf-store.ts y es la MISMA que usa la regeneración desde el
+// backoffice; acá sólo se le pasa el cliente con service role.
+//
 // Never import this file from a "use client" component.
 
 function createAdminClient() {
@@ -35,135 +45,48 @@ function createAdminClient() {
   });
 }
 
-const ORDER_ATTACHMENTS_BUCKET = "order-attachments";
-
-export type WholesaleOrderForDocument = {
-  orderId: string;
-  createdAt: string;
-  buyer: {
-    first_name: string;
-    last_name: string | null;
-    company_name: string | null;
-    cuit: string | null;
-    instagram: string | null;
-    website: string | null;
-    city: string | null;
-    province: string | null;
-    address: string | null;
-    postal_code: string | null;
-    whatsapp: string;
-    email: string | null;
-  };
-  terms: {
-    min_order_amount: number | null;
-    min_total_units: number | null;
-    lead_time_min_days: number | null;
-    lead_time_max_days: number | null;
-    payment_terms: string | null;
-    shipping_terms: string | null;
-  };
-  items: { productName: string; variantName: string; quantity: number; unitPrice: number }[];
-};
+export type { WholesaleOrderForDocument, LoadWholesaleOrderResult } from "@/lib/wholesale-pdf-store";
 
 /**
- * Reads everything the PDF (and the storage path, which is keyed by
- * `orderId`) needs for a given order, by its human-readable code. The
- * wholesale checkout Server Action runs as `anon`, which has no select
- * policy on `orders` — this is the one place that read happens, via the
- * service role, immediately after `submit_wholesale_request` succeeds
- * (that RPC only returns `human_code`, on purpose — see the migration
- * comment for why its signature isn't touched again just for this).
+ * Lee lo que el PDF necesita por el código legible del pedido. El Server
+ * Action del checkout corre como `anon` (sin policy de select sobre
+ * `orders`): esta es la única lectura, con service role, inmediatamente
+ * después de que `submit_wholesale_request` resolvió (esa RPC sólo
+ * devuelve `human_code`, a propósito).
  *
- * Reads `wholesale_buyer_snapshot` / `wholesale_terms_snapshot` — never
- * live `customers`/`wholesale_settings` — and `order_items.unit_price`
- * (already historical) joined only for product/variant *names* (the one
- * piece of display data this table doesn't itself snapshot; see
- * docs/business-rules.md for why that's an accepted, narrow exception).
+ * Devuelve un resultado EXPLÍCITO (`not_found` / `snapshot_incomplete` /
+ * `query_error`), nunca un `null` mudo — el llamador loguea el motivo.
+ * Lanza sólo si falta la configuración del entorno.
  */
-export async function getWholesaleOrderForDocument(humanCode: string): Promise<WholesaleOrderForDocument | null> {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .select(
-      "id, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, order_items(quantity, unit_price, product_variants(name, products(name)))"
-    )
-    .eq("human_code", humanCode)
-    .single();
-
-  if (error || !data || !data.wholesale_buyer_snapshot || !data.wholesale_terms_snapshot) return null;
-
-  const buyer = data.wholesale_buyer_snapshot as WholesaleOrderForDocument["buyer"];
-  const terms = data.wholesale_terms_snapshot as WholesaleOrderForDocument["terms"];
-  const items = (data.order_items as unknown as {
-    quantity: number;
-    unit_price: number;
-    product_variants: { name: string; products: { name: string } } | null;
-  }[]).map((item) => ({
-    productName: item.product_variants?.products.name ?? "",
-    variantName: item.product_variants?.name ?? "",
-    quantity: item.quantity,
-    unitPrice: item.unit_price,
-  }));
-
-  return { orderId: data.id as string, createdAt: data.created_at as string, buyer, terms, items };
+export async function getWholesaleOrderForDocument(humanCode: string): Promise<LoadWholesaleOrderResult> {
+  return loadWholesaleOrderForDocument(createAdminClient(), { humanCode });
 }
 
 /**
- * Uploads the wholesale request PDF to the private `order-attachments`
- * bucket at `{orderId}/{humanCode}.pdf` — the order's UUID directory is
- * the real access boundary; the human code is only there for a readable
- * filename, never relied on for security (a private bucket that somehow
- * became misconfigured would otherwise be sequentially guessable by
- * human_code alone).
- *
- * Also records the `order_attachments` row (`kind: 'wholesale_request_pdf'`)
- * — its mere presence is what the backoffice checks to know "this order
- * has a document" (no separate status column; see docs/database.md).
+ * Sube el PDF a `order-attachments` en `{orderId}/{humanCode}.pdf` y
+ * registra la única fila `order_attachments` (`wholesale_request_pdf`) del
+ * pedido — idempotente: ver `storeWholesaleOrderPdf`. El UUID del pedido es
+ * la barrera real de acceso; el código humano es sólo el nombre del archivo.
  */
 export async function uploadWholesaleOrderPdf(orderId: string, humanCode: string, pdfBytes: Buffer): Promise<string> {
-  const supabase = createAdminClient();
-  const storagePath = `${orderId}/${humanCode}.pdf`;
-
-  const { error: uploadError } = await supabase.storage
-    .from(ORDER_ATTACHMENTS_BUCKET)
-    .upload(storagePath, pdfBytes, { contentType: "application/pdf", upsert: true });
-
-  if (uploadError) {
-    throw new Error(`No se pudo subir el PDF del pedido ${humanCode}: ${uploadError.message}`);
-  }
-
-  const { error: insertError } = await supabase.from("order_attachments").insert({
-    order_id: orderId,
-    storage_path: storagePath,
-    kind: "wholesale_request_pdf",
-  });
-
-  if (insertError) {
-    throw new Error(
-      `El PDF del pedido ${humanCode} se subió pero no se pudo registrar el adjunto: ${insertError.message}`
-    );
-  }
-
-  return storagePath;
+  return storeWholesaleOrderPdf(createAdminClient(), { orderId, humanCode, pdfBytes });
 }
 
+export type SignedUrlResult = { ok: true; url: string } | { ok: false; error: string };
+
 /**
- * Mints a time-limited signed URL for a stored wholesale request PDF.
- * 72hs is the default for the link that travels in the buyer's WhatsApp
- * message (documented tradeoff — see docs/business-rules.md §
- * Checkout mayorista). Staff mint their own short-lived signed URL on
- * demand from the backoffice using their normal authenticated session
- * (no service role needed there — `order_attachments_staff_read` already
- * grants any authenticated user select on this bucket), so a longer
- * duration here isn't needed to cover Juli's side of the flow.
+ * Link temporal (72 h por defecto: el que viaja en el WhatsApp del
+ * comprador; documentado como tradeoff usabilidad/privacidad). Devuelve
+ * el error en vez de `null`, para poder distinguir "el PDF existe pero el
+ * link no está disponible" de "no hay PDF".
  */
 export async function createWholesalePdfSignedUrl(
   storagePath: string,
   expiresInSeconds = 60 * 60 * 72
-): Promise<string | null> {
+): Promise<SignedUrlResult> {
   const supabase = createAdminClient();
   const { data, error } = await supabase.storage.from(ORDER_ATTACHMENTS_BUCKET).createSignedUrl(storagePath, expiresInSeconds);
 
-  if (error || !data) return null;
-  return data.signedUrl;
+  if (error || !data) return { ok: false, error: error?.message ?? "sin respuesta de Storage" };
+  return { ok: true, url: data.signedUrl };
 }

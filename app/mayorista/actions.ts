@@ -3,12 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { wholesaleRequestFormSchema } from "@/schemas/wholesale";
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { renderWholesaleOrderPdf } from "@/lib/wholesale-pdf";
-import {
-  getWholesaleOrderForDocument,
-  uploadWholesaleOrderPdf,
-  createWholesalePdfSignedUrl,
-} from "@/lib/supabase/admin-server-only";
+import { generateCheckoutPdf } from "@/lib/wholesale-checkout-pdf";
 
 export type WholesaleRequestState = {
   error?: string;
@@ -126,28 +121,11 @@ export async function submitWholesaleRequest(
   // El pedido ya está creado y a salvo en este punto (transacción atómica
   // de la RPC, ya resuelta). Todo lo que sigue es "mejor esfuerzo": si el
   // PDF falla, la solicitud sigue existiendo y la pantalla de éxito debe
-  // funcionar igual, sin link al documento -- nunca mostramos un error acá
-  // que sugiera reintentar (eso sí podría terminar en un pedido duplicado,
-  // exactamente lo que esta función existe para evitar).
-  let orderId: string | undefined;
-  let documentUrl: string | null = null;
-  try {
-    const order = await getWholesaleOrderForDocument(humanCode);
-    if (order) {
-      orderId = order.orderId;
-      const pdfBytes = await renderWholesaleOrderPdf({
-        humanCode,
-        createdAt: new Date(order.createdAt),
-        buyer: order.buyer,
-        items: order.items,
-        terms: order.terms,
-      });
-      const storagePath = await uploadWholesaleOrderPdf(order.orderId, humanCode, pdfBytes);
-      documentUrl = await createWholesalePdfSignedUrl(storagePath);
-    }
-  } catch (pdfError) {
-    console.error(`submitWholesaleRequest: PDF generation/upload failed for ${humanCode} (non-fatal)`, pdfError);
-  }
+  // funcionar igual — nunca mostramos un error acá que sugiera reintentar
+  // (eso sí podría terminar en un pedido duplicado, exactamente lo que
+  // esta función existe para evitar). generateCheckoutPdf nunca lanza y
+  // deja un log estructurado por cada falla (etapa, código y id del pedido).
+  const { orderId, documentUrl } = await generateCheckoutPdf(humanCode);
 
   return { humanCode, orderId, documentUrl };
 }
