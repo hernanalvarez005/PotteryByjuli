@@ -206,8 +206,8 @@ Supabase local**, nunca contra producción.
 
 | Comando | Qué corre |
 | --- | --- |
-| `npm test` | Unit (42 archivos). Sin base, sin variables. |
-| `npm run test:integration` | Integración (48 archivos), con gate de entorno. |
+| `npm test` | Unit (44 archivos, 464 tests). Sin base, sin variables. |
+| `npm run test:integration` | Integración (49 archivos, 372 tests), con gate de entorno. |
 | `npm run test:all` | Los dos, en ese orden. |
 
 **Gate.** `npm run test:integration` arranca con
