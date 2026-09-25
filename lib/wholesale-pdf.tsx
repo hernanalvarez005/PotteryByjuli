@@ -1,5 +1,11 @@
 import { Document, Page, Text, View, Image, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import path from "node:path";
+import type {
+  WholesaleDocumentBuyer,
+  WholesaleDocumentItem,
+  WholesaleDocumentKind,
+  WholesaleDocumentTerms,
+} from "@/lib/wholesale-document-data";
 
 // Server-only: reads a real file off disk (the Pottery logo) and renders a
 // PDF without a headless browser. Never import this from a "use client"
@@ -8,8 +14,11 @@ import path from "node:path";
 // required here, since @react-pdf/renderer and `fs`-backed image loading
 // don't work on the Edge runtime.
 //
-// Everything this module needs comes in by parameter — it never queries
-// `customers`, `wholesale_settings`, or current product prices itself. The
+// Everything this module needs comes in by parameter (a `WholesaleDocumentData`
+// — lib/wholesale-document-data.ts — built either from the checkout's frozen
+// snapshots or, for an order Juli loaded by hand, from the order + customer +
+// wholesale settings at generation time; this module can't tell the two
+// apart) — it never queries `customers`, `wholesale_settings`, or current product prices itself. The
 // caller is responsible for reading `order_items` (already-historical
 // `unit_price`) and the order's own `wholesale_terms_snapshot` /
 // `wholesale_buyer_snapshot` (buyer info exactly as submitted, frozen at
@@ -77,43 +86,20 @@ const styles = StyleSheet.create({
   footer: { marginTop: 20, fontSize: 8, color: COLORS.muted, textAlign: "center" },
 });
 
-export type WholesaleOrderPdfBuyer = {
-  first_name: string;
-  last_name: string | null;
-  company_name: string | null;
-  cuit: string | null;
-  instagram: string | null;
-  website: string | null;
-  city: string | null;
-  province: string | null;
-  address: string | null;
-  postal_code: string | null;
-  whatsapp: string;
-  email: string | null;
-};
+export type WholesaleOrderPdfBuyer = WholesaleDocumentBuyer;
+export type WholesaleOrderPdfItem = WholesaleDocumentItem;
+export type WholesaleOrderPdfTerms = WholesaleDocumentTerms;
 
-export type WholesaleOrderPdfItem = {
-  productName: string;
-  variantName: string;
-  quantity: number;
-  unitPrice: number;
-};
-
-export type WholesaleOrderPdfTerms = {
-  min_order_amount: number | null;
-  min_total_units: number | null;
-  lead_time_min_days: number | null;
-  lead_time_max_days: number | null;
-  payment_terms: string | null;
-  shipping_terms: string | null;
-};
-
+/** Lo que recibe el renderer: un `WholesaleDocumentData` sin `orderId`/`source`
+ * (irrelevantes para dibujar) y con `kind` opcional — por defecto `request`,
+ * el documento histórico del checkout. */
 export type WholesaleOrderPdfInput = {
   humanCode: string;
   createdAt: Date;
   buyer: WholesaleOrderPdfBuyer;
   items: WholesaleOrderPdfItem[];
   terms: WholesaleOrderPdfTerms;
+  kind?: WholesaleDocumentKind;
 };
 
 function formatCurrency(n: number): string {
@@ -141,7 +127,7 @@ function InfoRow({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-export function WholesaleOrderPdfDocument({ humanCode, createdAt, buyer, items, terms }: WholesaleOrderPdfInput) {
+export function WholesaleOrderPdfDocument({ humanCode, createdAt, buyer, items, terms, kind = "request" }: WholesaleOrderPdfInput) {
   const totalUnits = items.reduce((sum, item) => sum + item.quantity, 0);
   const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const buyerName = [buyer.first_name, buyer.last_name].filter(Boolean).join(" ");
@@ -152,6 +138,18 @@ export function WholesaleOrderPdfDocument({ humanCode, createdAt, buyer, items, 
         ? `${terms.lead_time_min_days ?? terms.lead_time_max_days} días`
         : null;
 
+  // Un pedido cargado a mano puede no tener ninguna condición general
+  // cargada: en ese caso no se dibuja una sección "Condiciones" vacía.
+  const hasTerms =
+    kind === "request" ||
+    Boolean(
+      terms.min_order_amount != null ||
+        terms.min_total_units != null ||
+        leadTime ||
+        terms.payment_terms ||
+        terms.shipping_terms
+    );
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -160,21 +158,23 @@ export function WholesaleOrderPdfDocument({ humanCode, createdAt, buyer, items, 
           <Image src={LOGO_PATH} style={styles.logo} />
           <View>
             <Text style={styles.brand}>POTTERY BY JULI</Text>
-            <Text style={styles.subtitle}>Solicitud de pedido mayorista</Text>
+            <Text style={styles.subtitle}>{kind === "order" ? "Pedido mayorista" : "Solicitud de pedido mayorista"}</Text>
           </View>
         </View>
 
         <InfoRow label="Pedido" value={humanCode} />
         <InfoRow label="Fecha" value={formatDate(createdAt)} />
 
-        <View style={styles.banner}>
-          <Text style={styles.bannerTitle}>SOLICITUD PENDIENTE DE CONFIRMACIÓN</Text>
-          <Text style={styles.bannerText}>
-            Este documento corresponde a una solicitud de pedido mayorista. El pedido quedará
-            confirmado una vez que Pottery revise disponibilidad, plazos y condiciones y confirme
-            la solicitud.
-          </Text>
-        </View>
+        {kind === "request" && (
+          <View style={styles.banner}>
+            <Text style={styles.bannerTitle}>SOLICITUD PENDIENTE DE CONFIRMACIÓN</Text>
+            <Text style={styles.bannerText}>
+              Este documento corresponde a una solicitud de pedido mayorista. El pedido quedará
+              confirmado una vez que Pottery revise disponibilidad, plazos y condiciones y confirme
+              la solicitud.
+            </Text>
+          </View>
+        )}
 
         <Text style={styles.sectionTitle}>Datos del comprador</Text>
         <InfoRow label="Nombre" value={buyerName || null} />
@@ -220,18 +220,22 @@ export function WholesaleOrderPdfDocument({ humanCode, createdAt, buyer, items, 
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>Condiciones</Text>
-        <InfoRow
-          label="Pedido mínimo"
-          value={terms.min_order_amount != null ? formatCurrency(terms.min_order_amount) : null}
-        />
-        <InfoRow
-          label="Mínimo de piezas"
-          value={terms.min_total_units != null ? String(terms.min_total_units) : null}
-        />
-        <InfoRow label="Plazo estimado" value={leadTime} />
-        <InfoRow label="Forma de pago" value={terms.payment_terms} />
-        <InfoRow label="Envío" value={terms.shipping_terms} />
+        {hasTerms && (
+          <>
+            <Text style={styles.sectionTitle}>Condiciones</Text>
+            <InfoRow
+              label="Pedido mínimo"
+              value={terms.min_order_amount != null ? formatCurrency(terms.min_order_amount) : null}
+            />
+            <InfoRow
+              label="Mínimo de piezas"
+              value={terms.min_total_units != null ? String(terms.min_total_units) : null}
+            />
+            <InfoRow label="Plazo estimado" value={leadTime} />
+            <InfoRow label="Forma de pago" value={terms.payment_terms} />
+            <InfoRow label="Envío" value={terms.shipping_terms} />
+          </>
+        )}
 
         <Text style={styles.footer}>
           Pottery by Juli · Este documento no reemplaza una factura ni implica un pago confirmado.

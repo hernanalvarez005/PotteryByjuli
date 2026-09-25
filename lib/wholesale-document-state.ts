@@ -8,14 +8,16 @@ import { WHOLESALE_PDF_KIND } from "@/lib/wholesale-pdf-store";
 //
 // A propósito NO se usa la unidad de negocio Mayorista: un pedido cargado
 // a mano en esa unidad nunca tuvo un intento automático de PDF, así que
-// marcarlo como "sin PDF" o "falló" sería falso.
+// marcarlo como "sin PDF" o "falló" sería falso (ni aparece la señal "Sin
+// PDF" en el listado). Igual se puede generar a pedido desde su ficha.
 
 export type WholesaleDocumentState =
   /** Hay PDF (ver / regenerar). */
   | "pdf_available"
   /** Vino del checkout y no tiene PDF: hay que generarlo. */
   | "pdf_missing"
-  /** No vino del checkout mayorista: nunca hubo intento automático. */
+  /** No vino del checkout (pedido cargado a mano): nunca hubo intento
+   * automático; el PDF se genera a pedido desde la ficha. */
   | "not_from_checkout";
 
 export function getWholesaleDocumentState(input: { hasPdf: boolean; checkoutOrigin: boolean }): WholesaleDocumentState {
@@ -25,7 +27,7 @@ export function getWholesaleDocumentState(input: { hasPdf: boolean; checkoutOrig
 
 export const WHOLESALE_DOCUMENT_COPY = {
   pdf_missing: "No se generó el PDF de esta solicitud.",
-  not_from_checkout: "Este pedido no proviene del checkout mayorista.",
+  not_from_checkout: "Todavía no se generó el PDF de este pedido.",
 } as const;
 
 const CHUNK = 100;

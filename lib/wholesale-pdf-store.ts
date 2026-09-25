@@ -1,4 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  buildLiveDocumentData,
+  buildSnapshotDocumentData,
+  type DocumentCustomerRow,
+  type DocumentOrderItemRow,
+  type DocumentSettingsRow,
+  type WholesaleDocumentData,
+} from "@/lib/wholesale-document-data";
 
 // Lectura del pedido para el PDF mayorista y guardado idempotente del
 // archivo + su referencia. Agnóstico del cliente de Supabase: lo usan el
@@ -31,34 +39,8 @@ export function wholesalePdfStoragePath(orderId: string, humanCode: string): str
   return `${orderId}/${humanCode}.pdf`;
 }
 
-export type WholesaleOrderForDocument = {
-  orderId: string;
-  humanCode: string;
-  createdAt: string;
-  buyer: {
-    first_name: string;
-    last_name: string | null;
-    company_name: string | null;
-    cuit: string | null;
-    instagram: string | null;
-    website: string | null;
-    city: string | null;
-    province: string | null;
-    address: string | null;
-    postal_code: string | null;
-    whatsapp: string;
-    email: string | null;
-  };
-  terms: {
-    min_order_amount: number | null;
-    min_total_units: number | null;
-    lead_time_min_days: number | null;
-    lead_time_max_days: number | null;
-    payment_terms: string | null;
-    shipping_terms: string | null;
-  };
-  items: { productName: string; variantName: string; quantity: number; unitPrice: number }[];
-};
+/** Alias histórico: el checkout siempre carga un `WholesaleDocumentData` de origen snapshot. */
+export type WholesaleOrderForDocument = WholesaleDocumentData;
 
 /**
  * Resultado explícito de la lectura — nunca un `null` mudo:
@@ -72,7 +54,16 @@ export type LoadWholesaleOrderResult =
   | { ok: false; reason: "not_found" | "snapshot_incomplete" | "query_error"; orderId?: string; humanCode?: string; detail?: string };
 
 const ORDER_SELECT =
-  "id, human_code, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, order_items(quantity, unit_price, product_variants(name, products(name)))";
+  "id, human_code, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, order_items(quantity, unit_price, custom_name, product_variants(name, products(name)))";
+
+type OrderRowForDocument = {
+  id: string;
+  human_code: string;
+  created_at: string;
+  wholesale_buyer_snapshot: WholesaleDocumentData["buyer"] | null;
+  wholesale_terms_snapshot: WholesaleDocumentData["terms"] | null;
+  order_items: DocumentOrderItemRow[];
+};
 
 /**
  * Lee todo lo que el PDF necesita, SIEMPRE de datos congelados:
@@ -90,18 +81,7 @@ export async function loadWholesaleOrderForDocument(
   if (error) return { ok: false, reason: "query_error", detail: `${error.code ?? "?"}: ${error.message}` };
   if (!data) return { ok: false, reason: "not_found" };
 
-  const row = data as unknown as {
-    id: string;
-    human_code: string;
-    created_at: string;
-    wholesale_buyer_snapshot: WholesaleOrderForDocument["buyer"] | null;
-    wholesale_terms_snapshot: WholesaleOrderForDocument["terms"] | null;
-    order_items: {
-      quantity: number;
-      unit_price: number;
-      product_variants: { name: string; products: { name: string } | null } | null;
-    }[];
-  };
+  const row = data as unknown as OrderRowForDocument;
 
   if (!row.wholesale_buyer_snapshot || !row.wholesale_terms_snapshot) {
     return { ok: false, reason: "snapshot_incomplete", orderId: row.id, humanCode: row.human_code };
@@ -109,19 +89,108 @@ export async function loadWholesaleOrderForDocument(
 
   return {
     ok: true,
-    order: {
+    order: buildSnapshotDocumentData({
       orderId: row.id,
       humanCode: row.human_code,
       createdAt: row.created_at,
-      buyer: row.wholesale_buyer_snapshot,
-      terms: row.wholesale_terms_snapshot,
-      items: row.order_items.map((item) => ({
-        productName: item.product_variants?.products?.name ?? "",
-        variantName: item.product_variants?.name ?? "",
-        quantity: item.quantity,
-        unitPrice: item.unit_price,
-      })),
-    },
+      buyerSnapshot: row.wholesale_buyer_snapshot,
+      termsSnapshot: row.wholesale_terms_snapshot,
+      items: row.order_items,
+    }),
+  };
+}
+
+/**
+ * Resultado de `loadWholesaleDocumentData` (backoffice). Además de los
+ * motivos del loader del checkout:
+ * - `not_wholesale`: el pedido no es de la unidad Mayorista (p. ej. un
+ *   pedido minorista): nunca entra al flujo mayorista;
+ * - `missing_customer`: pedido manual sin cliente asociado: no hay datos de
+ *   comprador para armar el documento.
+ */
+export type LoadWholesaleDocumentResult =
+  | { ok: true; order: WholesaleDocumentData }
+  | {
+      ok: false;
+      reason: "not_found" | "query_error" | "snapshot_incomplete" | "not_wholesale" | "missing_customer";
+      orderId?: string;
+      humanCode?: string;
+      detail?: string;
+    };
+
+const DOCUMENT_ORDER_SELECT =
+  "id, human_code, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, business_units(code), " +
+  "customers(first_name, last_name, company_name, cuit, instagram, website, city, province, address, postal_code, whatsapp, email), " +
+  "order_items(quantity, unit_price, custom_name, product_variants(name, products(name)))";
+
+/**
+ * Lectura para el backoffice: UN camino, dos orígenes.
+ *
+ * - Con los DOS snapshots del checkout → documento `request`, exactamente
+ *   los datos congelados (mismo resultado que `loadWholesaleOrderForDocument`).
+ * - Sin ninguno (pedido cargado a mano) → documento `order` armado con el
+ *   pedido + el cliente + `wholesale_settings` vigentes. No se inventa ningún
+ *   snapshot ni se escribe nada en el pedido.
+ * - Sólo UNO de los dos snapshots → dato inconsistente del checkout: falla
+ *   con `snapshot_incomplete`, nunca se completa con datos vivos en silencio.
+ *
+ * Un pedido que no es de la unidad Mayorista y no viene del checkout falla
+ * con `not_wholesale`.
+ */
+export async function loadWholesaleDocumentData(
+  supabase: SupabaseClient,
+  by: { orderId: string }
+): Promise<LoadWholesaleDocumentResult> {
+  const { data, error } = await supabase.from("orders").select(DOCUMENT_ORDER_SELECT).eq("id", by.orderId).maybeSingle();
+
+  if (error) return { ok: false, reason: "query_error", detail: `${error.code ?? "?"}: ${error.message}` };
+  if (!data) return { ok: false, reason: "not_found" };
+
+  const row = data as unknown as OrderRowForDocument & {
+    business_units: { code: string } | null;
+    customers: DocumentCustomerRow | null;
+  };
+  const ref = { orderId: row.id, humanCode: row.human_code };
+
+  const hasBuyer = Boolean(row.wholesale_buyer_snapshot);
+  const hasTerms = Boolean(row.wholesale_terms_snapshot);
+
+  if (hasBuyer && hasTerms) {
+    return {
+      ok: true,
+      order: buildSnapshotDocumentData({
+        ...ref,
+        createdAt: row.created_at,
+        buyerSnapshot: row.wholesale_buyer_snapshot!,
+        termsSnapshot: row.wholesale_terms_snapshot!,
+        items: row.order_items,
+      }),
+    };
+  }
+  if (hasBuyer !== hasTerms) return { ok: false, reason: "snapshot_incomplete", ...ref };
+
+  // Pedido cargado a mano.
+  if (row.business_units?.code !== "wholesale") return { ok: false, reason: "not_wholesale", ...ref };
+  if (!row.customers) return { ok: false, reason: "missing_customer", ...ref };
+
+  const { data: settings, error: settingsError } = await supabase
+    .from("wholesale_settings")
+    .select("lead_time_min_days, lead_time_max_days, payment_terms, shipping_terms")
+    .limit(1)
+    .maybeSingle();
+  if (settingsError) {
+    return { ok: false, reason: "query_error", ...ref, detail: `${settingsError.code ?? "?"}: ${settingsError.message}` };
+  }
+
+  return {
+    ok: true,
+    order: buildLiveDocumentData({
+      ...ref,
+      createdAt: row.created_at,
+      customer: row.customers,
+      settings: settings as DocumentSettingsRow,
+      items: row.order_items,
+    }),
   };
 }
 

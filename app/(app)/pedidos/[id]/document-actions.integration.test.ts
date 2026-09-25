@@ -20,7 +20,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => currentClient }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
-const { generateWholesaleDocumentForOrder } = await import("./document-actions");
+const { generateWholesaleDocumentForOrder, prepareWholesaleShare } = await import("./document-actions");
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -46,7 +46,9 @@ describe("generateWholesaleDocumentForOrder (backoffice, local)", () => {
   const ids = {} as Record<Role, string>;
   let unitId: string;
   let variantId: string;
+  let retailUnitId: string;
   const orderIds: string[] = [];
+  const customerIds: string[] = [];
   const paths: string[] = [];
 
   async function signIn(role: Role) {
@@ -66,10 +68,22 @@ describe("generateWholesaleDocumentForOrder (backoffice, local)", () => {
     ids[role] = id;
   }
 
-  async function makeOrder(kind: "web" | "manual") {
+  async function makeCustomer(fields: Record<string, unknown> = {}) {
+    const { data, error } = await admin.from("customers").insert({ first_name: "ZZAccion", ...fields }).select("id").single();
+    if (error) throw error;
+    customerIds.push(data.id);
+    return data.id as string;
+  }
+
+  async function makeOrder(kind: "web" | "manual", opts: { customerId?: string; unitId?: string } = {}) {
     const { data, error } = await admin
       .from("orders")
-      .insert({ business_unit_id: unitId, operation_type: "order", ...(kind === "web" ? { wholesale_buyer_snapshot: BUYER, wholesale_terms_snapshot: TERMS } : {}) })
+      .insert({
+        business_unit_id: opts.unitId ?? unitId,
+        operation_type: "order",
+        customer_id: opts.customerId ?? null,
+        ...(kind === "web" ? { wholesale_buyer_snapshot: BUYER, wholesale_terms_snapshot: TERMS } : {}),
+      })
       .select("id,human_code")
       .single();
     if (error) throw error;
@@ -97,6 +111,7 @@ describe("generateWholesaleDocumentForOrder (backoffice, local)", () => {
     for (const role of ["owner", "operations", "viewer"] as Role[]) await signIn(role);
     const { data: unit } = await admin.from("business_units").select("id").eq("code", "wholesale").single();
     unitId = unit!.id;
+    retailUnitId = (await admin.from("business_units").select("id").eq("code", "retail").single()).data!.id;
     const { data: v } = await admin.from("product_variants").select("id").limit(1).single();
     variantId = v!.id;
   }, 40000);
@@ -105,7 +120,7 @@ describe("generateWholesaleDocumentForOrder (backoffice, local)", () => {
 
   afterAll(async () => {
     if (paths.length) await admin.storage.from(BUCKET).remove(paths);
-    await cleanupFixtures(admin, "document-actions", { orderIds });
+    await cleanupFixtures(admin, "document-actions", { orderIds, customerIds });
   }, 30000);
 
   describe("permisos", () => {
@@ -192,11 +207,38 @@ describe("generateWholesaleDocumentForOrder (backoffice, local)", () => {
   });
 
   describe("pedidos que no son del checkout", () => {
-    it("un pedido MANUAL en la unidad Mayorista responde con un mensaje neutral y no crea nada", async () => {
+    it("un pedido MANUAL mayorista SIN cliente responde con un mensaje claro y no crea nada", async () => {
       const o = await makeOrder("manual");
       const result = await generateWholesaleDocumentForOrder(o.orderId);
-      expect(result.error).toMatch(/no proviene del checkout mayorista/i);
+      expect(result.error).toMatch(/cliente asociado/i);
       expect(result.error).not.toMatch(/fall/i);
+      expect(await rows(o.orderId)).toHaveLength(0);
+      expect(await head(o.path)).toBeNull();
+    });
+
+    it("un pedido MANUAL mayorista CON cliente genera su PDF: un archivo, una fila, quién lo subió", async () => {
+      const o = await makeOrder("manual", { customerId: await makeCustomer({ company_name: "Casa Acción" }) });
+      const result = await generateWholesaleDocumentForOrder(o.orderId);
+      expect(result).toEqual({});
+      const stored = await rows(o.orderId);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toMatchObject({ storage_path: o.path, uploaded_by: ids.owner });
+      const bytes = await head(o.path);
+      expect(bytes!.subarray(0, 4).toString()).toBe("%PDF");
+    });
+
+    it("regenerar un pedido manual no duplica ni cambia la ruta", async () => {
+      const o = await makeOrder("manual", { customerId: await makeCustomer() });
+      for (let i = 0; i < 3; i++) expect(await generateWholesaleDocumentForOrder(o.orderId)).toEqual({});
+      const stored = await rows(o.orderId);
+      expect(stored).toHaveLength(1);
+      expect(stored[0].storage_path).toBe(o.path);
+    });
+
+    it("un pedido MINORISTA nunca entra al flujo mayorista: error claro, nada creado", async () => {
+      const o = await makeOrder("manual", { customerId: await makeCustomer(), unitId: retailUnitId });
+      const result = await generateWholesaleDocumentForOrder(o.orderId);
+      expect(result.error).toMatch(/no es mayorista/i);
       expect(await rows(o.orderId)).toHaveLength(0);
       expect(await head(o.path)).toBeNull();
     });
@@ -204,6 +246,58 @@ describe("generateWholesaleDocumentForOrder (backoffice, local)", () => {
     it("un pedido inexistente devuelve un error claro", async () => {
       const result = await generateWholesaleDocumentForOrder("00000000-0000-4000-8000-000000000000");
       expect(result.error).toMatch(/No encontramos el pedido/);
+    });
+  });
+
+  describe("prepareWholesaleShare (compartir con el cliente)", () => {
+    const ready = async (customerFields: Record<string, unknown>) => {
+      const o = await makeOrder("manual", { customerId: await makeCustomer(customerFields) });
+      expect(await generateWholesaleDocumentForOrder(o.orderId)).toEqual({});
+      return o;
+    };
+
+    it("devuelve wa.me al número del cliente con el mensaje y un link firmado que abre el PDF", async () => {
+      const o = await ready({ first_name: "Lucía", whatsapp: "341 555-0000" });
+      const result = await prepareWholesaleShare(o.orderId);
+      if ("error" in result) throw new Error(result.error);
+      const { data } = result;
+
+      expect(data.customerHasWhatsapp).toBe(true);
+      expect(data.whatsappHref).toMatch(/^https:\/\/wa\.me\/543415550000\?text=/);
+      expect(data.message).toContain("Hola Lucía!");
+      expect(data.message).toContain(o.humanCode);
+      expect(data.message).toContain(data.fileUrl);
+      expect(data.messageForFile).not.toContain("http");
+      expect(data.fileName).toBe(`${o.humanCode}.pdf`);
+
+      const body = Buffer.from(await (await fetch(data.fileUrl)).arrayBuffer());
+      expect(body.subarray(0, 4).toString()).toBe("%PDF");
+      const download = await fetch(data.downloadUrl!);
+      expect(download.headers.get("content-disposition")).toContain("attachment");
+    });
+
+    it("cliente sin WhatsApp: no hay link de WhatsApp, pero sí mensaje y descarga", async () => {
+      const o = await ready({ whatsapp: null });
+      const result = await prepareWholesaleShare(o.orderId);
+      if ("error" in result) throw new Error(result.error);
+      expect(result.data.customerHasWhatsapp).toBe(false);
+      expect(result.data.whatsappHref).toBeNull();
+      expect(result.data.message).toContain(o.humanCode);
+      expect(result.data.downloadUrl).toBeTruthy();
+    });
+
+    it("sin PDF generado todavía → error claro, sin firmar nada", async () => {
+      const o = await makeOrder("manual", { customerId: await makeCustomer() });
+      expect(await prepareWholesaleShare(o.orderId)).toEqual({ error: "Todavía no se generó el PDF de este pedido." });
+    });
+
+    it("un pedido minorista → error; un viewer → sin permiso", async () => {
+      const retail = await makeOrder("manual", { customerId: await makeCustomer(), unitId: retailUnitId });
+      expect(await prepareWholesaleShare(retail.orderId)).toEqual({ error: "Este pedido no es mayorista." });
+
+      const o = await ready({});
+      as("viewer");
+      expect(await prepareWholesaleShare(o.orderId)).toMatchObject({ error: expect.stringMatching(/permiso/i) });
     });
   });
 });

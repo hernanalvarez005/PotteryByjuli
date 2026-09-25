@@ -6,8 +6,11 @@ import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { renderWholesaleOrderPdf } from "@/lib/wholesale-pdf";
 import { renderOrderPdf } from "@/lib/order-pdf";
 import { customerDisplayName } from "@/lib/customers-shared";
-import { loadWholesaleOrderForDocument, storeWholesaleOrderPdf, WholesalePdfStepError } from "@/lib/wholesale-pdf-store";
+import { loadWholesaleDocumentData, storeWholesaleOrderPdf, WholesalePdfStepError, WHOLESALE_PDF_KIND } from "@/lib/wholesale-pdf-store";
 import { logWholesalePdf } from "@/lib/wholesale-pdf-log";
+import { whatsappLink } from "@/lib/customers-shared";
+import { formatCurrency } from "@/lib/format";
+import { buildWholesaleShareMessage, wholesalePdfFileName, SHARE_LINK_TTL_HOURS } from "@/lib/wholesale-share";
 
 const ORDER_ATTACHMENTS_BUCKET = "order-attachments";
 
@@ -28,18 +31,21 @@ export async function getWholesaleDocumentSignedUrl(storagePath: string): Promis
 }
 
 /**
- * Genera (o REGENERA) el PDF de una solicitud del checkout mayorista.
- * Es seguro repetirlo tantas veces como haga falta: reusa la misma ruta
- * de Storage (`{orderId}/{humanCode}.pdf`, con upsert) y la única fila
- * `order_attachments` del pedido — nunca duplica archivos ni referencias,
- * y no toca pedido, pagos, items ni historial. Recupera los cuatro estados
+ * Genera (o REGENERA) el PDF mayorista de un pedido. Es seguro repetirlo
+ * tantas veces como haga falta: reusa la misma ruta de Storage
+ * (`{orderId}/{humanCode}.pdf`, con upsert) y la única fila
+ * `order_attachments` del pedido — nunca duplica archivos ni referencias, y
+ * no toca pedido, pagos, items ni historial. Recupera los cuatro estados
  * DB/Storage: normal, archivo huérfano, fila huérfana y ninguno.
  *
- * Lee sólo lo congelado al momento del pedido (`wholesale_buyer_snapshot`,
- * `wholesale_terms_snapshot`, `order_items.unit_price`), así que el
- * documento regenerado representa la solicitud original — ver
- * docs/business-rules.md. Un pedido cargado a mano (sin snapshot) no
- * proviene del checkout y no tiene datos para armarlo.
+ * Dos orígenes, un solo camino (`loadWholesaleDocumentData`):
+ * - solicitud del checkout → snapshots congelados (`wholesale_buyer_snapshot`,
+ *   `wholesale_terms_snapshot`, `order_items.unit_price`): el documento
+ *   regenerado representa la solicitud original;
+ * - pedido cargado a mano → pedido + cliente + configuración mayorista
+ *   vigentes al generar (sin snapshots inventados). Ver
+ *   lib/wholesale-document-data.ts y docs/business-rules.md.
+ * Un pedido que no es mayorista (p. ej. minorista) se rechaza.
  *
  * Cada etapa tiene su propio try/catch: la usuaria recibe un mensaje
  * específico y queda un log estructurado con humanCode, orderId y etapa.
@@ -56,7 +62,7 @@ export async function generateWholesaleDocumentForOrder(orderId: string): Promis
   // 1) load_order
   let loaded;
   try {
-    loaded = await loadWholesaleOrderForDocument(supabase, { orderId });
+    loaded = await loadWholesaleDocumentData(supabase, { orderId });
   } catch (error) {
     logWholesalePdf("wholesale_pdf_failed", { humanCode: "?", orderId, step: "load_order", source: "backoffice", elapsedMs: Date.now() - started, error });
     return { error: "No se pudo leer el pedido. Probá de nuevo." };
@@ -72,7 +78,11 @@ export async function generateWholesaleDocumentForOrder(orderId: string): Promis
       error: loaded.detail,
     });
     if (loaded.reason === "snapshot_incomplete") {
-      return { error: "Este pedido no proviene del checkout mayorista, así que no hay datos de solicitud para armar el PDF." };
+      return { error: "Los datos congelados de esta solicitud están incompletos, así que no se puede armar el PDF." };
+    }
+    if (loaded.reason === "not_wholesale") return { error: "Este pedido no es mayorista." };
+    if (loaded.reason === "missing_customer") {
+      return { error: "Este pedido no tiene un cliente asociado. Asociá un cliente para generar el PDF." };
     }
     if (loaded.reason === "not_found") return { error: "No encontramos el pedido." };
     return { error: "No se pudo leer el pedido. Probá de nuevo." };
@@ -88,9 +98,10 @@ export async function generateWholesaleDocumentForOrder(orderId: string): Promis
       buyer: order.buyer,
       terms: order.terms,
       items: order.items,
+      kind: order.kind,
     });
   } catch (error) {
-    logWholesalePdf("wholesale_pdf_failed", { humanCode: order.humanCode, orderId, step: "render", source: "backoffice", elapsedMs: Date.now() - started, error });
+    logWholesalePdf("wholesale_pdf_failed", { humanCode: order.humanCode, orderId, step: "render", source: "backoffice", documentKind: order.kind, elapsedMs: Date.now() - started, error });
     return { error: "No se pudo armar el PDF (falló la generación del documento)." };
   }
 
@@ -108,7 +119,7 @@ export async function generateWholesaleDocumentForOrder(orderId: string): Promis
     };
   }
 
-  logWholesalePdf("wholesale_pdf_generated", { humanCode: order.humanCode, orderId, source: "backoffice", elapsedMs: Date.now() - started });
+  logWholesalePdf("wholesale_pdf_generated", { humanCode: order.humanCode, orderId, source: "backoffice", documentKind: order.kind, elapsedMs: Date.now() - started });
   revalidatePath(`/pedidos/${orderId}`);
   revalidatePath("/pedidos");
   return {};
@@ -208,4 +219,89 @@ export async function generateOrderSummaryPdf(orderId: string): Promise<{ error?
 
   revalidatePath(`/pedidos/${orderId}`);
   return {};
+}
+
+export type WholesaleShareData = {
+  /** `wa.me` con el mensaje + link firmado; null si el cliente no tiene WhatsApp. */
+  whatsappHref: string | null;
+  /** Mensaje con el link (camino principal). */
+  message: string;
+  /** Mensaje para acompañar al PDF adjunto (Web Share, sólo móvil). */
+  messageForFile: string;
+  /** Link firmado del PDF (vigencia SHARE_LINK_TTL_HOURS): lo usa Web Share para bajar el archivo. */
+  fileUrl: string;
+  /** Link de descarga directa, corto (escritorio: descargar y adjuntar a mano). */
+  downloadUrl: string | null;
+  fileName: string;
+  customerHasWhatsapp: boolean;
+};
+
+/**
+ * Prepara todo lo necesario para compartir el PDF mayorista con el cliente
+ * (ver lib/wholesale-share.ts para los límites de WhatsApp/Web Share). Sólo
+ * lectura: no escribe nada. Los links se firman con la sesión de la usuaria
+ * (`order_attachments_staff_read`), nunca con la service role.
+ */
+export async function prepareWholesaleShare(orderId: string): Promise<{ error: string } | { data: WholesaleShareData }> {
+  const user = await requireUser();
+  if (!isOwner(user) && !hasRole(user, "operations")) {
+    return { error: "No tenés permiso para compartir este documento." };
+  }
+
+  const supabase = await createClient();
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, human_code, total, business_units(code), customers(first_name, whatsapp)")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError) return { error: "No se pudo leer el pedido. Probá de nuevo." };
+  if (!order) return { error: "No encontramos el pedido." };
+
+  const unit = order.business_units as unknown as { code: string } | null;
+  if (unit?.code !== "wholesale") return { error: "Este pedido no es mayorista." };
+
+  const { data: attachment } = await supabase
+    .from("order_attachments")
+    .select("storage_path")
+    .eq("order_id", orderId)
+    .eq("kind", WHOLESALE_PDF_KIND)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!attachment?.storage_path) return { error: "Todavía no se generó el PDF de este pedido." };
+
+  const fileName = wholesalePdfFileName(order.human_code);
+  const bucket = supabase.storage.from(ORDER_ATTACHMENTS_BUCKET);
+  const [{ data: linkData, error: linkError }, { data: downloadData }] = await Promise.all([
+    bucket.createSignedUrl(attachment.storage_path, SHARE_LINK_TTL_HOURS * 3600),
+    bucket.createSignedUrl(attachment.storage_path, 300, { download: fileName }),
+  ]);
+  if (linkError || !linkData) return { error: "No se pudo generar el link del PDF. Probá de nuevo." };
+
+  const customer = order.customers as unknown as { first_name: string; whatsapp: string | null } | null;
+  const totalLabel = formatCurrency(order.total);
+  const message = buildWholesaleShareMessage({
+    customerFirstName: customer?.first_name,
+    humanCode: order.human_code,
+    totalLabel,
+    documentUrl: linkData.signedUrl,
+  });
+  const whatsapp = customer?.whatsapp?.trim() || null;
+
+  return {
+    data: {
+      whatsappHref: whatsapp ? whatsappLink(whatsapp, message) : null,
+      message,
+      messageForFile: buildWholesaleShareMessage({
+        customerFirstName: customer?.first_name,
+        humanCode: order.human_code,
+        totalLabel,
+        documentUrl: null,
+      }),
+      fileUrl: linkData.signedUrl,
+      downloadUrl: downloadData?.signedUrl ?? null,
+      fileName,
+      customerHasWhatsapp: Boolean(whatsapp),
+    },
+  };
 }
