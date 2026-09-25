@@ -214,9 +214,12 @@ describe.skipIf(!hasCredentials)("sale variant search (local)", () => {
     await admin.from("products").delete().in("id", cleanupProductIds);
   });
 
-  it("el catálogo local supera 3.000 variantes — el escenario real que rompía antes", async () => {
+  it("el catálogo local supera los puntos de quiebre de antes (tope de 1.000 filas / ~1.500 ids en un .in())", async () => {
+    // Antes exigía > 3.000, que sólo se cumplía mientras otras corridas
+    // dejaban fixtures sin limpiar — el conteo real (~2.900) no es un
+    // número estable. Lo que importa es superar 1.500.
     const { count } = await admin.from("product_variants").select("id", { count: "exact", head: true });
-    expect(count).toBeGreaterThan(3000);
+    expect(count).toBeGreaterThan(1500);
   });
 
   it("encuentra un producto 'Perf Fixture' del dataset masivo, sin romper con HTTP 414", async () => {
