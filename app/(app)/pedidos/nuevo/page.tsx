@@ -23,7 +23,7 @@ export default async function NewOrderPage() {
         .select("id,first_name,last_name")
         .eq("is_active", true)
         .order("first_name"),
-      supabase.from("business_units").select("id,name").eq("is_active", true).order("sort_order"),
+      supabase.from("business_units").select("id,name,code").eq("is_active", true).order("sort_order"),
       supabase.from("sales_channels").select("id,name").eq("is_active", true).order("sort_order"),
       supabase.from("locations").select("id,name").eq("is_active", true).order("name"),
       supabase.from("payment_methods").select("id,name").eq("is_active", true).order("sort_order"),

@@ -25,24 +25,82 @@ import { formatCurrency } from "@/lib/format";
 import { createOrder } from "../actions";
 import { CustomerQuickCreate } from "@/app/(app)/clientes/customer-quick-create";
 import { VariantPicker } from "./variant-picker";
-import type { VariantSearchResult } from "@/lib/product-search";
+import type { OrderVariantResult } from "@/lib/product-search";
+import {
+  PRICE_LIST_LABELS,
+  priceListCodeForBusinessUnit,
+  priceNotice,
+  retargetPriceList,
+  rowsMissingPrice,
+  withListPrice,
+  withManualPrice,
+  withPickedVariant,
+  type CatalogRowPricing,
+  type PriceListCode,
+} from "@/lib/order-pricing";
 
 type Option = { id: string; name: string };
+type BusinessUnitOption = Option & { code: string };
 
 // Un pedido puede tener ítems de catálogo o ítems no inventariados/
 // personalizados — "custom_name" en vez de "product_variant_id" (ver
 // schemas/orders.ts). Un ítem custom nunca descuenta stock ni crea un
 // producto permanente en /productos — participa del total nomás.
-type CatalogItemRow = {
+//
+// Precio de un ítem de catálogo (lib/order-pricing.ts): `unit_price` es la
+// SUGERENCIA de la lista que corresponde a la unidad del pedido
+// (`priceSource: "list"`) hasta que la usuaria lo edita (`"manual"`); un
+// precio manual nunca se pisa en silencio al cambiar de unidad. `null` =
+// la lista no tiene precio para esa variante y hay que cargarlo a mano.
+type CatalogItemRow = CatalogRowPricing & {
   key: string;
   kind: "catalog";
-  product_variant_id: string;
-  variant_label: string | null;
   quantity: number;
-  unit_price: number;
 };
 type CustomItemRow = { key: string; kind: "custom"; custom_name: string; custom_description: string; quantity: number; unit_price: number };
 type ItemRow = CatalogItemRow | CustomItemRow;
+
+function newCatalogRow(): CatalogItemRow {
+  return {
+    key: crypto.randomUUID(),
+    kind: "catalog",
+    product_variant_id: "",
+    variant_label: null,
+    prices: null,
+    quantity: 1,
+    unit_price: null,
+    priceSource: "list",
+  };
+}
+
+/** Aviso debajo de una fila: sin precio de lista, o precio manual distinto del de la lista. */
+function PriceNotice({
+  row,
+  priceList,
+  onUseListPrice,
+}: {
+  row: CatalogItemRow;
+  priceList: PriceListCode;
+  onUseListPrice: () => void;
+}) {
+  const notice = priceNotice(row, priceList);
+  if (!notice) return null;
+  const label = PRICE_LIST_LABELS[priceList];
+  if (notice.kind === "no_list_price") {
+    return <p className="text-xs text-amber-600">Sin precio {label}, cargalo a mano.</p>;
+  }
+  return (
+    <p className="text-xs text-muted-foreground">
+      Precio modificado manualmente.{" "}
+      {notice.listPrice != null ? `Lista ${label}: ${formatCurrency(notice.listPrice)}. ` : `Sin precio en la lista ${label}. `}
+      {notice.listPrice != null && (
+        <button type="button" onClick={onUseListPrice} className="underline underline-offset-2 hover:text-foreground">
+          Usar precio de lista
+        </button>
+      )}
+    </p>
+  );
+}
 
 const DELIVERY_LABELS: Record<string, string> = {
   pickup: "Retiro",
@@ -59,7 +117,7 @@ export function OrderForm({
   paymentAccounts,
 }: {
   customers: Option[];
-  businessUnits: Option[];
+  businessUnits: BusinessUnitOption[];
   channels: Option[];
   locations: Option[];
   paymentMethods: Option[];
@@ -78,7 +136,7 @@ export function OrderForm({
   const [locationId, setLocationId] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState("");
   const [items, setItems] = useState<ItemRow[]>([
-    { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", variant_label: null, quantity: 1, unit_price: 0 },
+    newCatalogRow(),
   ]);
 
   // Passed as each Select's `items` prop so the trigger can resolve a
@@ -90,6 +148,21 @@ export function OrderForm({
   // dialog — this form was the one place it never got applied).
   const customerLabels = useMemo(() => Object.fromEntries(customerList.map((c) => [c.id, c.name])), [customerList]);
   const businessUnitLabels = useMemo(() => Object.fromEntries(businessUnits.map((b) => [b.id, b.name])), [businessUnits]);
+  // La unidad del pedido decide qué lista sugiere el precio (sin unidad
+  // elegida todavía: minorista, como siempre).
+  const priceList = priceListCodeForBusinessUnit(businessUnits.find((b) => b.id === businessUnitId)?.code);
+  const priceListLabel = PRICE_LIST_LABELS[priceList];
+
+  function changeBusinessUnit(id: string) {
+    setBusinessUnitId(id);
+    const code = businessUnits.find((b) => b.id === id)?.code;
+    // Recalcula sólo las filas con precio de lista; las manuales quedan intactas.
+    const list = priceListCodeForBusinessUnit(code);
+    setItems((prev) => {
+      const retargeted = new Map(retargetPriceList(prev.filter((it): it is CatalogItemRow => it.kind === "catalog"), list).map((r) => [r.key, r]));
+      return prev.map((it) => (it.kind === "catalog" ? (retargeted.get(it.key) ?? it) : it));
+    });
+  }
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.id, c.name])), [channels]);
   const locationLabels = useMemo(() => Object.fromEntries(locations.map((l) => [l.id, l.name])), [locations]);
   const methodLabels = useMemo(() => Object.fromEntries(paymentMethods.map((m) => [m.id, m.name])), [paymentMethods]);
@@ -106,7 +179,7 @@ export function OrderForm({
   function addRow() {
     setItems((prev) => [
       ...prev,
-      { key: crypto.randomUUID(), kind: "catalog", product_variant_id: "", variant_label: null, quantity: 1, unit_price: 0 },
+      newCatalogRow(),
     ]);
   }
 
@@ -121,10 +194,13 @@ export function OrderForm({
     setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.key !== key) : prev));
   }
 
+  // Una fila de catálogo con variante pero sin precio NO se descarta en
+  // silencio: bloquea el guardado hasta que se cargue (ver `missingPrice`).
+  const missingPrice = rowsMissingPrice(items.filter((it): it is CatalogItemRow => it.kind === "catalog"));
   const validItems = items.filter((it) =>
     it.kind === "catalog" ? it.product_variant_id && it.quantity > 0 : it.custom_name.trim() && it.quantity > 0
   );
-  const subtotal = validItems.reduce((sum, it) => sum + it.quantity * it.unit_price, 0);
+  const subtotal = validItems.reduce((sum, it) => sum + it.quantity * (it.unit_price ?? 0), 0);
 
   return (
     <form action={formAction} className="flex flex-col gap-6">
@@ -134,7 +210,7 @@ export function OrderForm({
         value={JSON.stringify(
           validItems.map((it) =>
             it.kind === "catalog"
-              ? { product_variant_id: it.product_variant_id, quantity: it.quantity, unit_price: it.unit_price }
+              ? { product_variant_id: it.product_variant_id, quantity: it.quantity, unit_price: it.unit_price ?? 0 }
               : { custom_name: it.custom_name, custom_description: it.custom_description || undefined, quantity: it.quantity, unit_price: it.unit_price }
           )
         )}
@@ -187,7 +263,7 @@ export function OrderForm({
           </div>
           <div className="space-y-2">
             <Label htmlFor="business_unit_id_select">Unidad de negocio</Label>
-            <Select items={businessUnitLabels} value={businessUnitId} onValueChange={(v) => v && setBusinessUnitId(v)}>
+            <Select items={businessUnitLabels} value={businessUnitId} onValueChange={(v) => v && changeBusinessUnit(v)}>
               <SelectTrigger id="business_unit_id_select" className="w-full">
                 <SelectValue placeholder="Elegir unidad" />
               </SelectTrigger>
@@ -278,21 +354,25 @@ export function OrderForm({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Productos</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Los precios sugeridos son de la lista {priceListLabel}
+            {businessUnitId ? "" : " (elegí la unidad de negocio para ajustarla)"}. Podés editarlos.
+          </p>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {items.map((item) =>
             item.kind === "catalog" ? (
-              <div key={item.key} className="flex items-end gap-2">
+              <div key={item.key} className="flex flex-col gap-1">
+              <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                   <Label className="text-xs text-muted-foreground">Producto</Label>
                   <VariantPicker
                     selectedLabel={item.variant_label}
-                    onSelect={(variant: VariantSearchResult) =>
-                      updateCatalogItem(item.key, {
-                        product_variant_id: variant.id,
-                        variant_label: variant.label,
-                        unit_price: variant.retailPrice,
-                      })
+                    priceList={priceList}
+                    onSelect={(variant: OrderVariantResult) =>
+                      setItems((prev) =>
+                        prev.map((it) => (it.key === item.key && it.kind === "catalog" ? withPickedVariant(it, variant, priceList) : it))
+                      )
                     }
                   />
                 </div>
@@ -311,8 +391,17 @@ export function OrderForm({
                     type="number"
                     min="0"
                     step="0.01"
-                    value={item.unit_price}
-                    onChange={(e) => updateCatalogItem(item.key, { unit_price: Number(e.target.value) || 0 })}
+                    value={item.unit_price ?? ""}
+                    placeholder={item.product_variant_id ? "Cargalo" : undefined}
+                    onChange={(e) =>
+                      setItems((prev) =>
+                        prev.map((it) =>
+                          it.key === item.key && it.kind === "catalog"
+                            ? withManualPrice(it, e.target.value === "" ? null : Number(e.target.value) || 0)
+                            : it
+                        )
+                      )
+                    }
                   />
                 </div>
                 <Button
@@ -324,6 +413,14 @@ export function OrderForm({
                 >
                   <Trash2 className="size-4" />
                 </Button>
+              </div>
+              <PriceNotice
+                row={item}
+                priceList={priceList}
+                onUseListPrice={() =>
+                  setItems((prev) => prev.map((it) => (it.key === item.key && it.kind === "catalog" ? withListPrice(it, priceList) : it)))
+                }
+              />
               </div>
             ) : (
               <div key={item.key} className="flex flex-col gap-2 rounded-md border border-dashed p-3">
@@ -460,11 +557,16 @@ export function OrderForm({
         </CardContent>
       </Card>
 
+      {missingPrice.length > 0 && (
+        <p className="text-sm text-amber-600">
+          Falta el precio de: {missingPrice.map((r) => r.variant_label).join(", ")}.
+        </p>
+      )}
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}
 
       <Button
         type="submit"
-        disabled={isPending || validItems.length === 0 || !customerId || !businessUnitId}
+        disabled={isPending || validItems.length === 0 || missingPrice.length > 0 || !customerId || !businessUnitId}
         className="self-start"
       >
         {isPending ? "Creando pedido..." : "Crear pedido"}
