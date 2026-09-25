@@ -1,7 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   fetchFeaturedSectionRows,
   fetchFeaturedSectionsAdmin,
+  isFeaturedRpcMissingError,
+  isFeaturedTableMissingError,
   getFeaturedSectionStatus,
   resolveFeaturedSections,
   type FeaturedSectionRow,
@@ -118,24 +120,99 @@ describe("resolveFeaturedSections", () => {
   });
 });
 
-describe("si la tabla no existe todavía (migración sin aplicar en ese entorno)", () => {
-  // Un fallo de esta lectura NUNCA puede romper /mayorista: el catálogo
-  // tiene que verse exactamente como sin secciones.
-  const failing = {
+// Estado intermedio "código nuevo desplegado + migración todavía sin
+// aplicar". Las formas de error son las REALES que devuelve PostgREST
+// (capturadas contra Supabase local con las tablas ausentes).
+const MISSING_TABLE = {
+  code: "PGRST205",
+  message: "Could not find the table 'public.wholesale_featured_sections' in the schema cache",
+};
+const MISSING_RPC = {
+  code: "PGRST202",
+  message: "Could not find the function public.save_wholesale_featured_section without parameters in the schema cache",
+};
+const OTHER_TABLE_MISSING = {
+  code: "PGRST205",
+  message: "Could not find the table 'public.otra_tabla' in the schema cache",
+};
+const PERMISSION_DENIED = { code: "42501", message: "permission denied for table wholesale_featured_sections" };
+
+function clientReturning(error: { code?: string; message: string } | null, data: unknown = null) {
+  return {
     from: () => {
       const b: Record<string, unknown> = {};
       for (const m of ["select", "eq", "order"]) b[m] = () => b;
-      b.then = (resolve: (v: unknown) => void) =>
-        Promise.resolve({ data: null, error: { code: "42P01", message: 'relation "wholesale_featured_sections" does not exist' } }).then(resolve);
+      b.then = (resolve: (v: unknown) => void) => Promise.resolve({ data, error }).then(resolve);
       return b;
     },
   } as unknown as SupabaseClient;
+}
 
-  it("fetchFeaturedSectionRows devuelve [] en vez de lanzar", async () => {
-    await expect(fetchFeaturedSectionRows(failing)).resolves.toEqual([]);
+describe("isFeaturedTableMissingError / isFeaturedRpcMissingError", () => {
+  it("reconoce la tabla inexistente (PGRST205 y 42P01) sólo si nombra NUESTRAS tablas", () => {
+    expect(isFeaturedTableMissingError(MISSING_TABLE)).toBe(true);
+    expect(isFeaturedTableMissingError({ code: "42P01", message: 'relation "wholesale_featured_sections" does not exist' })).toBe(true);
   });
 
-  it("fetchFeaturedSectionsAdmin devuelve [] en vez de lanzar", async () => {
-    await expect(fetchFeaturedSectionsAdmin(failing)).resolves.toEqual([]);
+  it("NO trata como 'migración pendiente' un PGRST205 de otra tabla, un permiso denegado, ni null", () => {
+    expect(isFeaturedTableMissingError(OTHER_TABLE_MISSING)).toBe(false);
+    expect(isFeaturedTableMissingError(PERMISSION_DENIED)).toBe(false);
+    expect(isFeaturedTableMissingError({ message: "fetch failed" })).toBe(false);
+    expect(isFeaturedTableMissingError(null)).toBe(false);
+  });
+
+  it("reconoce la RPC inexistente (PGRST202) de nuestra función, y nada más", () => {
+    expect(isFeaturedRpcMissingError(MISSING_RPC)).toBe(true);
+    expect(isFeaturedRpcMissingError({ code: "PGRST202", message: "Could not find the function public.otra" })).toBe(false);
+    expect(isFeaturedRpcMissingError(PERMISSION_DENIED)).toBe(false);
+  });
+});
+
+describe("estado intermedio: migración sin aplicar", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("catálogo público: tabla inexistente → [] en silencio (estado esperado, sin ruido en los logs)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(fetchFeaturedSectionRows(clientReturning(MISSING_TABLE))).resolves.toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("catálogo público: cualquier OTRO error de Supabase también degrada a [] pero queda REGISTRADO, no oculto", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const error of [PERMISSION_DENIED, OTHER_TABLE_MISSING, { message: "FetchError: network down" }]) {
+      spy.mockClear();
+      await expect(fetchFeaturedSectionRows(clientReturning(error))).resolves.toEqual([]);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0].join(" "))).toContain(error.message);
+    }
+  });
+
+  it("catálogo público: sin error devuelve las filas tal cual", async () => {
+    const rows = [section({ id: "x", productIds: ["a"] })];
+    await expect(fetchFeaturedSectionRows(clientReturning(null, rows))).resolves.toEqual(rows);
+  });
+
+  it("backoffice: tabla inexistente → 'tables_missing' explícito (no se confunde con 'no hay secciones')", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(fetchFeaturedSectionsAdmin(clientReturning(MISSING_TABLE))).resolves.toEqual({
+      status: "tables_missing",
+      sections: [],
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("backoffice: otro error → status 'error' con su mensaje (visible) y registrado en logs, nunca 'no hay secciones'", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await fetchFeaturedSectionsAdmin(clientReturning(PERMISSION_DENIED));
+    expect(result).toEqual({ status: "error", sections: [], message: PERMISSION_DENIED.message });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("backoffice: sin error y sin filas → 'ok' con lista vacía (distinto de tables_missing)", async () => {
+    await expect(fetchFeaturedSectionsAdmin(clientReturning(null, []))).resolves.toEqual({ status: "ok", sections: [] });
+  });
+
+  it("resolveFeaturedSections([]) deja el catálogo exactamente como hoy", () => {
+    expect(resolveFeaturedSections([], catalog, NOW)).toEqual([]);
   });
 });

@@ -238,7 +238,8 @@ describe("secciones destacadas mayoristas (local)", () => {
     it("un producto que pasa a oculto conserva su asociación (el editor lo avisa; no se borra sola)", async () => {
       const { id } = await saveSection({ title: "Asociación persistente", products: ["A", "oculto"] });
       const admins = await fetchFeaturedSectionsAdmin(owner);
-      const section = admins.find((s) => s.id === id);
+      expect(admins.status).toBe("ok");
+      const section = admins.sections.find((s) => s.id === id);
       expect(section?.products.map((p) => p.productId)).toEqual([productIds["A"], productIds["oculto"]]);
     });
   });

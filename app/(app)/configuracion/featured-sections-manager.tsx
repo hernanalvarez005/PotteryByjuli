@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/confirm-action";
 import { formatDate } from "@/lib/format";
-import type { FeaturedSectionStatus } from "@/lib/wholesale-featured";
+import { FEATURED_MIGRATION_PENDING_MESSAGE, type FeaturedSectionStatus } from "@/lib/wholesale-featured";
 import { FeaturedSectionDialog } from "./featured-section-dialog";
 import { deleteFeaturedSection, reorderFeaturedSections, setFeaturedSectionActive } from "./featured-actions";
 
@@ -33,10 +33,16 @@ const STATUS_LABEL: Record<FeaturedSectionStatus, string> = {
 export function FeaturedSectionsManager({
   sections,
   canEdit,
+  loadStatus,
+  loadError,
 }: {
   sections: FeaturedSectionAdminRow[];
   canEdit: boolean;
+  /** "tables_missing" = migración sin aplicar; "error" = otro fallo al leer. Nunca se muestran como "no hay secciones". */
+  loadStatus: "ok" | "tables_missing" | "error";
+  loadError: string | null;
 }) {
+  const unavailable = loadStatus !== "ok";
   const [editing, setEditing] = useState<FeaturedSectionAdminRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<FeaturedSectionAdminRow | null>(null);
@@ -66,7 +72,7 @@ export function FeaturedSectionsManager({
             general, y un producto oculto en mayorista nunca aparece.
           </p>
         </div>
-        {canEdit && (
+        {canEdit && !unavailable && (
           <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
             <Plus className="size-4" />
             Nueva sección
@@ -74,7 +80,13 @@ export function FeaturedSectionsManager({
         )}
       </div>
 
-      {sections.length === 0 ? (
+      {unavailable ? (
+        <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          {loadStatus === "tables_missing"
+            ? `${FEATURED_MIGRATION_PENDING_MESSAGE} Mientras tanto /mayorista se ve sin secciones destacadas.`
+            : `No se pudieron cargar las secciones destacadas${loadError ? `: ${loadError}` : "."} /mayorista sigue funcionando, sin secciones.`}
+        </p>
+      ) : sections.length === 0 ? (
         <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
           Todavía no creaste ninguna sección. /mayorista se ve sin secciones destacadas.
         </p>
@@ -180,6 +192,7 @@ export function FeaturedSectionsManager({
         title={`¿Eliminar "${deleting?.title ?? ""}"?`}
         description="Se elimina la sección y sus asociaciones. Los productos NO se borran: siguen en el catálogo mayorista como siempre. Si sólo querés sacarla de /mayorista por un tiempo, desactivala en vez de eliminarla."
         confirmLabel="Eliminar"
+        cancelLabel="Cancelar"
         onConfirm={async () => {
           if (deleting) await deleteFeaturedSection(deleting.id);
         }}

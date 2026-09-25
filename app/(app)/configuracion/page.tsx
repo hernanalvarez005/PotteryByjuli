@@ -38,7 +38,8 @@ export default async function ConfiguracionPage() {
   // está en el catálogo mayorista visible (getWholesaleCatalog es la única
   // fuente de esa regla — acá no se reimplementa). Sólo se pide el catálogo
   // si alguna sección tiene productos asociados.
-  const featuredAdmin = await fetchFeaturedSectionsAdmin(supabase);
+  const featuredResult = await fetchFeaturedSectionsAdmin(supabase);
+  const featuredAdmin = featuredResult.sections;
   const anyAssociations = featuredAdmin.some((s) => s.products.length > 0);
   const visibleProductIds = anyAssociations
     ? new Set((await getWholesaleCatalog()).products.map((p) => p.id))
@@ -105,7 +106,12 @@ export default async function ConfiguracionPage() {
           </TabsContent>
         )}
         <TabsContent value="featured">
-          <FeaturedSectionsManager sections={featuredSections} canEdit={isOwner(user)} />
+          <FeaturedSectionsManager
+            sections={featuredSections}
+            canEdit={isOwner(user)}
+            loadStatus={featuredResult.status}
+            loadError={featuredResult.status === "error" ? featuredResult.message : null}
+          />
         </TabsContent>
         <TabsContent value="fees">
           <div className="flex flex-col gap-1 pb-4">

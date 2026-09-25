@@ -8,6 +8,7 @@ import { getProductsPage } from "@/lib/products";
 import { slugify } from "@/lib/slug";
 import { dateOnlyToArgentinaStartOfDayISO, dateOnlyToArgentinaEndOfDayISO } from "@/lib/format";
 import { featuredSectionSchema } from "@/schemas/wholesale-featured";
+import { FEATURED_MIGRATION_PENDING_MESSAGE, isFeaturedRpcMissingError } from "@/lib/wholesale-featured";
 
 // Secciones destacadas del catálogo mayorista — SOLO owner (decisión
 // explícita: no se amplía a operations). El RLS de escritura también
@@ -70,6 +71,7 @@ export async function saveFeaturedSection(
       revalidate();
       return { saved: true };
     }
+    if (isFeaturedRpcMissingError(error)) return { error: FEATURED_MIGRATION_PENDING_MESSAGE };
     if (error.code === "23505" && !input.id) continue; // slug duplicado: reintentar con sufijo
     if (error.code === "23503") return { error: "Alguno de los productos ya no existe." };
     return { error: error.message || "No se pudo guardar la sección." };
