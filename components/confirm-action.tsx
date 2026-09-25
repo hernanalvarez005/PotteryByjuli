@@ -25,6 +25,7 @@ export function ConfirmAction({
   title,
   description,
   confirmLabel = "Confirmar",
+  cancelLabel = "Volver",
   variant = "destructive",
   open,
   onOpenChange,
@@ -36,6 +37,7 @@ export function ConfirmAction({
   title: string;
   description: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   variant?: "destructive" | "default";
   /** Controlled mode: omit `trigger` and drive `open`/`onOpenChange` yourself. */
   open?: boolean;
@@ -60,7 +62,7 @@ export function ConfirmAction({
         </AlertDialogHeader>
         {error && <p className="px-1 text-sm text-destructive">{error}</p>}
         <AlertDialogFooter>
-          <AlertDialogCancel>Volver</AlertDialogCancel>
+          <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
             variant={variant === "destructive" ? "destructive" : "default"}
             disabled={isPending}
