@@ -16,6 +16,7 @@ import { ConfirmAction } from "@/components/confirm-action";
 import { formatCurrency } from "@/lib/format";
 import { toggleProductActive, deleteProduct } from "./actions";
 import { useSelection } from "./selection-context";
+import { DuplicateProductDialog } from "./duplicate-product-dialog";
 
 export function ProductRow({
   id,
@@ -27,6 +28,7 @@ export function ProductRow({
   isActive,
   canEdit,
   canDelete,
+  canDuplicate,
 }: {
   id: string;
   name: string;
@@ -37,9 +39,12 @@ export function ProductRow({
   isActive: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  /** Duplicar escribe precios y reglas mayoristas (sólo owner por RLS). */
+  canDuplicate: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
   const { selected, toggle } = useSelection();
 
   return (
@@ -87,6 +92,16 @@ export function ProductRow({
               >
                 {isActive ? "Desactivar" : "Activar"}
               </DropdownMenuItem>
+              {canDuplicate && (
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setDuplicateOpen(true);
+                  }}
+                >
+                  Duplicar producto
+                </DropdownMenuItem>
+              )}
               {canDelete && (
                 <DropdownMenuItem
                   variant="destructive"
@@ -100,6 +115,14 @@ export function ProductRow({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          {canDuplicate && (
+            <DuplicateProductDialog
+              productId={id}
+              productName={name}
+              open={duplicateOpen}
+              onOpenChange={setDuplicateOpen}
+            />
+          )}
           {canDelete && (
             <ConfirmAction
               open={confirmDeleteOpen}

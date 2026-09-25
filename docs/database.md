@@ -133,6 +133,49 @@ lectura abierta a cualquier usuario autenticado.
   solicitud recién reserva/consume stock cuando efectivamente se
   confirma.
 
+## Duplicar producto (2026-09-25)
+
+RPC `duplicate_product(p_source_product_id, p_new_name, p_publish_in_wholesale)`
+(migración `20260925130000`): deep clone **transaccional** de la *definición* de
+un producto. Una función plpgsql es una sola transacción — cualquier error
+deshace todo, sin productos a medias. `security invoker`: sigue rigiendo el RLS.
+
+Mapa de relaciones de un producto y qué se hace con cada una:
+
+| Relación | Duplicar |
+|---|---|
+| `products` (categoría, descripción, costo, `is_active`) | **Se copia**; nombre nuevo obligatorio y distinto del original. `external_source/external_id` (identidad de importación, UNIQUE) → NULL. No hay `slug` en el esquema. |
+| `product_variants` | **Se copian** (nombre, orden, estado) con ids nuevos. **`sku` → NULL**: es UNIQUE, nunca se copia literalmente. El trigger crea una variante "Único" que se descarta para copiar exactamente las del original. |
+| `inventory_items` | Los crea el trigger por cada variante nueva: **stock 0**, ledger vacío. Se copia la unidad de medida. |
+| `price_list_items` | **Se copian** (todas las listas) a las variantes **nuevas**. |
+| `product_images` | **Se copian las filas** (mismo `storage_path`, primaria y orden); las de variante se remapean. **El archivo no se duplica.** |
+| `wholesale_product_rules` | **Se copia** (`min_quantity`, `multiple_of`, `lead_time_days`). `is_public` ver abajo. |
+| `wholesale_featured_section_products` | **No se copia**: la pertenencia a una campaña es editorial. |
+| `inventory_movements`, `inventory_reservations`, `stock_transfer_items`, `order_items`, `production_orders`, pagos, ventas | **No** (transaccional / histórico). |
+| `stock_thresholds` | **No**: es la alerta de un inventario real; una copia con stock 0 dispararía "stock bajo" al instante. |
+
+Decisiones:
+- **Imágenes compartidas**: se comparte el archivo en vez de re-subirlo. Como
+  `deleteProductImage` borraba el archivo de Storage al quitar una imagen, ahora
+  **sólo lo borra si ninguna otra fila de `product_images` lo referencia** (si no,
+  cambiar las fotos de la copia rompería las del original). Si no puede contar
+  referencias, no borra.
+- **`is_active`** se conserva (la semántica global no cambia). **Visibilidad
+  mayorista**: por defecto la copia queda con `is_public = false`, porque nace con
+  las mismas fotos y precios que el original y publicarla así en `/mayorista`
+  mostraría un producto con nombre nuevo y fotos ajenas; el diálogo ofrece la opción
+  "publicar también la copia" para conservar la visibilidad. (Se eligió esto y no
+  `is_active = false` porque la ficha no tiene control de activo/inactivo — sólo el
+  menú de la lista — y la reglas mayoristas sí se editan desde la ficha.)
+- **Nombre**: no vacío y distinto del original (comparación exacta tras `trim`). Los
+  nombres de producto no son únicos en el esquema: no se agrega ninguna restricción.
+- **Permisos: sólo owner.** Duplicar escribe `price_list_items` y
+  `wholesale_product_rules`, que por RLS sólo escribe el owner; `operations` no puede
+  crear esos datos, así que tampoco duplicarlos (no se amplían permisos).
+- **Auditoría**: no existe un audit log de productos (sólo `price_bulk_adjustments`
+  para ajustes masivos de precio), así que no se registra nada — no se inventa un
+  sistema nuevo.
+
 ## Secciones destacadas del catálogo mayorista (2026-09-25)
 
 Merchandising editorial de `/mayorista` (ej. "Día de la Madre"). Una

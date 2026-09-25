@@ -10,13 +10,17 @@ import { PricesPanel } from "./prices-panel";
 import { ImagesPanel, type ProductImage } from "./images-panel";
 import { WholesaleRulesPanel, type WholesaleRules } from "./wholesale-rules-panel";
 import { StockPanel } from "./stock-panel";
+import { DuplicateProductButton } from "./duplicate-product-button";
 
 export default async function ProductDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ duplicado?: string }>;
 }) {
   const { id } = await params;
+  const { duplicado } = await searchParams;
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
 
@@ -96,8 +100,24 @@ export default async function ProductDetailPage({
           <ArrowLeft className="size-4" />
           Productos
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{product.name}</h1>
+        <div className="mt-1 flex items-start justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight">{product.name}</h1>
+          {isOwner(user) && <DuplicateProductButton productId={product.id} productName={product.name} />}
+        </div>
       </div>
+
+      {duplicado === "1" && (
+        <div role="status" className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+          <p className="font-medium">Producto duplicado correctamente</p>
+          <p className="mt-1 text-emerald-900/80">
+            Se copiaron variantes, precios y configuración. Las imágenes son las mismas que las del original hasta que
+            las cambies, y el stock arranca en 0.
+            {wholesaleRules && !(wholesaleRules as WholesaleRules)?.is_public && (
+              <> En /mayorista está oculto hasta que lo habilites en el panel &ldquo;Mayorista&rdquo;.</>
+            )}
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <ProductInfoForm

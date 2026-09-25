@@ -86,6 +86,7 @@ export default async function ProductosPage({
         emptyMessage={emptyMessage}
         canEdit={canEdit}
         canDelete={canDelete}
+        canDuplicate={isOwner(user)}
       />
     </div>
   );

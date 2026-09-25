@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { productSchema } from "@/schemas/products";
+import { validateDuplicateName } from "@/lib/duplicate-product";
+import { z } from "zod";
 import { getProductsPage, type ProductStatusFilter, type ProductsPageCursor } from "@/lib/products";
 
 export type ProductActionState = { error?: string };
@@ -212,4 +214,46 @@ export async function loadMoreProducts(
 ) {
   await requireUser();
   return getProductsPage(status, search, cursor);
+}
+
+export type DuplicateProductResult = { productId?: string; error?: string };
+
+/**
+ * Deep clone de la definición de un producto (variantes, precios, imágenes,
+ * reglas mayoristas) vía la RPC transaccional duplicate_product — todo o
+ * nada, sin stock ni historial. Sólo el owner: duplicar escribe precios y
+ * reglas mayoristas, que por RLS sólo puede escribir el owner (no se
+ * amplían permisos). La copia conserva is_active; queda oculta en mayorista
+ * salvo que se pida `publishInWholesale`.
+ */
+export async function duplicateProduct(
+  sourceProductId: string,
+  newName: string,
+  publishInWholesale: boolean
+): Promise<DuplicateProductResult> {
+  const user = await requireUser();
+  if (!isOwner(user)) return { error: "Sólo la administradora puede duplicar productos." };
+
+  if (!z.string().uuid().safeParse(sourceProductId).success) return { error: "Producto inválido." };
+
+  const supabase = await createClient();
+  const { data: source } = await supabase.from("products").select("name").eq("id", sourceProductId).maybeSingle();
+  if (!source) return { error: "El producto original no existe." };
+
+  const nameError = validateDuplicateName(newName, source.name);
+  if (nameError) return { error: nameError };
+
+  const { data, error } = await supabase.rpc("duplicate_product", {
+    p_source_product_id: sourceProductId,
+    p_new_name: newName.trim(),
+    p_publish_in_wholesale: publishInWholesale,
+  });
+
+  if (error || !data) {
+    // P0001 = un `raise exception` en español escrito a propósito en la RPC.
+    return { error: error?.code === "P0001" ? error.message : "No se pudo duplicar el producto." };
+  }
+
+  revalidatePath("/productos");
+  return { productId: data as string };
 }
