@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { createOrderSchema, paymentSchema, ORDER_STATUSES } from "@/schemas/orders";
@@ -234,5 +235,64 @@ export async function updatePayment(
   revalidatePath("/pedidos");
   revalidatePath("/ventas");
   revalidatePath("/dashboard");
+  return {};
+}
+
+export type DeleteOrderResult = { error?: string };
+
+const ORDER_ATTACHMENTS_BUCKET = "order-attachments";
+
+/**
+ * Eliminación DEFINITIVA de un pedido cargado por error — sólo owner y sólo
+ * si el pedido no tiene consecuencias operativas ni financieras (0 pagos, 0
+ * movimientos de stock, 0 órdenes de producción, no entregado, no del
+ * checkout). La regla y el borrado viven en Postgres (`delete_order_safe`,
+ * una transacción que re-verifica con el pedido bloqueado); nunca se borra
+ * en pasos desde acá. Cualquier otro pedido se cancela, no se borra.
+ *
+ * Storage no forma parte de esa transacción: los adjuntos (PDF) se borran
+ * DESPUÉS del commit. Si eso falla el pedido igual ya no existe (un archivo
+ * huérfano es inocuo: bucket privado, ruta con el uuid del pedido), así que
+ * no se reporta como error al usuario pero SÍ queda un log estructurado.
+ */
+export async function deleteOrder(orderId: string, reason?: string): Promise<DeleteOrderResult> {
+  const user = await requireUser();
+  if (!isOwner(user)) return { error: "Sólo la administradora puede eliminar pedidos." };
+  if (!z.string().uuid().safeParse(orderId).success) return { error: "Pedido inválido." };
+
+  const cleanReason = reason?.trim() || null;
+  if (cleanReason && cleanReason.length > 300) return { error: "El motivo no puede superar los 300 caracteres." };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("delete_order_safe", { p_id: orderId, p_reason: cleanReason });
+
+  if (error) {
+    // P0001 = un `raise exception` en español escrito a propósito en la RPC.
+    if (error.code === "P0001") return { error: error.message };
+    console.error(JSON.stringify({ event: "order_delete_failed", orderId, errorCode: error.code, errorMessage: error.message }));
+    return { error: "No se pudo eliminar el pedido." };
+  }
+
+  const row = (data as { human_code: string; storage_paths: string[] | null }[] | null)?.[0];
+  const paths = row?.storage_paths ?? [];
+  console.info(JSON.stringify({ event: "order_deleted", orderId, humanCode: row?.human_code, attachments: paths.length }));
+
+  if (paths.length > 0) {
+    const { error: storageError } = await supabase.storage.from(ORDER_ATTACHMENTS_BUCKET).remove(paths);
+    if (storageError) {
+      console.error(
+        JSON.stringify({
+          event: "order_delete_storage_cleanup_failed",
+          orderId,
+          humanCode: row?.human_code,
+          pathCount: paths.length,
+          errorMessage: storageError.message,
+        })
+      );
+    }
+  }
+
+  revalidatePath("/pedidos");
+  revalidatePath(`/pedidos/${orderId}`);
   return {};
 }
