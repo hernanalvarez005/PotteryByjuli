@@ -18,6 +18,11 @@ import {
 import { StatusSelect } from "./status-select";
 import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
+import {
+  getWholesaleDocumentState,
+  getWholesalePdfStates,
+  WHOLESALE_DOCUMENT_COPY,
+} from "@/lib/wholesale-document-state";
 import { generateWholesaleDocumentForOrder, generateOrderSummaryPdf } from "./document-actions";
 import { AssociateCustomerDialog } from "./associate-customer-dialog";
 
@@ -85,6 +90,10 @@ export default async function OrderDetailPage({
     postal_code: string | null;
   } | null;
 
+  // ¿La solicitud vino del checkout mayorista? (wholesale_buyer_snapshot no
+  // es null) — sólo esas tienen un PDF automático esperable.
+  const wholesalePdfStates = isWholesaleOrder ? await getWholesalePdfStates(supabase, [id]) : new Map<string, { hasPdf: boolean }>();
+
   // Sólo relevante para pedidos mayoristas: documento generado en el
   // checkout, y un posible conflicto de identidad sin resolver del cliente
   // asociado (ver docs/business-rules.md § Checkout mayorista — dedup).
@@ -120,6 +129,11 @@ export default async function OrderDetailPage({
           .maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
+
+  const wholesaleDocumentState = getWholesaleDocumentState({
+    hasPdf: Boolean(attachment?.storage_path),
+    checkoutOrigin: wholesalePdfStates.has(id),
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -366,12 +380,22 @@ export default async function OrderDetailPage({
               <CardTitle className="text-base">Documento</CardTitle>
             </CardHeader>
             <CardContent>
-              <DocumentPanel
-                orderId={order.id}
-                storagePath={attachment?.storage_path ?? null}
-                canEdit={canEdit}
-                generateAction={generateWholesaleDocumentForOrder}
-              />
+              {wholesaleDocumentState === "not_from_checkout" ? (
+                // Pedido cargado a mano en la unidad Mayorista: nunca hubo
+                // un intento automático de PDF, así que no se dice que "falló".
+                <p className="text-sm text-muted-foreground">{WHOLESALE_DOCUMENT_COPY.not_from_checkout}</p>
+              ) : (
+                <DocumentPanel
+                  orderId={order.id}
+                  storagePath={attachment?.storage_path ?? null}
+                  canEdit={canEdit}
+                  generateAction={generateWholesaleDocumentForOrder}
+                  missingLabel={WHOLESALE_DOCUMENT_COPY.pdf_missing}
+                  generateLabel="Generar PDF"
+                  regenerateLabel="Regenerar PDF"
+                  allowRegenerate
+                />
+              )}
             </CardContent>
           </Card>
         )}

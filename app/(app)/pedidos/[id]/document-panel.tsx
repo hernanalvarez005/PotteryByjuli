@@ -19,8 +19,9 @@ export function DocumentPanel({
   storagePath,
   canEdit,
   generateAction,
-  missingLabel = "No se generó el resumen PDF de esta solicitud (falló al momento del pedido).",
+  missingLabel = "No se generó el PDF de esta solicitud.",
   generateLabel = "Generar resumen PDF",
+  regenerateLabel = "Regenerar",
   allowRegenerate = false,
 }: {
   orderId: string;
@@ -29,14 +30,17 @@ export function DocumentPanel({
   generateAction: (orderId: string) => Promise<{ error?: string }>;
   missingLabel?: string;
   generateLabel?: string;
-  /** El PDF mayorista nunca se regenera desde acá a propósito — quedaría
-   * reescribiendo "la solicitud original" (sección 30/42 del brief
-   * original). El resumen de pedido sí puede: no es un documento legal
-   * congelado, se actualiza cuando el pedido cambia (nuevo pago, ítem). */
+  regenerateLabel?: string;
+  /** Mostrar "Regenerar" cuando ya hay PDF. Es seguro repetirlo: el PDF
+   * mayorista se arma sólo con datos congelados en el pedido (misma
+   * solicitud original) y la regeneración reusa el mismo archivo y la
+   * misma fila — nunca duplica. El resumen de pedido también puede: se
+   * actualiza cuando el pedido cambia (nuevo pago, ítem). */
   allowRegenerate?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   if (storagePath) {
     return (
@@ -66,15 +70,18 @@ export function DocumentPanel({
             disabled={isPending}
             onClick={() => {
               setError(null);
+              setNotice(null);
               startTransition(async () => {
                 const result = await generateAction(orderId);
                 if (result.error) setError(result.error);
+                else setNotice("PDF regenerado.");
               });
             }}
           >
-            Regenerar
+            {isPending ? "Regenerando..." : regenerateLabel}
           </Button>
         )}
+        {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
     );

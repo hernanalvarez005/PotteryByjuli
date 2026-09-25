@@ -503,6 +503,15 @@ export function CartSheet({
               Tu pedido todavía debe ser confirmado por Pottery.
             </p>
 
+            {!state.documentUrl && (
+              // El pedido YA se envió: sólo falta el PDF. Mensaje sereno, sin
+              // sugerir que hay que reintentar (podría duplicar el pedido).
+              <p className="text-sm text-muted-foreground" role="status">
+                Tu pedido fue enviado correctamente. El resumen PDF no está disponible en este momento; igual
+                podés ver el detalle con &ldquo;Ver resumen&rdquo;.
+              </p>
+            )}
+
             {settings?.business_whatsapp && (
               <Button
                 className="w-full gap-2"

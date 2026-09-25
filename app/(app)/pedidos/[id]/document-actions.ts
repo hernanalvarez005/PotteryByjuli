@@ -3,9 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { renderWholesaleOrderPdf, type WholesaleOrderPdfBuyer, type WholesaleOrderPdfTerms } from "@/lib/wholesale-pdf";
+import { renderWholesaleOrderPdf } from "@/lib/wholesale-pdf";
 import { renderOrderPdf } from "@/lib/order-pdf";
 import { customerDisplayName } from "@/lib/customers-shared";
+import { loadWholesaleOrderForDocument, storeWholesaleOrderPdf, WholesalePdfStepError } from "@/lib/wholesale-pdf-store";
+import { logWholesalePdf } from "@/lib/wholesale-pdf-log";
 
 const ORDER_ATTACHMENTS_BUCKET = "order-attachments";
 
@@ -26,16 +28,21 @@ export async function getWholesaleDocumentSignedUrl(storagePath: string): Promis
 }
 
 /**
- * Generates the wholesale request PDF for an order that doesn't have one
- * yet (the original generation failed at checkout time — sección 41/42 del
- * brief). Only ever called when `order_attachments` has no row for this
- * order (the page gates the button on that) — never overwrites an existing
- * document, which would silently rewrite what the brief calls "la
- * solicitud original".
+ * Genera (o REGENERA) el PDF de una solicitud del checkout mayorista.
+ * Es seguro repetirlo tantas veces como haga falta: reusa la misma ruta
+ * de Storage (`{orderId}/{humanCode}.pdf`, con upsert) y la única fila
+ * `order_attachments` del pedido — nunca duplica archivos ni referencias,
+ * y no toca pedido, pagos, items ni historial. Recupera los cuatro estados
+ * DB/Storage: normal, archivo huérfano, fila huérfana y ninguno.
  *
- * Reads only what was frozen at request time (`wholesale_buyer_snapshot`,
- * `wholesale_terms_snapshot`, `order_items.unit_price`) — same historical
- * guarantee as the checkout's own PDF generation, see docs/business-rules.md.
+ * Lee sólo lo congelado al momento del pedido (`wholesale_buyer_snapshot`,
+ * `wholesale_terms_snapshot`, `order_items.unit_price`), así que el
+ * documento regenerado representa la solicitud original — ver
+ * docs/business-rules.md. Un pedido cargado a mano (sin snapshot) no
+ * proviene del checkout y no tiene datos para armarlo.
+ *
+ * Cada etapa tiene su propio try/catch: la usuaria recibe un mensaje
+ * específico y queda un log estructurado con humanCode, orderId y etapa.
  */
 export async function generateWholesaleDocumentForOrder(orderId: string): Promise<{ error?: string }> {
   const user = await requireUser();
@@ -43,59 +50,67 @@ export async function generateWholesaleDocumentForOrder(orderId: string): Promis
     return { error: "No tenés permiso para generar este documento." };
   }
 
+  const started = Date.now();
   const supabase = await createClient();
 
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .select(
-      "id, human_code, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, order_items(quantity, unit_price, product_variants(name, products(name)))"
-    )
-    .eq("id", orderId)
-    .single();
+  // 1) load_order
+  let loaded;
+  try {
+    loaded = await loadWholesaleOrderForDocument(supabase, { orderId });
+  } catch (error) {
+    logWholesalePdf("wholesale_pdf_failed", { humanCode: "?", orderId, step: "load_order", source: "backoffice", elapsedMs: Date.now() - started, error });
+    return { error: "No se pudo leer el pedido. Probá de nuevo." };
+  }
+  if (!loaded.ok) {
+    logWholesalePdf("wholesale_pdf_failed", {
+      humanCode: loaded.humanCode ?? "?",
+      orderId,
+      step: "load_order",
+      reason: loaded.reason,
+      source: "backoffice",
+      elapsedMs: Date.now() - started,
+      error: loaded.detail,
+    });
+    if (loaded.reason === "snapshot_incomplete") {
+      return { error: "Este pedido no proviene del checkout mayorista, así que no hay datos de solicitud para armar el PDF." };
+    }
+    if (loaded.reason === "not_found") return { error: "No encontramos el pedido." };
+    return { error: "No se pudo leer el pedido. Probá de nuevo." };
+  }
+  const order = loaded.order;
 
-  if (orderError || !order || !order.wholesale_buyer_snapshot || !order.wholesale_terms_snapshot) {
-    return { error: "Este pedido no tiene los datos necesarios para generar el documento (no es una solicitud mayorista)." };
+  // 2) render
+  let pdfBytes: Buffer;
+  try {
+    pdfBytes = await renderWholesaleOrderPdf({
+      humanCode: order.humanCode,
+      createdAt: new Date(order.createdAt),
+      buyer: order.buyer,
+      terms: order.terms,
+      items: order.items,
+    });
+  } catch (error) {
+    logWholesalePdf("wholesale_pdf_failed", { humanCode: order.humanCode, orderId, step: "render", source: "backoffice", elapsedMs: Date.now() - started, error });
+    return { error: "No se pudo armar el PDF (falló la generación del documento)." };
   }
 
-  const items = (
-    order.order_items as unknown as {
-      quantity: number;
-      unit_price: number;
-      product_variants: { name: string; products: { name: string } } | null;
-    }[]
-  ).map((item) => ({
-    productName: item.product_variants?.products.name ?? "",
-    variantName: item.product_variants?.name ?? "",
-    quantity: item.quantity,
-    unitPrice: item.unit_price,
-  }));
-
-  const pdfBytes = await renderWholesaleOrderPdf({
-    humanCode: order.human_code,
-    createdAt: new Date(order.created_at),
-    buyer: order.wholesale_buyer_snapshot as unknown as WholesaleOrderPdfBuyer,
-    terms: order.wholesale_terms_snapshot as unknown as WholesaleOrderPdfTerms,
-    items,
-  });
-
-  const storagePath = `${order.id}/${order.human_code}.pdf`;
-  const { error: uploadError } = await supabase.storage
-    .from(ORDER_ATTACHMENTS_BUCKET)
-    .upload(storagePath, pdfBytes, { contentType: "application/pdf", upsert: false });
-
-  if (uploadError) {
-    return { error: "No se pudo subir el documento." };
+  // 3) upload + 4) attachment_insert (idempotente)
+  try {
+    await storeWholesaleOrderPdf(supabase, { orderId: order.orderId, humanCode: order.humanCode, pdfBytes, uploadedBy: user.id });
+  } catch (error) {
+    const step = error instanceof WholesalePdfStepError ? error.step : "upload";
+    logWholesalePdf("wholesale_pdf_failed", { humanCode: order.humanCode, orderId, step, source: "backoffice", elapsedMs: Date.now() - started, error });
+    return {
+      error:
+        step === "attachment_insert"
+          ? "El PDF se generó pero no se pudo registrar en el pedido. Volvé a intentar: es seguro repetirlo."
+          : "No se pudo guardar el PDF. Volvé a intentar: es seguro repetirlo.",
+    };
   }
 
-  const { error: insertError } = await supabase
-    .from("order_attachments")
-    .insert({ order_id: order.id, storage_path: storagePath, kind: "wholesale_request_pdf", uploaded_by: user.id });
-
-  if (insertError) {
-    return { error: "El documento se subió pero no se pudo registrar." };
-  }
-
+  logWholesalePdf("wholesale_pdf_generated", { humanCode: order.humanCode, orderId, source: "backoffice", elapsedMs: Date.now() - started });
   revalidatePath(`/pedidos/${orderId}`);
+  revalidatePath("/pedidos");
   return {};
 }
 

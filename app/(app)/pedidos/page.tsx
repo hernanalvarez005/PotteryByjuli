@@ -16,6 +16,20 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PedidosKanban } from "./pedidos-kanban";
+import { createClient } from "@/lib/supabase/server";
+import { getMissingWholesalePdfOrderIds } from "@/lib/wholesale-document-state";
+
+function MissingPdfBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="ml-2 border-amber-300 text-[10px] text-amber-700"
+      title="La solicitud mayorista no tiene su PDF. Abrí el pedido para generarlo."
+    >
+      Sin PDF
+    </Badge>
+  );
+}
 
 export default async function PedidosPage({
   searchParams,
@@ -39,6 +53,15 @@ export default async function PedidosPage({
   // datos aunque compartan la misma pantalla.
   const kanbanData = view === "kanban" ? await getOrdersKanbanBoard({ includeArchived: showArchived }) : null;
   const listData = view === "list" ? await getOrdersPage({ operationType: "order", includeArchived: showArchived }, cursor) : null;
+
+  // Señal operativa "Sin PDF": sólo para solicitudes del checkout mayorista
+  // (wholesale_buyer_snapshot no nulo) que no tienen su PDF. Una query
+  // acotada a los pedidos que se están mostrando.
+  const shownOrderIds =
+    view === "kanban"
+      ? Object.values(kanbanData!.ordersByStatus).flat().map((o) => o.id)
+      : (listData?.orders ?? []).map((o) => o.id);
+  const missingPdfOrderIds = await getMissingWholesalePdfOrderIds(await createClient(), shownOrderIds);
 
   const isEmpty =
     view === "kanban"
@@ -129,6 +152,7 @@ export default async function PedidosPage({
           counts={kanbanData!.counts}
           paidByOrder={kanbanData!.paidByOrder}
           canEdit={canEdit}
+          missingPdfOrderIds={[...missingPdfOrderIds]}
         />
       ) : (
         <Table>
@@ -156,6 +180,7 @@ export default async function PedidosPage({
                     >
                       {order.human_code}
                     </Link>
+                    {missingPdfOrderIds.has(order.id) && <MissingPdfBadge />}
                   </TableCell>
                   <TableCell>
                     {order.customers ? customerDisplayName(order.customers) : "—"}

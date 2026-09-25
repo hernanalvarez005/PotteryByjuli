@@ -196,19 +196,51 @@ cliente crudo — sólo tres funciones puntuales).
 
 ## Checkout mayorista: un fallo de PDF nunca esconde ni duplica un pedido
 
-La RPC (transacción atómica) crea cliente+pedido+items primero e
+La RPC (transacción atómica) crea cliente+pedido+items+snapshots primero e
 independientemente. La generación del PDF y su subida pasan después, en el
-mismo Server Action, envueltas en `try/catch` que nunca hace fallar la
-respuesta — si el PDF falla, `humanCode`/`orderId` igual se devuelven,
-`documentUrl` queda `null`, y la pantalla de éxito funciona igual sin el
-link (nunca se muestra un error que sugiera reintentar, que sí podría
-terminar en un pedido duplicado). La ausencia de una fila en
-`order_attachments` para ese pedido es la señal — no hace falta una
-columna de estado nueva. Desde el backoffice, un pedido sin documento
-muestra "Generar resumen PDF" (usa los mismos datos ya congelados del
-pedido); un pedido que ya tiene uno muestra "Ver PDF" — nunca "regenerar"
-un documento existente, para no reescribir silenciosamente la solicitud
-original.
+mismo Server Action (`generateCheckoutPdf`, lib/wholesale-checkout-pdf.ts),
+como "mejor esfuerzo" que **nunca** hace fallar la respuesta: si el PDF
+falla, `humanCode`/`orderId` igual se devuelven, `documentUrl` queda `null`
+y la pantalla de éxito funciona igual (nunca un error que sugiera
+reintentar — eso sí podría duplicar el pedido). Postgres, React PDF y
+Storage no comparten transacción: lo único garantizado es el pedido; el
+PDF no.
+
+**Observabilidad (2026-09-25)**: cada etapa (`load_order` → `render` →
+`upload` → `attachment_insert` → `signed_url`) deja un log JSON de una
+línea con `event`, `step`, `humanCode`, `orderId`, `elapsedMs` y el error —
+nunca datos del comprador. Eventos: `wholesale_pdf_started`,
+`wholesale_pdf_generated`, `wholesale_pdf_failed` (no hay PDF) y
+`wholesale_pdf_link_unavailable` (el PDF SÍ existe pero no se pudo firmar
+el link: no es lo mismo que un PDF fallido). Un `started` sin
+`generated`/`failed` posterior indica un corte de la función (timeout).
+`getWholesaleOrderForDocument` devuelve un resultado explícito
+(`not_found` / `snapshot_incomplete` / `query_error`), nunca un `null`
+mudo. **Sin reintento automático a propósito**: podría empeorar timeouts y
+duración; la recuperación es la regeneración idempotente.
+
+**Señal operativa**: una solicitud del checkout (`wholesale_buyer_snapshot
+IS NOT NULL`) sin fila `order_attachments` `wholesale_request_pdf` se marca
+"Sin PDF" en la lista y el Kanban de Pedidos y en la ficha (estado derivado,
+sin `pdf_status`). Un pedido cargado a mano en la unidad Mayorista **no** se
+marca — nunca tuvo intento automático — y la ficha dice "Este pedido no
+proviene del checkout mayorista."
+
+**Regeneración idempotente** (`generateWholesaleDocumentForOrder`, owner u
+operations): se puede repetir siempre. Reusa la misma ruta
+`{order_id}/{human_code}.pdf` (`upsert`) y la única fila del adjunto
+(se actualiza si existe, se inserta si no; índice único parcial
+`order_attachments_one_wholesale_pdf_per_order`, sólo para
+`wholesale_request_pdf` porque otros `kind` pueden repetirse). Recupera los
+cuatro estados DB/Storage (normal, archivo huérfano, fila huérfana,
+ninguno) y no toca pedido, pagos, items ni historial. Como el PDF se arma
+sólo con datos congelados, el documento regenerado es la solicitud original.
+
+**Incidente MAY-000024 (2026-09-23)**: pedido web creado correctamente; el
+PDF automático quedó ausente; se regeneró a mano desde el backoffice ~2 h
+después. La causa técnica puntual no es determinable: los errores
+post-commit no dejaban señal persistente. Este hardening existe para que la
+próxima falla sea detectable, observable, recuperable e idempotente.
 
 ## Checkout mayorista: WhatsApp de Pottery y "se abrió" vs. "se envió"
 

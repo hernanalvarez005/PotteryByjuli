@@ -29,6 +29,7 @@ export function PedidosKanban({
   counts,
   paidByOrder,
   canEdit,
+  missingPdfOrderIds,
 }: {
   ordersByStatus: Record<KanbanStatus, OrderListRow[]>;
   /** Conteo real por columna (perf audit H-08 bloque 3) — nunca
@@ -39,7 +40,10 @@ export function PedidosKanban({
   counts: Record<KanbanStatus, number>;
   paidByOrder: Record<string, number>;
   canEdit: boolean;
+  /** Solicitudes del checkout mayorista sin PDF (ver lib/wholesale-document-state.ts). */
+  missingPdfOrderIds: string[];
 }) {
+  const missingPdf = new Set(missingPdfOrderIds);
   return (
     <div className="flex gap-4 overflow-x-auto pb-2">
       {KANBAN_COLUMNS.map((col) => {
@@ -69,6 +73,7 @@ export function PedidosKanban({
                     order={order}
                     paid={paidByOrder[order.id] ?? 0}
                     canEdit={canEdit}
+                    missingPdf={missingPdf.has(order.id)}
                   />
                 ))
               )}
@@ -84,10 +89,12 @@ function KanbanCard({
   order,
   paid,
   canEdit,
+  missingPdf,
 }: {
   order: OrderListRow;
   paid: number;
   canEdit: boolean;
+  missingPdf: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const balance = order.total - paid;
@@ -99,11 +106,22 @@ function KanbanCard({
           <Link href={`/pedidos/${order.id}`} className="text-sm font-medium hover:underline">
             {order.human_code}
           </Link>
-          {order.archived_at && (
-            <Badge variant="outline" className="text-[10px]">
-              Archivado
-            </Badge>
-          )}
+          <div className="flex items-center gap-1">
+            {missingPdf && (
+              <Badge
+                variant="outline"
+                className="border-amber-300 text-[10px] text-amber-700"
+                title="La solicitud mayorista no tiene su PDF. Abrí el pedido para generarlo."
+              >
+                Sin PDF
+              </Badge>
+            )}
+            {order.archived_at && (
+              <Badge variant="outline" className="text-[10px]">
+                Archivado
+              </Badge>
+            )}
+          </div>
         </div>
         <p className="text-xs text-muted-foreground">
           {order.customers ? customerDisplayName(order.customers) : "Sin cliente"}
