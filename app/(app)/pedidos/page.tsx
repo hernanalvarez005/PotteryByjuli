@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Plus, LayoutGrid, List } from "lucide-react";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
-import { getOrdersKanbanBoard, getOrdersPage, type OrdersPageCursor } from "@/lib/orders";
+import { getOrdersKanbanBoard, getOrdersPage, getOrdersReceivable, type OrdersPageCursor } from "@/lib/orders";
+import { receivableNotes, resolveBusinessUnitFilter, type BusinessUnitFilterOption } from "@/lib/orders-receivable";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { ORDER_STATUS_LABELS } from "@/schemas/orders";
@@ -34,7 +35,7 @@ function MissingPdfBadge() {
 export default async function PedidosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string; archived?: string; cursorCreatedAt?: string; cursorId?: string }>;
+  searchParams: Promise<{ view?: string; archived?: string; unit?: string; cursorCreatedAt?: string; cursorId?: string }>;
 }) {
   const user = await requireUser();
   const canEdit = isOwner(user) || hasRole(user, "operations");
@@ -47,12 +48,29 @@ export default async function PedidosPage({
       ? { createdAt: params.cursorCreatedAt, id: params.cursorId }
       : null;
 
+  // Filtro por unidad de negocio (?unit=<code>): se resuelve UNA vez acá y el
+  // mismo `businessUnitId` alimenta Lista, Kanban y el KPI — nunca cada uno por
+  // su lado. Un código desconocido equivale a "todas".
+  const supabaseForFilters = await createClient();
+  const { data: unitRows } = await supabaseForFilters
+    .from("business_units")
+    .select("id,code,name")
+    .eq("is_active", true)
+    .order("sort_order");
+  const units = (unitRows ?? []) as BusinessUnitFilterOption[];
+  const unitFilter = resolveBusinessUnitFilter(params.unit, units);
+  const businessUnitId = unitFilter?.id ?? null;
+
+  // "Pendiente de cobrar": una sola consulta agregada en el servidor
+  // (get_orders_receivable), independiente de la vista y de la paginación.
+  const receivable = await getOrdersReceivable(businessUnitId);
+
   // Kanban y Lista usan queries completamente separadas (perf audit
   // H-08 bloque 3) — un Kanban es "todo el trabajo activo agrupado por
   // estado", nunca "página 1 de N", así que no comparten estrategia de
   // datos aunque compartan la misma pantalla.
-  const kanbanData = view === "kanban" ? await getOrdersKanbanBoard({ includeArchived: showArchived }) : null;
-  const listData = view === "list" ? await getOrdersPage({ operationType: "order", includeArchived: showArchived }, cursor) : null;
+  const kanbanData = view === "kanban" ? await getOrdersKanbanBoard({ includeArchived: showArchived, businessUnitId }) : null;
+  const listData = view === "list" ? await getOrdersPage({ operationType: "order", includeArchived: showArchived, businessUnitId }, cursor) : null;
 
   // Señal operativa "Sin PDF": sólo para solicitudes del checkout mayorista
   // (wholesale_buyer_snapshot no nulo) que no tienen su PDF. Una query
@@ -73,7 +91,18 @@ export default async function PedidosPage({
     const qs = new URLSearchParams();
     if (nextView !== "list") qs.set("view", nextView);
     if (showArchived) qs.set("archived", "1");
+    if (unitFilter) qs.set("unit", unitFilter.code);
     // Cambiar de vista siempre vuelve a la primera página.
+    const query = qs.toString();
+    return query ? `/pedidos?${query}` : "/pedidos";
+  }
+
+  function unitHref(code: string | null) {
+    const qs = new URLSearchParams();
+    if (view !== "list") qs.set("view", view);
+    if (showArchived) qs.set("archived", "1");
+    if (code) qs.set("unit", code);
+    // Cambiar de unidad vuelve a la primera página (el cursor ya no aplica).
     const query = qs.toString();
     return query ? `/pedidos?${query}` : "/pedidos";
   }
@@ -82,6 +111,7 @@ export default async function PedidosPage({
     const qs = new URLSearchParams();
     if (view !== "list") qs.set("view", view);
     if (next) qs.set("archived", "1");
+    if (unitFilter) qs.set("unit", unitFilter.code);
     // Cambiar el filtro de archivados también vuelve a la primera página
     // — el cursor de la página anterior ya no representa un límite
     // válido para el nuevo conjunto de resultados.
@@ -93,6 +123,7 @@ export default async function PedidosPage({
     if (!nextCursor) return null;
     const qs = new URLSearchParams();
     if (showArchived) qs.set("archived", "1");
+    if (unitFilter) qs.set("unit", unitFilter.code);
     qs.set("cursorCreatedAt", nextCursor.createdAt);
     qs.set("cursorId", nextCursor.id);
     return `/pedidos?${qs.toString()}`;
@@ -120,6 +151,43 @@ export default async function PedidosPage({
         )}
       </div>
 
+      {receivable && (
+        <div className="flex flex-col gap-1 rounded-md border bg-card p-4" data-testid="orders-receivable">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+            Pendiente de cobrar{unitFilter ? ` · ${unitFilter.name}` : ""}
+          </p>
+          <p className={`text-2xl font-semibold tracking-tight ${receivable.pendingTotal > 0 ? "text-amber-600" : ""}`}>
+            {formatCurrency(receivable.pendingTotal)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {receivable.ordersCount === 0
+              ? "No hay pedidos con saldo pendiente."
+              : `${receivable.ordersCount} ${receivable.ordersCount === 1 ? "pedido con saldo" : "pedidos con saldo"} · sin contar cancelados`}
+          </p>
+          {receivableNotes({ data: receivable, view, showArchived, formatMoney: formatCurrency }).map((note) => (
+            <p key={note} className="text-xs text-muted-foreground">
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2" aria-label="Filtrar por unidad de negocio">
+        <span className="text-sm text-muted-foreground">Unidad</span>
+        <Link href={unitHref(null)}>
+          <Badge variant={unitFilter ? "outline" : "secondary"} className="cursor-pointer">
+            Todas
+          </Badge>
+        </Link>
+        {units.map((u) => (
+          <Link key={u.id} href={unitHref(u.code)}>
+            <Badge variant={unitFilter?.id === u.id ? "secondary" : "outline"} className="cursor-pointer">
+              {u.name}
+            </Badge>
+          </Link>
+        ))}
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-md border p-1">
           <Link href={viewHref("list")}>
@@ -144,7 +212,7 @@ export default async function PedidosPage({
 
       {isEmpty ? (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-          Todavía no hay pedidos cargados.
+          {unitFilter ? `No hay pedidos en ${unitFilter.name}.` : "Todavía no hay pedidos cargados."}
         </p>
       ) : view === "kanban" ? (
         <PedidosKanban
