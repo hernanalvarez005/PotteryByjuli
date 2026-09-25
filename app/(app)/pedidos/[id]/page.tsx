@@ -19,6 +19,7 @@ import { StatusSelect } from "./status-select";
 import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
 import { ShareWholesalePanel } from "./share-wholesale-panel";
+import { DeleteOrderMenu } from "./delete-order-menu";
 import {
   getWholesaleDocumentState,
   getWholesalePdfStates,
@@ -131,6 +132,24 @@ export default async function OrderDetailPage({
       : Promise.resolve({ data: null }),
   ]);
 
+  // "Eliminar pedido" (sólo owner): la regla la decide Postgres
+  // (classify_order_for_delete); acá sólo se muestra el resultado. Si la
+  // consulta falla NO se ofrece la acción (nunca se adivina) y queda log.
+  let deleteBlockMessage: string | null = null;
+  let canOfferDelete = false;
+  if (isOwner(user)) {
+    const { data: check, error: checkError } = await supabase.rpc("classify_order_for_delete", { p_id: id });
+    if (checkError) {
+      console.error(JSON.stringify({ event: "order_delete_classify_failed", orderId: id, errorCode: checkError.code, errorMessage: checkError.message }));
+    } else {
+      const row = (check as { deletable: boolean; block_message: string | null }[] | null)?.[0];
+      if (row) {
+        canOfferDelete = true;
+        deleteBlockMessage = row.deletable ? null : (row.block_message ?? "Este pedido no puede eliminarse.");
+      }
+    }
+  }
+
   const wholesaleDocumentState = getWholesaleDocumentState({
     hasPdf: Boolean(attachment?.storage_path),
     checkoutOrigin: wholesalePdfStates.has(id),
@@ -149,6 +168,7 @@ export default async function OrderDetailPage({
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{order.human_code}</h1>
           <StatusSelect orderId={order.id} status={order.status} canEdit={canEdit} />
+          {canOfferDelete && <DeleteOrderMenu orderId={order.id} humanCode={order.human_code} blockMessage={deleteBlockMessage} />}
         </div>
         {customer ? (
           <p className="mt-1 text-sm text-muted-foreground">

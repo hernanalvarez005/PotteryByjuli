@@ -359,7 +359,43 @@ borrar, y sólo `owner` puede invocarlas.
 | `workshop_enrollments` | Sí (`delete_enrollment_safe`) | `status = 'cancelled'` (baja) | 0 registros de asistencia, 0 cuotas |
 | `event_registrations` | Sí (`delete_registration_safe`) | `status = 'cancelled'` | `payment_status = 'pending'` (nunca se registró un pago) |
 | `products` | Sí (`delete_product_safe`, individual; `bulk_delete_products_safe`, en lote) | `is_active = false` | 0 `order_items`, 0 `inventory_movements`, 0 `production_orders` (vía `product_variants`) |
-| `orders`, `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
+| `orders` | Sí, **sólo owner** (`delete_order_safe`) | Cancelar (`set_order_status`) | 0 pagos, 0 movimientos de stock del pedido, 0 órdenes de producción, no entregado y no proviene del checkout mayorista (ver abajo) |
+| `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
+
+### Eliminar un pedido cargado por error
+
+Existe para corregir una carga equivocada, **no** para borrar historial
+válido. La regla decide por **relaciones reales**, no sólo por estado, y vive
+en Postgres (`classify_order_for_delete` es la única fuente de la regla y del
+mensaje; `delete_order_safe` la re-verifica con el pedido bloqueado
+`FOR UPDATE`, así un pago o cambio de estado concurrente nunca se pierde):
+
+- **No se puede** si tiene pagos (el `ON DELETE CASCADE` los borraría en
+  silencio), movimientos de stock (`inventory_movements.reference_id` es
+  polimórfico, sin FK: quedarían huérfanos), órdenes de producción (`ON
+  DELETE SET NULL`: quedarían huérfanas), si está entregado, o si es una
+  solicitud del checkout mayorista (un pedido real de un cliente).
+- Las **reservas activas** y el **historial de estados** no bloquean: son
+  estado transitorio/derivado y se van con el pedido. Un pedido cancelado sin
+  consecuencias sí se puede borrar.
+- Un pedido no elegible **se cancela**, no se borra: la ficha explica por qué
+  ("Este pedido ya tiene movimientos asociados y no puede eliminarse. Podés
+  cancelarlo.") y no ofrece borrar.
+- **Sólo owner**, en una transacción (`security definer` con el chequeo
+  adentro), y la política RLS de `orders` ya **no permite `DELETE` directo por
+  la API** (antes era `FOR ALL` para operations/owner y cascadeaba los
+  pagos). INSERT/UPDATE conservan sus permisos.
+- **Auditoría:** `order_deletions` (append-only, sólo la owner la lee): código,
+  importe, cantidad de ítems, cliente, estado, fecha original, quién, cuándo y
+  motivo opcional. Sin FK, para no bloquear el borrado de clientes.
+- **Storage** no forma parte de la transacción: los adjuntos (PDF) se borran
+  después del commit; si eso falla el pedido igual queda eliminado y se loguea
+  `order_delete_storage_cleanup_failed` (un archivo huérfano es inocuo: bucket
+  privado, ruta con el uuid).
+- El código humano viene de una secuencia: un pedido borrado **deja un hueco**
+  en la numeración, nunca se reutiliza.
+- Fuera de alcance: `payments` y `order_items` siguen permitiendo `DELETE`
+  directo a operations por RLS (deuda de la política, no de esta función).
 
 En todos los casos: eliminar una inscripción/enrollment **nunca** borra al
 `customer` — María puede dejar el taller y seguir existiendo en el CRM con
