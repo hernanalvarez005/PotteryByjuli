@@ -27,8 +27,11 @@ export type WholesalePdfLogFields = {
   step?: WholesalePdfStep;
   /** De dónde se disparó: el checkout público o el backoffice. */
   source?: "checkout" | "backoffice";
-  /** Para `load_order`: not_found | snapshot_incomplete | query_error. */
+  /** Para `load_order`: not_found | snapshot_incomplete | query_error |
+   * not_wholesale | missing_customer. */
   reason?: string;
+  /** `request` (solicitud del checkout) u `order` (pedido cargado a mano). */
+  documentKind?: "request" | "order";
   elapsedMs?: number;
   error?: unknown;
 };

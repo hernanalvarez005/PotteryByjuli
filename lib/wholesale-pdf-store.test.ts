@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  loadWholesaleDocumentData,
   loadWholesaleOrderForDocument,
   storeWholesaleOrderPdf,
   wholesalePdfStoragePath,
@@ -173,5 +174,94 @@ describe("loadWholesaleOrderForDocument — resultado explícito, nunca un null 
         { productName: "", variantName: "", quantity: 1, unitPrice: 50 },
       ]);
     }
+  });
+});
+
+
+// Cliente falso de DOS tablas: `orders` (select/eq/maybeSingle) y
+// `wholesale_settings` (select/limit/maybeSingle).
+function documentClient(order: { data: unknown; error?: { code?: string; message: string } | null }, settings: { data: unknown; error?: { code?: string; message: string } | null } = { data: null }) {
+  const chain = (result: { data: unknown; error?: unknown }) => {
+    const b: Record<string, unknown> = {};
+    for (const m of ["select", "eq", "limit"]) b[m] = () => b;
+    b.maybeSingle = async () => ({ data: result.data, error: result.error ?? null });
+    return b;
+  };
+  return {
+    from: vi.fn((table: string) => (table === "orders" ? chain(order) : chain(settings))),
+  } as unknown as SupabaseClient;
+}
+
+const CUSTOMER = {
+  first_name: "Ana", last_name: "Gómez", company_name: "Casa Ana", cuit: null, instagram: null, website: null,
+  city: "Rosario", province: "Santa Fe", address: null, postal_code: null, whatsapp: "5493410000000", email: null,
+};
+const ITEMS = [{ quantity: 2, unit_price: 100, custom_name: null, product_variants: { name: "Rosa", products: { name: "Taza" } } }];
+const orderRow = (over: Record<string, unknown> = {}) => ({
+  id: ORDER, human_code: CODE, created_at: "2026-09-25T12:00:00Z",
+  wholesale_buyer_snapshot: null, wholesale_terms_snapshot: null,
+  business_units: { code: "wholesale" }, customers: CUSTOMER, order_items: ITEMS,
+  ...over,
+});
+const SETTINGS = { lead_time_min_days: 10, lead_time_max_days: 20, payment_terms: "50% seña", shipping_terms: "A coordinar" };
+
+describe("loadWholesaleDocumentData — un camino, dos orígenes", () => {
+  it("pedido del CHECKOUT (ambos snapshots) → solicitud con los datos congelados, sin mirar cliente ni configuración", async () => {
+    const snapshotBuyer = { ...CUSTOMER, first_name: "Congelado" };
+    const snapshotTerms = { min_order_amount: 1, min_total_units: 2, lead_time_min_days: 3, lead_time_max_days: 4, payment_terms: "orig", shipping_terms: "orig" };
+    const client = documentClient({ data: orderRow({ wholesale_buyer_snapshot: snapshotBuyer, wholesale_terms_snapshot: snapshotTerms }) }, { data: SETTINGS });
+    const r = await loadWholesaleDocumentData(client, { orderId: ORDER });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.order).toMatchObject({ kind: "request", source: "checkout_snapshot" });
+      expect(r.order.buyer.first_name).toBe("Congelado"); // no el del cliente vivo
+      expect(r.order.terms.payment_terms).toBe("orig"); // no la configuración viva
+    }
+    expect(client.from).not.toHaveBeenCalledWith("wholesale_settings");
+  });
+
+  it("pedido MANUAL mayorista → 'order' armado con cliente + configuración vigentes", async () => {
+    const r = await loadWholesaleDocumentData(documentClient({ data: orderRow() }, { data: SETTINGS }), { orderId: ORDER });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.order).toMatchObject({ kind: "order", source: "order_live", humanCode: CODE });
+      expect(r.order.buyer.first_name).toBe("Ana");
+      expect(r.order.terms.payment_terms).toBe("50% seña");
+      expect(r.order.items).toEqual([{ productName: "Taza", variantName: "Rosa", quantity: 2, unitPrice: 100 }]);
+    }
+  });
+
+  it("pedido de otra unidad (minorista) sin checkout → 'not_wholesale': nunca entra al flujo mayorista", async () => {
+    const r = await loadWholesaleDocumentData(documentClient({ data: orderRow({ business_units: { code: "retail" } }) }), { orderId: ORDER });
+    expect(r).toEqual({ ok: false, reason: "not_wholesale", orderId: ORDER, humanCode: CODE });
+  });
+
+  it("manual sin cliente → missing_customer", async () => {
+    const r = await loadWholesaleDocumentData(documentClient({ data: orderRow({ customers: null }) }), { orderId: ORDER });
+    expect(r).toEqual({ ok: false, reason: "missing_customer", orderId: ORDER, humanCode: CODE });
+  });
+
+  it("sólo UN snapshot (dato inconsistente del checkout) → snapshot_incomplete; NO se completa con datos vivos", async () => {
+    const onlyBuyer = await loadWholesaleDocumentData(documentClient({ data: orderRow({ wholesale_buyer_snapshot: CUSTOMER }) }, { data: SETTINGS }), { orderId: ORDER });
+    const onlyTerms = await loadWholesaleDocumentData(documentClient({ data: orderRow({ wholesale_terms_snapshot: SETTINGS }) }, { data: SETTINGS }), { orderId: ORDER });
+    expect(onlyBuyer).toMatchObject({ ok: false, reason: "snapshot_incomplete" });
+    expect(onlyTerms).toMatchObject({ ok: false, reason: "snapshot_incomplete" });
+  });
+
+  it("inexistente → not_found; error de consulta → query_error con código", async () => {
+    expect(await loadWholesaleDocumentData(documentClient({ data: null }), { orderId: ORDER })).toEqual({ ok: false, reason: "not_found" });
+    expect(await loadWholesaleDocumentData(documentClient({ data: null, error: { code: "57014", message: "timeout" } }), { orderId: ORDER })).toEqual({
+      ok: false, reason: "query_error", detail: "57014: timeout",
+    });
+  });
+
+  it("falla la lectura de la configuración → query_error (no genera un PDF sin condiciones en silencio)", async () => {
+    const r = await loadWholesaleDocumentData(documentClient({ data: orderRow() }, { data: null, error: { code: "42501", message: "rls" } }), { orderId: ORDER });
+    expect(r).toMatchObject({ ok: false, reason: "query_error", detail: "42501: rls" });
+  });
+
+  it("sin fila de configuración → igual genera (condiciones vacías)", async () => {
+    const r = await loadWholesaleDocumentData(documentClient({ data: orderRow() }, { data: null }), { orderId: ORDER });
+    expect(r.ok).toBe(true);
   });
 });

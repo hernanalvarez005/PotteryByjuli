@@ -116,3 +116,51 @@ describe("renderWholesaleOrderPdf", () => {
     expect(originalText).not.toContain("Condiciones nuevas");
   });
 });
+
+describe("renderWholesaleOrderPdf — kind", () => {
+  it("sin `kind` (checkout) equivale a kind:'request': mismo documento de siempre", async () => {
+    const implicit = await extractText(await renderWholesaleOrderPdf(baseInput));
+    const explicit = await extractText(await renderWholesaleOrderPdf({ ...baseInput, kind: "request" }));
+    expect(explicit).toBe(implicit);
+    expect(implicit).toContain("Solicitud de pedido mayorista");
+    expect(implicit).toContain("SOLICITUD PENDIENTE DE CONFIRMACIÓN");
+    expect(implicit).toContain("Pedido mínimo"); // los mínimos del checkout siguen en la solicitud
+  });
+
+  it("kind:'order' (pedido cargado a mano): sin banner de solicitud pendiente y con título de pedido", async () => {
+    const text = await extractText(await renderWholesaleOrderPdf({ ...baseInput, kind: "order" }));
+    expect(text).toContain("Pedido mayorista");
+    expect(text).not.toContain("Solicitud de pedido mayorista");
+    expect(text).not.toContain("SOLICITUD PENDIENTE");
+    expect(text).toContain("MAY-000127");
+    expect(text).toContain("160.000");
+    expect(text).toContain("Forma de pago");
+  });
+
+  it("kind:'order' sin ninguna condición cargada: no dibuja una sección 'Condiciones' vacía", async () => {
+    const emptyTerms = { min_order_amount: null, min_total_units: null, lead_time_min_days: null, lead_time_max_days: null, payment_terms: null, shipping_terms: null };
+    const text = await extractText(await renderWholesaleOrderPdf({ ...baseInput, kind: "order", terms: emptyTerms }));
+    expect(text).not.toContain("Condiciones");
+  });
+
+  it("comprador sin WhatsApp ni opcionales (cliente cargado a mano): genera un PDF válido sin líneas vacías", async () => {
+    const buffer = await renderWholesaleOrderPdf({
+      ...baseInput,
+      kind: "order",
+      buyer: { first_name: "Beto", last_name: null, company_name: null, cuit: null, instagram: null, website: null, city: null, province: null, address: null, postal_code: null, whatsapp: null, email: null },
+    });
+    expect(buffer.subarray(0, 4).toString()).toBe("%PDF");
+    const text = await extractText(buffer);
+    expect(text).toContain("Beto");
+    for (const label of ["WhatsApp", "Email", "CUIT", "Ciudad", "Dirección"]) expect(text).not.toContain(label);
+  });
+
+  it("un ítem personalizado sin variante aparece con su nombre", async () => {
+    const text = await extractText(
+      await renderWholesaleOrderPdf({ ...baseInput, kind: "order", items: [{ productName: "Tazas con logo", variantName: "", quantity: 30, unitPrice: 5000 }] })
+    );
+    expect(text).toContain("Tazas con logo");
+    expect(text).toContain("150.000");
+  });
+});
+

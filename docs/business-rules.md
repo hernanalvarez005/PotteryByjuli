@@ -247,8 +247,8 @@ duración; la recuperación es la regeneración idempotente.
 IS NOT NULL`) sin fila `order_attachments` `wholesale_request_pdf` se marca
 "Sin PDF" en la lista y el Kanban de Pedidos y en la ficha (estado derivado,
 sin `pdf_status`). Un pedido cargado a mano en la unidad Mayorista **no** se
-marca — nunca tuvo intento automático — y la ficha dice "Este pedido no
-proviene del checkout mayorista."
+marca — nunca tuvo intento automático — pero su ficha ofrece "Generar PDF"
+(ver "PDF de pedidos mayoristas cargados a mano" abajo).
 
 **Regeneración idempotente** (`generateWholesaleDocumentForOrder`, owner u
 operations): se puede repetir siempre. Reusa la misma ruta
@@ -259,6 +259,48 @@ operations): se puede repetir siempre. Reusa la misma ruta
 cuatro estados DB/Storage (normal, archivo huérfano, fila huérfana,
 ninguno) y no toca pedido, pagos, items ni historial. Como el PDF se arma
 sólo con datos congelados, el documento regenerado es la solicitud original.
+
+### PDF de pedidos mayoristas cargados a mano
+
+Un pedido creado desde `/pedidos/nuevo` no tiene `wholesale_*_snapshot`
+(los escribe sólo `submit_wholesale_request`), y **no se inventan**: esas
+columnas siguen significando "vino del checkout" (de ellas depende la señal
+"Sin PDF"). El renderer recibe un único `WholesaleDocumentData`
+(`lib/wholesale-document-data.ts`) y no sabe de dónde salió; el loader del
+backoffice (`loadWholesaleDocumentData`) arma uno de dos orígenes:
+
+| | Solicitud del checkout | Pedido cargado a mano |
+|---|---|---|
+| `kind` / `source` | `request` / `checkout_snapshot` | `order` / `order_live` |
+| Comprador | `wholesale_buyer_snapshot` (congelado) | `customers` al generar |
+| Condiciones | `wholesale_terms_snapshot` (con mínimos) | `wholesale_settings` al generar (plazo, pago, envío; **sin** mínimos) |
+| Ítems y precios | `order_items` (histórico) | `order_items` (histórico) |
+| Título / banner | "Solicitud…" + "pendiente de confirmación" | "Pedido mayorista", sin banner |
+
+- Lo que queda "congelado" en un pedido manual es **el PDF guardado**;
+  "Regenerar PDF" es un acto explícito y toma el dato vigente (una dirección
+  corregida). Los precios nunca cambian: siempre `order_items.unit_price`.
+- Sólo UN snapshot presente (inconsistente) → error `snapshot_incomplete`;
+  nunca se completa con datos vivos en silencio. Un pedido que no es de la
+  unidad Mayorista (`not_wholesale`) o sin cliente (`missing_customer`) no
+  genera PDF.
+- Mismo hardening que el checkout: ruta `{order_id}/{human_code}.pdf`,
+  `upsert`, una única fila `wholesale_request_pdf` (el nombre del `kind` se
+  conserva para no tocar el índice único), logs estructurados con
+  `documentKind`.
+
+### Compartir el PDF con el cliente por WhatsApp (backoffice)
+
+`wa.me` sólo lleva texto: **no puede adjuntar archivos**. Por eso el camino
+principal es un mensaje preestablecido con un link firmado (72 h, firmado con
+la sesión de la usuaria, nunca la service role) al PDF, dirigido al número
+del cliente (`prepareWholesaleShare`, `lib/wholesale-share.ts`). Alternativas
+según el navegador: **Web Share con archivo** (sólo si
+`navigator.canShare({ files })` lo permite — en general móviles; abre el
+selector del sistema, donde hay que elegir el contacto, y algunas versiones
+de WhatsApp ignoran el texto) y, en escritorio, **descargar el PDF** y
+adjuntarlo a mano. Los links se piden al abrir el panel, no en cada vista de
+la ficha.
 
 **Incidente MAY-000024 (2026-09-23)**: pedido web creado correctamente; el
 PDF automático quedó ausente; se regeneró a mano desde el backoffice ~2 h

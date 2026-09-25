@@ -23,6 +23,7 @@ export function DocumentPanel({
   generateLabel = "Generar resumen PDF",
   regenerateLabel = "Regenerar",
   allowRegenerate = false,
+  regenerateHint,
 }: {
   orderId: string;
   storagePath: string | null;
@@ -37,6 +38,8 @@ export function DocumentPanel({
    * misma fila — nunca duplica. El resumen de pedido también puede: se
    * actualiza cuando el pedido cambia (nuevo pago, ítem). */
   allowRegenerate?: boolean;
+  /** Aclaración bajo "Regenerar" (p. ej. de dónde salen los datos). */
+  regenerateHint?: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,7 @@ export function DocumentPanel({
             {isPending ? "Regenerando..." : regenerateLabel}
           </Button>
         )}
+        {canEdit && allowRegenerate && regenerateHint && <p className="text-xs text-muted-foreground">{regenerateHint}</p>}
         {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>

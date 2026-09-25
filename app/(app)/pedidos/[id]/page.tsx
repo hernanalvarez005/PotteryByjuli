@@ -18,6 +18,7 @@ import {
 import { StatusSelect } from "./status-select";
 import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
+import { ShareWholesalePanel } from "./share-wholesale-panel";
 import {
   getWholesaleDocumentState,
   getWholesalePdfStates,
@@ -380,21 +381,25 @@ export default async function OrderDetailPage({
               <CardTitle className="text-base">Documento</CardTitle>
             </CardHeader>
             <CardContent>
-              {wholesaleDocumentState === "not_from_checkout" ? (
-                // Pedido cargado a mano en la unidad Mayorista: nunca hubo
-                // un intento automático de PDF, así que no se dice que "falló".
-                <p className="text-sm text-muted-foreground">{WHOLESALE_DOCUMENT_COPY.not_from_checkout}</p>
-              ) : (
-                <DocumentPanel
-                  orderId={order.id}
-                  storagePath={attachment?.storage_path ?? null}
-                  canEdit={canEdit}
-                  generateAction={generateWholesaleDocumentForOrder}
-                  missingLabel={WHOLESALE_DOCUMENT_COPY.pdf_missing}
-                  generateLabel="Generar PDF"
-                  regenerateLabel="Regenerar PDF"
-                  allowRegenerate
-                />
+              <DocumentPanel
+                orderId={order.id}
+                storagePath={attachment?.storage_path ?? null}
+                canEdit={canEdit}
+                generateAction={generateWholesaleDocumentForOrder}
+                missingLabel={wholesaleDocumentState === "pdf_missing" ? WHOLESALE_DOCUMENT_COPY.pdf_missing : WHOLESALE_DOCUMENT_COPY.not_from_checkout}
+                generateLabel="Generar PDF"
+                regenerateLabel="Regenerar PDF"
+                allowRegenerate
+                regenerateHint={
+                  wholesalePdfStates.has(id)
+                    ? undefined
+                    : "Al regenerar se usan los datos actuales del cliente y de la configuración mayorista."
+                }
+              />
+              {canEdit && attachment?.storage_path && (
+                <div className="mt-3">
+                  <ShareWholesalePanel orderId={order.id} />
+                </div>
               )}
             </CardContent>
           </Card>

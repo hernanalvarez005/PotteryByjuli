@@ -10,7 +10,7 @@ describe("getWholesaleDocumentState", () => {
   });
   it("pedido manual mayorista sin PDF → not_from_checkout, NUNCA 'falló'", () => {
     expect(getWholesaleDocumentState({ hasPdf: false, checkoutOrigin: false })).toBe("not_from_checkout");
-    expect(WHOLESALE_DOCUMENT_COPY.not_from_checkout).toBe("Este pedido no proviene del checkout mayorista.");
+    expect(WHOLESALE_DOCUMENT_COPY.not_from_checkout).toBe("Todavía no se generó el PDF de este pedido.");
     expect(WHOLESALE_DOCUMENT_COPY.not_from_checkout.toLowerCase()).not.toContain("falló");
     expect(WHOLESALE_DOCUMENT_COPY.pdf_missing.toLowerCase()).not.toContain("falló");
   });
