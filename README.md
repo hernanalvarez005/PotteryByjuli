@@ -50,6 +50,6 @@ npm run db:types   # regenera types/database.types.ts desde el esquema real
 ```bash
 npm run typecheck
 npm run lint
-npm test
+npm run test:all   # unit + integración (necesita Supabase local, ver docs/testing.md)
 npm run build
 ```

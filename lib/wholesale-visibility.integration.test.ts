@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
-import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cleanupFixtures } from "../tests/support/fixture-cleanup";
 
 // getWholesaleCatalog() usa createClient() de server (cookies); acá se
 // prueba fetchWholesaleCatalog() — el código REAL de producción, no una
@@ -22,23 +21,10 @@ const { fetchWholesaleCatalog } = await import("./wholesale");
 //
 // Corre EXCLUSIVAMENTE contra Supabase LOCAL.
 
-function loadEnvLocal() {
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL) return;
-  const envPath = path.resolve(__dirname, "..", ".env.development.local");
-  if (!existsSync(envPath)) return;
-  for (const line of readFileSync(envPath, "utf-8").split("\n")) {
-    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2];
-  }
-}
-
-loadEnvLocal();
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const isLocal = Boolean(SUPABASE_URL?.includes("127.0.0.1") || SUPABASE_URL?.includes("localhost"));
-const hasCredentials = Boolean(SUPABASE_URL && ANON_KEY && SERVICE_ROLE_KEY && isLocal);
+// El entorno (Supabase LOCAL) lo valida el gate de test:integration.
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 const OWNER_EMAIL = "owner-test@pottery.local";
 const OWNER_PASSWORD = "test-password-123";
@@ -48,7 +34,7 @@ const OWNER_PASSWORD = "test-password-123";
 // si los fixtures quedaran más allá de ese corte, el test no vería el bug.
 const PREFIX = "0 Visibilidad Fixture";
 
-describe.skipIf(!hasCredentials)("visibilidad en /mayorista (local)", () => {
+describe("visibilidad en /mayorista (local)", () => {
   let admin: SupabaseClient;
   let anon: SupabaseClient;
   let owner: SupabaseClient;
@@ -85,9 +71,9 @@ describe.skipIf(!hasCredentials)("visibilidad en /mayorista (local)", () => {
     (await fetchWholesaleCatalog(client)).products.map((p) => p.name).filter((n) => n.startsWith(PREFIX));
 
   beforeAll(async () => {
-    admin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
-    anon = createClient(SUPABASE_URL!, ANON_KEY!);
-    owner = createClient(SUPABASE_URL!, ANON_KEY!);
+    admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    anon = createClient(SUPABASE_URL, ANON_KEY);
+    owner = createClient(SUPABASE_URL, ANON_KEY);
 
     const { data: users } = await admin.auth.admin.listUsers();
     let ownerId = users.users.find((u) => u.email === OWNER_EMAIL)?.id;
@@ -131,9 +117,11 @@ describe.skipIf(!hasCredentials)("visibilidad en /mayorista (local)", () => {
   }, 30000);
 
   afterAll(async () => {
-    await admin.from("orders").delete().eq("id", orderId); // cascade order_items
-    await admin.from("customers").delete().eq("id", customerId);
-    await admin.from("products").delete().ilike("name", `${PREFIX}%`); // cascade variantes/precios/reglas
+    await cleanupFixtures(admin, "wholesale-visibility", {
+      orderIds: orderId ? [orderId] : [],
+      productIds: Object.values(ids),
+      customerIds: customerId ? [customerId] : [],
+    });
   }, 30000);
 
   for (const [label, get] of [

@@ -214,12 +214,16 @@ describe.skipIf(!hasCredentials)("sale variant search (local)", () => {
     await admin.from("products").delete().in("id", cleanupProductIds);
   });
 
-  it("el catálogo local supera los puntos de quiebre de antes (tope de 1.000 filas / ~1.500 ids en un .in())", async () => {
-    // Antes exigía > 3.000, que sólo se cumplía mientras otras corridas
-    // dejaban fixtures sin limpiar — el conteo real (~2.900) no es un
-    // número estable. Lo que importa es superar 1.500.
+  // El dataset "Perf Fixture" trae ~2.900 variantes. El bug de URL larga
+  // (.in() con todos los ids → HTTP 414) se manifiesta bastante antes, con
+  // ~1.000 ids, así que 2.000 sigue cubriendo sobradamente el escenario de
+  // riesgo. El umbral NO debe depender de fixtures históricos acumulados:
+  // antes era 3.000 y sólo se cumplía por productos que otras suites
+  // dejaban sin limpiar en la base local. Si el dataset Perf Fixture se
+  // regenera, este test tiene que seguir pasando con la base recién limpia.
+  it("el catálogo local supera 2.000 variantes — el escenario real que rompía antes", async () => {
     const { count } = await admin.from("product_variants").select("id", { count: "exact", head: true });
-    expect(count).toBeGreaterThan(1500);
+    expect(count).toBeGreaterThan(2000);
   });
 
   it("encuentra un producto 'Perf Fixture' del dataset masivo, sin romper con HTTP 414", async () => {
