@@ -42,6 +42,7 @@ export function ProductsList({
   emptyMessage,
   canEdit,
   canDelete,
+  canDuplicate,
 }: {
   initialProducts: ProductListRow[];
   initialPrices: PriceByVariant;
@@ -51,6 +52,7 @@ export function ProductsList({
   emptyMessage: string;
   canEdit: boolean;
   canDelete: boolean;
+  canDuplicate: boolean;
 }) {
   const [products, setProducts] = useState(initialProducts);
   const [prices, setPrices] = useState(initialPrices);
@@ -135,6 +137,7 @@ export function ProductsList({
                     isActive={product.is_active}
                     canEdit={canEdit}
                     canDelete={canDelete}
+                    canDuplicate={canDuplicate}
                   />
                 );
               })}

@@ -258,9 +258,22 @@ export async function deleteProductImage(
   await assertCanManageCatalog();
 
   const supabase = await createClient();
-  await supabase.storage.from("product-images").remove([storagePath]);
   const { error } = await supabase.from("product_images").delete().eq("id", imageId);
   if (error) throw new Error("No se pudo borrar la imagen.");
+
+  // Un producto duplicado comparte el ARCHIVO con el original (se copian las
+  // filas de product_images, no se vuelve a subir). El archivo sólo se borra
+  // de Storage cuando ya ninguna otra fila lo referencia — si no, cambiar las
+  // fotos de la copia rompería las del original.
+  // Si no se pudo contar, NO se borra el archivo (un huérfano es inocuo; borrar
+  // uno compartido no).
+  const { count, error: countError } = await supabase
+    .from("product_images")
+    .select("id", { count: "exact", head: true })
+    .eq("storage_path", storagePath);
+  if (!countError && (count ?? 0) === 0) {
+    await supabase.storage.from("product-images").remove([storagePath]);
+  }
 
   revalidatePath(`/productos/${productId}`);
 }
