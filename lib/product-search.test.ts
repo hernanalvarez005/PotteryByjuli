@@ -26,7 +26,7 @@ vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({ from: mockFrom }),
 }));
 
-const { searchSaleVariants, resolveSaleVariantsByIds } = await import("./product-search");
+const { searchSaleVariants, searchOrderVariants, resolveSaleVariantsByIds } = await import("./product-search");
 
 beforeEach(() => {
   mockFrom.mockReset();
@@ -111,5 +111,56 @@ describe("resolveSaleVariantsByIds", () => {
 
     const result = await resolveSaleVariantsByIds(["a", "b"]);
     expect(result.map((r) => r.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("searchOrderVariants (/pedidos/nuevo)", () => {
+  const priced = (code: string, unit_price: number) => ({ unit_price, price_lists: { code } });
+
+  it("does not query for a term shorter than the minimum", async () => {
+    expect(await searchOrderVariants("a")).toEqual({ results: [] });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("returns both list prices per variant, ignoring other price lists", async () => {
+    const rows = [
+      {
+        id: "v1",
+        name: "Bordó",
+        products: { name: "Taza" },
+        price_list_items: [priced("retail", 10000), priced("wholesale", 6000), priced("restricted-x", 1)],
+      },
+    ];
+    mockFrom
+      .mockReturnValueOnce(makeBuilder({ data: rows, error: null }))
+      .mockReturnValueOnce(makeBuilder({ data: [], error: null }));
+
+    const outcome = await searchOrderVariants("taza");
+    if ("error" in outcome) throw new Error("expected success");
+    expect(outcome.results).toEqual([{ id: "v1", label: "Taza — Bordó", prices: { retail: 10000, wholesale: 6000 } }]);
+  });
+
+  it("keeps a variant with no price in a list (null) instead of dropping it", async () => {
+    const rows = [
+      { id: "only-retail", name: "Único", products: { name: "Plato" }, price_list_items: [priced("retail", 8000)] },
+      { id: "no-prices", name: "Único", products: { name: "Jarra" }, price_list_items: [] },
+    ];
+    mockFrom
+      .mockReturnValueOnce(makeBuilder({ data: rows, error: null }))
+      .mockReturnValueOnce(makeBuilder({ data: [], error: null }));
+
+    const outcome = await searchOrderVariants("a b");
+    if ("error" in outcome) throw new Error("expected success");
+    expect(outcome.results).toEqual([
+      { id: "only-retail", label: "Plato", prices: { retail: 8000, wholesale: null } },
+      { id: "no-prices", label: "Jarra", prices: { retail: null, wholesale: null } },
+    ]);
+  });
+
+  it("returns { error: true } on a backend failure — never confused with zero results", async () => {
+    mockFrom
+      .mockReturnValueOnce(makeBuilder({ data: null, error: { message: "down" } }))
+      .mockReturnValueOnce(makeBuilder({ data: [], error: null }));
+    expect(await searchOrderVariants("taza")).toEqual({ error: true });
   });
 });

@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, Loader2, Search } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
-import { searchSaleVariants, MIN_SEARCH_CHARS, type VariantSearchResult } from "@/lib/product-search";
+import { searchOrderVariants, MIN_SEARCH_CHARS, type OrderVariantResult } from "@/lib/product-search";
+import { listPrice, PRICE_LIST_LABELS, type PriceListCode } from "@/lib/order-pricing";
 
 const SEARCH_DEBOUNCE_MS = 250;
 type SearchStatus = "idle" | "loading" | "success" | "error";
@@ -16,21 +17,25 @@ type SearchStatus = "idle" | "loading" | "success" | "error";
  * enteras al abrir la página (mismo catálogo sin acotar que ya rompía en
  * /productos: hoy 3.352 productos activos, tope de 1.000 de PostgREST, y
  * la resolución de precios sobre esas 1.000 variantes ya da HTTP 414).
- * Reusa searchSaleVariants() (lib/product-search.ts, el mismo motor de
- * búsqueda que /ventas/nueva) — nunca una segunda arquitectura de
- * catálogo. A diferencia de /ventas/nueva, acá no hay recientes/carrito:
+ * Reusa el motor de búsqueda de lib/product-search.ts (mismo que
+ * /ventas/nueva, con `searchOrderVariants` que además trae el precio de
+ * las dos listas) — nunca una segunda arquitectura de catálogo. Muestra el
+ * precio de la lista vigente (`priceList`, según la unidad del pedido) o
+ * "Sin precio" si esa lista no lo tiene: la variante igual se puede elegir. A diferencia de /ventas/nueva, acá no hay recientes/carrito:
  * es un selector puntual por fila, ya elegida la variante se cierra.
  */
 export function VariantPicker({
   selectedLabel,
+  priceList,
   onSelect,
 }: {
   selectedLabel: string | null;
-  onSelect: (variant: VariantSearchResult) => void;
+  priceList: PriceListCode;
+  onSelect: (variant: OrderVariantResult) => void;
 }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<SearchStatus>("idle");
-  const [results, setResults] = useState<VariantSearchResult[]>([]);
+  const [results, setResults] = useState<OrderVariantResult[]>([]);
   const [retryKey, setRetryKey] = useState(0);
   const [open, setOpen] = useState(false);
 
@@ -46,7 +51,7 @@ export function VariantPicker({
     let cancelled = false;
     setStatus("loading");
     const timeout = window.setTimeout(() => {
-      searchSaleVariants(q).then((outcome) => {
+      searchOrderVariants(q).then((outcome) => {
         if (cancelled) return;
         if ("error" in outcome) {
           setStatus("error");
@@ -64,7 +69,7 @@ export function VariantPicker({
     };
   }, [search, retryKey]);
 
-  function pick(variant: VariantSearchResult) {
+  function pick(variant: OrderVariantResult) {
     onSelect(variant);
     setSearch("");
     setStatus("idle");
@@ -133,7 +138,11 @@ export function VariantPicker({
                 className="flex items-center justify-between gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent"
               >
                 <span className="truncate">{v.label}</span>
-                <span className="shrink-0 text-muted-foreground">{formatCurrency(v.retailPrice)}</span>
+                <span className="shrink-0 text-muted-foreground">
+                  {listPrice(v.prices, priceList) != null
+                    ? formatCurrency(listPrice(v.prices, priceList)!)
+                    : `Sin precio ${PRICE_LIST_LABELS[priceList]}`}
+                </span>
               </button>
             ))
           )}

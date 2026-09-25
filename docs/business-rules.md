@@ -51,6 +51,30 @@ mayorista mañana no debe alterar ni un solo pedido histórico. Esto aplica
 también a reportes: una venta de hace tres meses sigue mostrando el precio
 de hace tres meses.
 
+### Precio sugerido en el pedido manual (`/pedidos/nuevo`)
+
+La **unidad de negocio** del pedido decide qué lista sugiere el precio de
+cada ítem: Mayorista → lista `wholesale`; cualquier otra unidad (o ninguna
+elegida todavía) → `retail`. Se resuelve por código semántico
+(`business_units.code` / `price_lists.code`), nunca por id
+(`lib/order-pricing.ts`). Es sólo una **sugerencia**: `create_order` sigue
+guardando el `unit_price` que llega, editable y congelado en `order_items`
+— no hay un segundo sistema de precios.
+
+- Cada fila de catálogo guarda `priceSource`: `list` (viene de la lista) o
+  `manual` (la usuaria lo tipeó). Al cambiar de unidad se recalculan **sólo**
+  las filas `list`; una `manual` nunca se pisa en silencio (se avisa la
+  diferencia con la lista y hay "Usar precio de lista").
+- El buscador trae el precio de **las dos listas** en una consulta
+  (`searchOrderVariants`), así cambiar de unidad no vuelve a consultar. Una
+  variante **sin precio** en la lista vigente igual se puede elegir: queda
+  con el precio vacío ("Sin precio mayorista, cargalo a mano") y bloquea el
+  guardado hasta que se cargue — nunca se descarta en silencio ni se rellena
+  con el precio de otra lista. (La venta rápida, `/ventas/nueva`, mantiene
+  `searchSaleVariants`: sin precio minorista no se vende.)
+- Los mínimos/múltiplos de `wholesale_product_rules` **no** se aplican en un
+  pedido manual (sólo en el checkout público), igual que antes.
+
 ## Facturación ≠ cobranza
 
 Un pedido de $100.000 no implica $100.000 cobrados. Ventas, cobros y saldo
