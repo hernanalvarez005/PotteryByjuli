@@ -133,6 +133,31 @@ lectura abierta a cualquier usuario autenticado.
   solicitud recién reserva/consume stock cuando efectivamente se
   confirma.
 
+## Eliminación segura de pedidos (2026-09-26)
+
+Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en
+`docs/business-rules.md` § "Eliminar un pedido cargado por error".
+
+- **Mapa de dependencias de `orders`** (por qué la regla mira relaciones y no
+  sólo el estado): `order_items` (+ `order_item_customizations`),
+  `order_status_history`, `order_attachments`, `payments`,
+  `inventory_reservations` y `customer_identity_conflicts` → `ON DELETE
+  CASCADE`; `production_orders.order_id` → `ON DELETE SET NULL`;
+  `inventory_movements` referencia al pedido por `reference_table` /
+  `reference_id` **sin FK** (borrar dejaría movimientos huérfanos).
+- **RLS `orders`:** la política `FOR ALL` se reemplaza por `INSERT` y `UPDATE`
+  (mismo permiso: `is_operations_or_owner()`); sin política de `DELETE`, el
+  único camino es `delete_order_safe`.
+- `classify_order_for_delete(p_id)` (`security invoker`, `stable`): devuelve
+  `deletable`, los conteos de bloqueos y `block_message`.
+- `delete_order_safe(p_id, p_reason default null)` (`security definer`,
+  `search_path = public`, owner-only verificado adentro): bloquea el pedido
+  `FOR UPDATE`, re-evalúa `classify_order_for_delete`, registra
+  `order_deletions`, borra (cascada) y devuelve `human_code` + las rutas de
+  Storage a borrar después del commit.
+- `order_deletions`: append-only (sin políticas de escritura; la escribe sólo
+  la función), lectura sólo para owner, sin FK a `orders`/`customers`.
+
 ## Duplicar producto (2026-09-25)
 
 RPC `duplicate_product(p_source_product_id, p_new_name, p_publish_in_wholesale)`
