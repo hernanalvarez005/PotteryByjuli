@@ -7,6 +7,15 @@ const file = new File(["%PDF"], "MAY-000031.pdf", { type: "application/pdf" });
 describe("buildWholesaleShareMessage", () => {
   it("con link: saludo, código, total, link y vigencia", () => {
     const msg = buildWholesaleShareMessage({ ...base, documentUrl: "https://x.test/pdf?token=abc" });
+    expect(msg).toBe(
+      [
+        "Hola Ana! Te comparto el detalle del pedido mayorista MAY-000031 por $ 160.000.",
+        "",
+        "Podés verlo y descargarlo acá (el link vence en 72 horas): https://x.test/pdf?token=abc",
+        "",
+        "Cualquier duda, escribime. ¡Gracias! — Pottery by Juli",
+      ].join("\n")
+    );
     expect(msg).toContain("Hola Ana!");
     expect(msg).toContain("MAY-000031");
     expect(msg).toContain("$ 160.000");
@@ -16,7 +25,13 @@ describe("buildWholesaleShareMessage", () => {
 
   it("sin link (PDF adjunto): no menciona ningún link ni vencimiento", () => {
     const msg = buildWholesaleShareMessage({ ...base, documentUrl: null });
-    expect(msg).toContain("Te adjunto el PDF");
+    expect(msg).toBe(
+      [
+        "Hola Ana! Te adjunto el PDF con el detalle del pedido mayorista MAY-000031 por $ 160.000.",
+        "",
+        "Cualquier duda, escribime. ¡Gracias! — Pottery by Juli",
+      ].join("\n")
+    );
     expect(msg).not.toContain("http");
     expect(msg).not.toContain("vence");
   });

@@ -109,8 +109,8 @@ export function ShareWholesalePanel({ orderId }: { orderId: string }) {
           </Button>
           <p className="text-xs text-muted-foreground">
             WhatsApp no permite adjuntar el archivo desde un link: el mensaje lleva un enlace al PDF que vence en 72 horas.
-            Para adjuntarlo de verdad, en el celular usá &quot;Compartir el PDF adjunto&quot;; en la computadora, descargalo y
-            adjuntalo en la conversación.
+            Para adjuntar el archivo directamente, en el celular usá &ldquo;Compartir el PDF adjunto&rdquo;; en la computadora,
+            descargalo y adjuntalo en la conversación.
           </p>
           {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
         </>

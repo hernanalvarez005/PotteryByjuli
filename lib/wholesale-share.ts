@@ -31,10 +31,9 @@ export function buildWholesaleShareMessage(input: {
 
   if (input.documentUrl) {
     return [
-      `${greeting} Te paso el detalle ${summary}.`,
+      `${greeting} Te comparto el detalle ${summary}.`,
       "",
-      `Podés verlo y descargarlo acá (el link vence en ${SHARE_LINK_TTL_HOURS} horas):`,
-      input.documentUrl,
+      `Podés verlo y descargarlo acá (el link vence en ${SHARE_LINK_TTL_HOURS} horas): ${input.documentUrl}`,
       "",
       "Cualquier duda, escribime. ¡Gracias! — Pottery by Juli",
     ].join("\n");
