@@ -297,6 +297,24 @@ achica acceso — test de regresión en
 el caso nuevo (oculto) como que todo lo que ya era visible sigue
 siéndolo.
 
+**Qué es "visible en /mayorista" — una sola regla (2026-09-25)**:
+`products.is_active` AND `wholesale_product_rules.is_public = true` AND al
+menos una variante activa AND precio > 0 en la lista `wholesale`. El stock
+no interviene. "Activo" es un estado interno (el producto existe para
+stock, pedidos, histórico); `is_public` es la decisión comercial de
+mostrarlo en el catálogo mayorista — son dos flags distintos, y un
+producto sin fila en `wholesale_product_rules` nunca fue habilitado, así
+que tampoco es visible.
+
+**Bug real (Adornitos/Hornitos)**: el RLS de `anon` exige `is_public`,
+pero `authenticated` tiene `products` con `USING (true)` — y
+`lib/wholesale.ts` sólo filtraba `is_active`. Resultado: el visitante
+anónimo no veía los productos ocultos, pero Juli, con sesión iniciada, sí.
+Regla derivada: **el RLS de `anon` no protege lo que ve una usuaria
+logueada** — cualquier lectura "pública" que corra también con sesión
+necesita el mismo filtro a nivel de app. Test de regresión, para ambos
+roles: `lib/wholesale-visibility.integration.test.ts`.
+
 ## Seguridad del portal público de workshops (Fase 9.5)
 
 Mismo criterio que el portal mayorista, pero sin RLS directa sobre

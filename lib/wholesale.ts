@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
 export type WholesaleVariant = {
@@ -38,28 +39,40 @@ export type WholesaleSettingsPublic = {
 
 /**
  * Everything the public /mayorista catalog needs, in one read-only pass.
- * Relies entirely on the `anon`-scoped RLS policies added in the Fase 5
- * migration — this file never bypasses them, so it's safe to call from a
- * page nobody is logged into.
+ * Never bypasses RLS, so it's safe to call from a page nobody is logged
+ * into.
+ *
+ * Regla única de "visible en /mayorista" (la misma que aplica el RLS de
+ * `anon`, repetida acá a propósito): producto activo AND
+ * wholesale_product_rules.is_public AND al menos una variante activa AND
+ * precio de la lista 'wholesale' > 0. Un producto sin fila en
+ * wholesale_product_rules tampoco es visible (nunca fue habilitado).
  */
 export async function getWholesaleCatalog() {
-  const supabase = await createClient();
+  return fetchWholesaleCatalog(await createClient());
+}
 
+/** Separada de getWholesaleCatalog() para poder probar la lógica real con
+ * un cliente de cualquier rol (anon o authenticated) — createClient()
+ * depende de las cookies del request. */
+export async function fetchWholesaleCatalog(supabase: SupabaseClient) {
   const [{ data: categories }, { data: products }, { data: settings }] = await Promise.all([
     supabase.from("product_categories").select("id,name").order("sort_order"),
     supabase
       .from("products")
       .select(
-        "id,name,description,category_id,product_variants(id,name,is_active),product_images(storage_path,variant_id,is_primary,sort_order),wholesale_product_rules(min_quantity,multiple_of,lead_time_days)"
+        "id,name,description,category_id,product_variants(id,name,is_active),product_images(storage_path,variant_id,is_primary,sort_order),wholesale_product_rules!inner(min_quantity,multiple_of,lead_time_days)"
       )
-      // The anon-scoped RLS policies (Fase 5) already enforce is_active/
-      // is_public at the database level — an inactive product/variant can
-      // never reach this query's result set even without this filter.
-      // Kept here anyway as defense-in-depth: if a future RLS policy
-      // change ever regresses, this app-level filter still holds the
-      // line (see docs/business-rules.md § Seguridad del portal
-      // mayorista público).
+      // Para `anon`, el RLS ya limita el resultado a is_active + is_public.
+      // Para `authenticated` (Juli mirando /mayorista con sesión iniciada)
+      // NO: sus policies de products son USING (true), así que este filtro
+      // de app es la ÚNICA barrera — sin él, un producto con
+      // is_public=false (o sin fila de reglas) aparecía igual a las
+      // usuarias logueadas, aunque el visitante anónimo no lo viera.
+      // `!inner` + el eq sobre el embed descarta los productos sin fila de
+      // reglas o con is_public=false.
       .eq("is_active", true)
+      .eq("wholesale_product_rules.is_public", true)
       .order("name"),
     supabase.from("wholesale_settings").select("*").limit(1).maybeSingle(),
   ]);
