@@ -52,6 +52,11 @@ export function todayInArgentina(): string {
   return isoDateFormatter.format(new Date());
 }
 
+/** The calendar day (YYYY-MM-DD) an instant falls on in Argentina time — inverse of dateOnlyToArgentina*ISO, for pre-filling a date input from a timestamptz. */
+export function isoToArgentinaDate(iso: string): string {
+  return isoDateFormatter.format(new Date(iso));
+}
+
 /**
  * A date-only input (YYYY-MM-DD, no time) needs to become a real
  * `timestamptz` without ever risking a UTC day-shift. Fixing the time at

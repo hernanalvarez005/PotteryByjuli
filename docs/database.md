@@ -133,6 +133,33 @@ lectura abierta a cualquier usuario autenticado.
   solicitud recién reserva/consume stock cuando efectivamente se
   confirma.
 
+## Secciones destacadas del catálogo mayorista (2026-09-25)
+
+Merchandising editorial de `/mayorista` (ej. "Día de la Madre"). Una
+categoría describe qué ES un producto; una sección describe qué queremos
+PROMOCIONAR ahora. Sólo guarda referencias — no toca categorías, precios,
+stock, variantes ni historial.
+
+- **`wholesale_featured_sections`**: `title`, `slug` (ancla estable, se
+  fija al crear), `description`, `is_active` (override manual: `false` =
+  desactivada/archivada), `starts_at`/`ends_at` (opcionales; se evalúan
+  con `now()` en cada request, sin cron), `sort_order`.
+- **`wholesale_featured_section_products`**: PK `(section_id, product_id)`
+  + `sort_order`. Ambas FK con `on delete cascade`: borrar una sección o un
+  producto sólo borra la asociación, nunca el otro lado.
+- **RLS**: sólo `owner` escribe (no operations). `authenticated` lee todo;
+  `anon` sólo secciones activas y vigentes y relaciones con productos
+  activos + `is_public`. **El RLS de `anon` no protege lo que ve una usuaria
+  logueada**, así que la app también filtra (`lib/wholesale-featured.ts`).
+- **RPC** `save_wholesale_featured_section` (alta/edición + reemplazo de
+  productos, atómico) y `reorder_wholesale_featured_sections`.
+- **Regla obligatoria**: una sección nunca hace reaparecer un producto que
+  no es visible en /mayorista. Los productos destacados se resuelven contra
+  el catálogo ya visible (`getWholesaleCatalog`), no se re-evalúa la regla.
+  Si un producto asociado pasa a oculto (inactivo, `is_public=false`, sin
+  variante válida o sin precio mayorista) simplemente no se muestra y la
+  asociación se conserva — el editor lo avisa.
+
 ## Fase 5 — implementado
 
 - **`wholesale_settings`**: fila única (condiciones globales: mínimo,

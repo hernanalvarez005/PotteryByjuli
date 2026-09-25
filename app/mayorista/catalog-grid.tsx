@@ -5,14 +5,18 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search } from "lucide-react";
 import type { WholesaleProduct } from "@/lib/wholesale";
+import type { FeaturedSection } from "@/lib/wholesale-featured";
 import { ProductCard } from "./product-card";
+import { FeaturedSections } from "./featured-sections";
 
 export function CatalogGrid({
   products,
   categories,
+  featuredSections = [],
 }: {
   products: WholesaleProduct[];
   categories: { id: string; name: string }[];
+  featuredSections?: FeaturedSection[];
 }) {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -24,6 +28,12 @@ export function CatalogGrid({
       return true;
     });
   }, [products, categoryId, query]);
+
+  // Las secciones destacadas son para descubrir, no para interferir con
+  // una intención explícita: con una búsqueda o un filtro de categoría
+  // activo se muestra sólo el catálogo filtrado.
+  const isFiltering = query.trim() !== "" || categoryId !== null;
+  const showFeatured = featuredSections.length > 0 && !isFiltering;
 
   const usedCategoryIds = new Set(products.map((p) => p.categoryId));
   const visibleCategories = categories.filter((c) => usedCategoryIds.has(c.id));
@@ -52,6 +62,10 @@ export function CatalogGrid({
           ))}
         </div>
       )}
+
+      {showFeatured && <FeaturedSections sections={featuredSections} />}
+
+      {showFeatured && <h2 className="text-lg font-semibold tracking-tight">Catálogo</h2>}
 
       {filtered.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">

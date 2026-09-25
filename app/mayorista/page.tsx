@@ -4,7 +4,7 @@ import { CatalogGrid } from "./catalog-grid";
 import { CartSheet } from "./cart-sheet";
 
 export default async function MayoristaPage() {
-  const { categories, products, settings } = await getWholesaleCatalog();
+  const { categories, products, settings, featuredSections } = await getWholesaleCatalog();
 
   return (
     <div className="flex flex-col gap-6">
@@ -38,7 +38,7 @@ export default async function MayoristaPage() {
           Todavía no hay productos publicados en el catálogo mayorista.
         </p>
       ) : (
-        <CatalogGrid products={products} categories={categories} />
+        <CatalogGrid products={products} categories={categories} featuredSections={featuredSections} />
       )}
 
       <CartSheet products={products} settings={settings} />

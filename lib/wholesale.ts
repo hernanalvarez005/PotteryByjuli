@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { fetchFeaturedSectionRows, resolveFeaturedSections } from "@/lib/wholesale-featured";
 
 export type WholesaleVariant = {
   id: string;
@@ -56,7 +57,7 @@ export async function getWholesaleCatalog() {
  * un cliente de cualquier rol (anon o authenticated) — createClient()
  * depende de las cookies del request. */
 export async function fetchWholesaleCatalog(supabase: SupabaseClient) {
-  const [{ data: categories }, { data: products }, { data: settings }] = await Promise.all([
+  const [{ data: categories }, { data: products }, { data: settings }, featuredRows] = await Promise.all([
     supabase.from("product_categories").select("id,name").order("sort_order"),
     supabase
       .from("products")
@@ -75,6 +76,10 @@ export async function fetchWholesaleCatalog(supabase: SupabaseClient) {
       .eq("wholesale_product_rules.is_public", true)
       .order("name"),
     supabase.from("wholesale_settings").select("*").limit(1).maybeSingle(),
+    // En paralelo con el resto: una sola query embebida para todas las
+    // secciones destacadas (sin N+1). Los productos de cada sección se
+    // resuelven abajo contra el catálogo ya visible — sin más queries.
+    fetchFeaturedSectionRows(supabase),
   ]);
 
   const variantIds = (products ?? []).flatMap((p) =>
@@ -160,9 +165,12 @@ export async function fetchWholesaleCatalog(supabase: SupabaseClient) {
     };
   });
 
+  const visibleProducts = catalog.filter((p) => p.variants.length > 0);
+
   return {
     categories: categories ?? [],
-    products: catalog.filter((p) => p.variants.length > 0),
+    products: visibleProducts,
     settings: (settings as WholesaleSettingsPublic | null) ?? null,
+    featuredSections: resolveFeaturedSections(featuredRows, visibleProducts, new Date()),
   };
 }

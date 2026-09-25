@@ -114,14 +114,20 @@ export async function getProductsPage(
   status: ProductStatusFilter,
   search: string,
   cursor: ProductsPageCursor = null,
-  pageSize: number = PRODUCTS_PAGE_SIZE
+  pageSize: number = PRODUCTS_PAGE_SIZE,
+  options: { wholesaleOnly?: boolean } = {}
 ): Promise<{ products: ProductListRow[]; nextCursor: ProductsPageCursor; prices: PriceByVariant }> {
   const supabase = await createClient();
 
+  // `wholesaleOnly`: sólo productos habilitados para mayorista
+  // (wholesale_product_rules.is_public) — `!inner` descarta también los que
+  // nunca tuvieron fila de reglas. Lo usa el selector de productos de las
+  // secciones destacadas mayoristas.
   let query = supabase
     .from("products")
     .select(
-      "id,name,description,cost_estimate,is_active,category_id,product_categories(name),product_variants(id,name,sku,is_active)"
+      "id,name,description,cost_estimate,is_active,category_id,product_categories(name),product_variants(id,name,sku,is_active)" +
+        (options.wholesaleOnly ? ",wholesale_product_rules!inner(is_public)" : "")
     )
     .order("name", { ascending: true })
     .order("id", { ascending: true })
@@ -129,6 +135,9 @@ export async function getProductsPage(
 
   if (status !== "all") {
     query = query.eq("is_active", status === "active");
+  }
+  if (options.wholesaleOnly) {
+    query = query.eq("wholesale_product_rules.is_public", true);
   }
   const trimmedSearch = search.trim();
   if (trimmedSearch) {
