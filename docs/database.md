@@ -173,6 +173,26 @@ Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en
 - `order_deletions`: append-only (sin políticas de escritura; la escribe sólo
   la función), lectura sólo para owner, sin FK a `orders`/`customers`.
 
+## Exención de cuota base de talleres (2026-09-26)
+
+Migration `20260926110000_workshop_due_waivers.sql`. Regla de negocio en
+`docs/business-rules.md` § "Exención excepcional de la cuota base".
+
+- `workshop_due_waivers`: una fila por ciclo (`due_id`, `waived_amount`,
+  `reason`, `waived_by`, `waived_at`, `reverted_by`, `reverted_at`,
+  `revert_reason`). Índice único parcial `(due_id) where reverted_at is null`.
+  RLS: `select` para authenticated; sin políticas de escritura.
+- `waive_due(p_due_id, p_reason)` / `unwaive_due(p_due_id, p_reason)`
+  (`security definer`, `search_path = public`, owner verificado adentro): bloquean
+  la cuota `FOR UPDATE`; `waive_due` rechaza cuota cancelada, importe 0, ya exenta
+  y cualquier pago existente.
+- `workshop_due_balances` (redefinida, mismas columnas y tipos + `base_waived` al
+  final): `total_due`/`balance` descuentan la base de una cuota con exención
+  activa — misma fórmula que `computeDueSummary`.
+- Trigger `payments_reject_settled_waived_due` (`BEFORE INSERT`, `WHEN
+  (new.workshop_due_id is not null)`): rechaza pagos sobre una cuota exenta sin
+  saldo; sólo pagos de cuota.
+
 ## Duplicar producto (2026-09-25)
 
 RPC `duplicate_product(p_source_product_id, p_new_name, p_publish_in_wholesale)`

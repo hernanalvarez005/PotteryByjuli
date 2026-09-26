@@ -4,26 +4,37 @@
 // like orders separate facturado from cobrado
 // (docs/business-rules.md § Facturación ≠ cobranza).
 
-export type DueDisplayStatus = "pending" | "partial" | "paid" | "cancelled";
+export type DueDisplayStatus = "pending" | "partial" | "paid" | "cancelled" | "waived";
 
 export const DUE_STATUS_LABELS: Record<DueDisplayStatus, string> = {
   pending: "Pendiente",
   partial: "Parcial",
   paid: "Pagada",
   cancelled: "Cancelada",
+  // Exenta ≠ Pagada: no hubo pago (paid_total = 0), no suma ingreso y no es deuda.
+  waived: "Exenta",
 };
 
 /**
  * `status` is only ever 'pending' or 'cancelled' in the database — the
  * only two states that aren't derivable from payments. This computes the
  * actual display status from that plus the real sum of linked payments.
+ *
+ * `baseWaived`: la cuota BASE tiene una exención activa (workshop_due_waivers).
+ * `amount` ya es el total cobrable (cuota base efectiva + extras): con la base
+ * exenta y nada más para cobrar (sin extras, o extras anulados) el total es 0 y
+ * el estado es "Exenta" — nunca "Pagada" ni "Pendiente". Con extras cobrables
+ * el estado se deriva de esos extras y los pagos, como siempre (la UI muestra
+ * además que la base está exenta).
  */
 export function computeDueDisplayStatus(
   storedStatus: "pending" | "cancelled",
   amount: number,
-  paidAmount: number
+  paidAmount: number,
+  baseWaived = false
 ): DueDisplayStatus {
   if (storedStatus === "cancelled") return "cancelled";
+  if (baseWaived && amount <= 0) return "waived";
   if (paidAmount <= 0) return "pending";
   if (paidAmount >= amount) return "paid";
   return "partial";
@@ -36,14 +47,82 @@ export function computeDueBalance(amount: number, paidAmount: number): number {
 export type DueLike = { status: "pending" | "cancelled"; amount: number };
 export type DueItemLike = { amount: number; voided_at: string | null };
 export type PaymentLike = { amount: number };
+/** Un ciclo de exención (workshop_due_waivers): activo mientras `reverted_at` es null. */
+export type DueWaiverLike = { reverted_at: string | null };
+
+/** Select embebido que TODO consumidor de cuotas debe pedir para que la exención cuente. */
+export const DUE_WAIVERS_SELECT = "workshop_due_waivers(reverted_at)";
+
+/**
+ * Select embebido con el historial COMPLETO de exenciones (quién, cuándo,
+ * motivo, y quién/cuándo la quitó) — sólo lo piden las pantallas que muestran
+ * el historial; el resto pide `DUE_WAIVERS_SELECT`.
+ */
+export const DUE_WAIVERS_DETAIL_SELECT =
+  "workshop_due_waivers(id,waived_amount,reason,waived_at,reverted_at,revert_reason," +
+  "waived_by_profile:profiles!workshop_due_waivers_waived_by_fkey(full_name)," +
+  "reverted_by_profile:profiles!workshop_due_waivers_reverted_by_fkey(full_name))";
+
+/** Un ciclo de exención tal como lo devuelve DUE_WAIVERS_DETAIL_SELECT. */
+export type DueWaiverRowRaw = {
+  id: string;
+  waived_amount: number;
+  reason: string | null;
+  waived_at: string;
+  reverted_at: string | null;
+  revert_reason: string | null;
+  waived_by_profile: { full_name: string | null } | null;
+  reverted_by_profile: { full_name: string | null } | null;
+};
+
+/** Ciclo listo para mostrar en el historial. */
+export type DueWaiverHistoryItem = {
+  id: string;
+  waivedAmount: number;
+  reason: string | null;
+  waivedAt: string;
+  waivedByName: string | null;
+  active: boolean;
+  revertedAt: string | null;
+  revertedByName: string | null;
+  revertReason: string | null;
+};
+
+/** Historial de exenciones de una cuota, del ciclo más reciente al más antiguo. */
+export function toWaiverHistory(rows: DueWaiverRowRaw[] | null | undefined): DueWaiverHistoryItem[] {
+  return [...(rows ?? [])]
+    .sort((a, b) => b.waived_at.localeCompare(a.waived_at))
+    .map((w) => ({
+      id: w.id,
+      waivedAmount: w.waived_amount,
+      reason: w.reason,
+      waivedAt: w.waived_at,
+      waivedByName: w.waived_by_profile?.full_name ?? null,
+      active: w.reverted_at == null,
+      revertedAt: w.reverted_at,
+      revertedByName: w.reverted_by_profile?.full_name ?? null,
+      revertReason: w.revert_reason,
+    }));
+}
+
+/** ¿Hay una exención activa de la cuota base? (a lo sumo una: índice único parcial). */
+export function hasActiveWaiver(waivers: DueWaiverLike[] | null | undefined): boolean {
+  return (waivers ?? []).some((w) => w.reverted_at == null);
+}
 
 export type DueSummary = {
   baseAmount: number;
   extrasTotal: number;
+  /** Lo cobrable: (base exenta ? 0 : baseAmount) + extras no anulados. */
   totalDue: number;
+  /** Pagos REALES — una exención nunca es un pago. */
   paidTotal: number;
   balance: number;
   status: DueDisplayStatus;
+  /** La cuota base tiene una exención activa. */
+  baseWaived: boolean;
+  /** Importe base actualmente eximido (0 si no hay exención activa). */
+  waivedAmount: number;
 };
 
 /**
@@ -60,17 +139,25 @@ export type DueSummary = {
  * totalDue, no sólo baseAmount — así que agregar un extra a una cuota que
  * hoy figura "Pagada" la vuelve "Parcial" automáticamente, sin ningún
  * caso especial: el estado siempre se deriva, nunca se guarda.
+ *
+ * EXENCIÓN (workshop_due_waivers): si la cuota base tiene una exención
+ * activa, sólo la BASE deja de cobrarse — los extras siguen cobrables — y
+ * `paidTotal` sigue siendo la suma de pagos reales (nunca un pago falso):
+ * totalDue = (exenta ? 0 : base) + extras. La vista `workshop_due_balances`
+ * replica exactamente esta regla en SQL.
  */
 export function computeDueSummary(
   due: DueLike,
   items: DueItemLike[],
-  payments: PaymentLike[]
+  payments: PaymentLike[],
+  waivers: DueWaiverLike[] | null | undefined = []
 ): DueSummary {
   const baseAmount = due.amount;
+  const baseWaived = hasActiveWaiver(waivers);
   const extrasTotal = items
     .filter((i) => i.voided_at == null)
     .reduce((sum, i) => sum + i.amount, 0);
-  const totalDue = baseAmount + extrasTotal;
+  const totalDue = (baseWaived ? 0 : baseAmount) + extrasTotal;
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0);
   return {
     baseAmount,
@@ -78,7 +165,9 @@ export function computeDueSummary(
     totalDue,
     paidTotal,
     balance: computeDueBalance(totalDue, paidTotal),
-    status: computeDueDisplayStatus(due.status, totalDue, paidTotal),
+    status: computeDueDisplayStatus(due.status, totalDue, paidTotal, baseWaived),
+    baseWaived,
+    waivedAmount: baseWaived ? baseAmount : 0,
   };
 }
 
@@ -125,10 +214,11 @@ export function formatPeriodLabel(period: string): string {
  * "AAAA-MM" — no date parsing needed.
  */
 export function lastPaidPeriod(
-  dues: { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number }[]
+  dues: { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number; baseWaived?: boolean }[]
 ): string | null {
+  // Una cuota exenta NO es un mes "pago": no hubo pago.
   const paidPeriods = dues
-    .filter((d) => computeDueDisplayStatus(d.status, d.amount, d.paidAmount) === "paid")
+    .filter((d) => computeDueDisplayStatus(d.status, d.amount, d.paidAmount, d.baseWaived) === "paid")
     .map((d) => d.period);
   if (paidPeriods.length === 0) return null;
   return paidPeriods.sort().at(-1)!;
@@ -142,7 +232,8 @@ export function lastDayOfPeriod(period: string): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
-export type PeriodStatus = "paid" | "debtor" | "excluded";
+/** `waived`: la cuota base del período está exenta — ni deudora ni "paga". */
+export type PeriodStatus = "paid" | "debtor" | "excluded" | "waived";
 
 export type EnrollmentForPeriod = {
   id: string;
@@ -187,6 +278,7 @@ export function classifyForPeriod(
 ): PeriodStatus {
   if (due) {
     if (due.status === "cancelled") return "excluded";
+    if (due.status === "waived") return "waived";
     return due.balance <= 0 ? "paid" : "debtor";
   }
   return isEligibleWithoutDue(enrollment, period) ? "debtor" : "excluded";

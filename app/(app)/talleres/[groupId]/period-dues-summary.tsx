@@ -19,6 +19,8 @@ import { formatCurrency } from "@/lib/format";
 import {
   classifyForPeriod,
   currentPeriod,
+  DUE_STATUS_LABELS,
+  type DueDisplayStatus,
   formatPeriodLabel,
   previousPeriod,
   nextPeriod,
@@ -34,7 +36,7 @@ export type DueForSummary = {
   id: string;
   enrollmentId: string;
   period: string;
-  status: "pending" | "partial" | "paid" | "cancelled";
+  status: DueDisplayStatus;
   balance: number;
   payments: DuePaymentRow[];
 };
@@ -78,6 +80,7 @@ export function PeriodDuesSummary({
       paid: [],
       debtor: [],
       excluded: [],
+      waived: [],
     };
     for (const enrollment of enrollments) {
       const due = dueByEnrollment.get(enrollment.id) ?? null;
@@ -123,6 +126,17 @@ export function PeriodDuesSummary({
           >
             ! {classified.debtor.length} deudoras
           </button>
+          {classified.waived.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExpanded(expanded === "waived" ? null : "waived")}
+              className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                expanded === "waived" ? "border-primary bg-accent" : "border-input hover:bg-accent/50"
+              }`}
+            >
+              ◌ {classified.waived.length} exentas
+            </button>
+          )}
         </div>
 
         {expanded && (
@@ -141,7 +155,7 @@ export function PeriodDuesSummary({
                         )}
                         {due.status !== "pending" && due.status !== "partial" && (
                           <Badge variant="secondary" className="text-[10px]">
-                            {due.status === "paid" ? "Pagada" : "Cancelada"}
+                            {DUE_STATUS_LABELS[due.status]}
                           </Badge>
                         )}
                         {canEdit && (

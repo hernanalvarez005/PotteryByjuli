@@ -192,7 +192,7 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
     .gt("balance", 0);
   const pendingDueBalancesQuery = supabase
     .from("workshop_due_balances")
-    .select("due_id,enrollment_id,period,status,total_due,paid_total,balance")
+    .select("due_id,enrollment_id,period,status,total_due,paid_total,balance,base_waived")
     .neq("status", "cancelled")
     .gt("balance", 0)
     .order("period", { ascending: true })
@@ -383,7 +383,8 @@ export async function getDashboardSummary(filters: DashboardFilters = defaultDas
       const displayStatus = computeDueDisplayStatus(
         d.status as "pending" | "cancelled",
         d.total_due as number,
-        d.paid_total as number
+        d.paid_total as number,
+        d.base_waived as boolean
       );
       return displayStatus === "pending" || displayStatus === "partial";
     })

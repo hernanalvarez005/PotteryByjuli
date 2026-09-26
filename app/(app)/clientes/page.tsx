@@ -4,6 +4,7 @@ import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { getCustomers, customerDisplayName, whatsappLink } from "@/lib/customers";
 import { getStudentRoster } from "@/lib/students";
 import { formatCurrency } from "@/lib/format";
+import { WAIVED_BADGE_CLASS } from "@/lib/due-waiver-style";
 import { DUE_STATUS_LABELS, formatPeriodLabel, currentPeriod, type DueDisplayStatus } from "@/lib/workshop-dues";
 import {
   Table,
@@ -29,6 +30,7 @@ const STATUS_BADGE_VARIANT: Record<DueDisplayStatus | "no_due", "secondary" | "o
   partial: "outline",
   pending: "outline",
   cancelled: "destructive",
+  waived: "outline",
   no_due: "outline",
 };
 
@@ -147,7 +149,10 @@ export default async function ClientesPage({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Badge variant={STATUS_BADGE_VARIANT[r.currentPeriodStatus]}>
+                        <Badge
+                          variant={STATUS_BADGE_VARIANT[r.currentPeriodStatus]}
+                          className={r.currentPeriodStatus === "waived" ? WAIVED_BADGE_CLASS : undefined}
+                        >
                           {r.currentPeriodStatus === "no_due"
                             ? "Sin cuota generada"
                             : DUE_STATUS_LABELS[r.currentPeriodStatus]}

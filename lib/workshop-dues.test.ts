@@ -10,7 +10,11 @@ import {
   lastDayOfPeriod,
   isEligibleWithoutDue,
   classifyForPeriod,
+  hasActiveWaiver,
+  toWaiverHistory,
+  DUE_STATUS_LABELS,
   type EnrollmentForPeriod,
+  type DueWaiverRowRaw,
 } from "./workshop-dues";
 
 describe("previousPeriod / nextPeriod", () => {
@@ -96,6 +100,9 @@ describe("computeDueSummary", () => {
       paidTotal: 20000,
       balance: 30000,
       status: "partial",
+      // Sin exención el resumen es el de siempre.
+      baseWaived: false,
+      waivedAmount: 0,
     });
   });
 
@@ -265,5 +272,118 @@ describe("classifyForPeriod", () => {
 
   it("without any due: excluded when the enrollment started after the period", () => {
     expect(classifyForPeriod(enrollment({ startDate: "2026-10-05" }), period, null)).toBe("excluded");
+  });
+});
+
+describe("exención de la cuota base", () => {
+  const due = { status: "pending" as const, amount: 50000 };
+  const active = [{ reverted_at: null }];
+  const closed = [{ reverted_at: "2026-09-20T12:00:00Z" }];
+
+  it("hasActiveWaiver: sólo cuenta un ciclo SIN cerrar; ciclos cerrados o ausentes no eximen", () => {
+    expect(hasActiveWaiver(active)).toBe(true);
+    expect(hasActiveWaiver(closed)).toBe(false);
+    expect(hasActiveWaiver([])).toBe(false);
+    expect(hasActiveWaiver(null)).toBe(false);
+    expect(hasActiveWaiver(undefined)).toBe(false);
+    // Varios ciclos: cerrados + uno activo.
+    expect(hasActiveWaiver([...closed, ...active])).toBe(true);
+  });
+
+  it("cuota exenta sin extras: balance 0, paid_total 0 (sin pago falso), estado 'waived' — no 'paid' ni 'pending'", () => {
+    const summary = computeDueSummary(due, [], [], active);
+    expect(summary).toMatchObject({
+      baseAmount: 50000, extrasTotal: 0, totalDue: 0, paidTotal: 0, balance: 0, status: "waived", baseWaived: true, waivedAmount: 50000,
+    });
+    expect(summary.status).not.toBe("paid");
+  });
+
+  it("los extras siguen cobrables: sólo la base se exime", () => {
+    const items = [{ amount: 8000, voided_at: null }];
+    const pending = computeDueSummary(due, items, [], active);
+    expect(pending).toMatchObject({ totalDue: 8000, paidTotal: 0, balance: 8000, status: "pending", baseWaived: true });
+
+    const partial = computeDueSummary(due, items, [{ amount: 3000 }], active);
+    expect(partial).toMatchObject({ totalDue: 8000, paidTotal: 3000, balance: 5000, status: "partial" });
+
+    const paid = computeDueSummary(due, items, [{ amount: 8000 }], active);
+    expect(paid).toMatchObject({ totalDue: 8000, paidTotal: 8000, balance: 0, status: "paid", baseWaived: true });
+  });
+
+  it("un extra ANULADO no cuenta: la cuota exenta vuelve a 'waived'", () => {
+    const items = [{ amount: 8000, voided_at: "2026-09-21T10:00:00Z" }];
+    expect(computeDueSummary(due, items, [], active)).toMatchObject({ totalDue: 0, balance: 0, status: "waived" });
+  });
+
+  it("quitar la exención (ciclo cerrado) devuelve la cuota base completa", () => {
+    expect(computeDueSummary(due, [], [], closed)).toMatchObject({
+      totalDue: 50000, balance: 50000, status: "pending", baseWaived: false, waivedAmount: 0,
+    });
+  });
+
+  it("quitar la exención con un pago de extras existente → 'partial', sin inconsistencia", () => {
+    const items = [{ amount: 8000, voided_at: null }];
+    expect(computeDueSummary(due, items, [{ amount: 8000 }], closed)).toMatchObject({
+      totalDue: 58000, paidTotal: 8000, balance: 50000, status: "partial",
+    });
+  });
+
+  it("varios ciclos: la exención vigente es la única que cuenta", () => {
+    const cycles = [{ reverted_at: "2026-08-01T00:00:00Z" }, { reverted_at: "2026-09-01T00:00:00Z" }, { reverted_at: null }];
+    expect(computeDueSummary(due, [], [], cycles)).toMatchObject({ baseWaived: true, totalDue: 0, status: "waived" });
+  });
+
+  it("una cuota cancelada sigue 'cancelled' aunque tenga una exención", () => {
+    expect(computeDueSummary({ status: "cancelled", amount: 50000 }, [], [], active).status).toBe("cancelled");
+  });
+
+  it("computeDueDisplayStatus: 'waived' sólo si la base está exenta Y no queda nada cobrable", () => {
+    expect(computeDueDisplayStatus("pending", 0, 0, true)).toBe("waived");
+    expect(computeDueDisplayStatus("pending", 0, 0, false)).toBe("pending"); // total 0 sin exención: como siempre
+    expect(computeDueDisplayStatus("pending", 8000, 0, true)).toBe("pending");
+    expect(computeDueDisplayStatus("cancelled", 0, 0, true)).toBe("cancelled");
+  });
+
+  it("lastPaidPeriod: una cuota exenta NO es un mes pago", () => {
+    const dues = [
+      { period: "2026-08", status: "pending" as const, amount: 50000, paidAmount: 50000 },
+      { period: "2026-09", status: "pending" as const, amount: 0, paidAmount: 0, baseWaived: true },
+    ];
+    expect(lastPaidPeriod(dues)).toBe("2026-08");
+  });
+
+  it("classifyForPeriod: una exenta no es deudora, ni paga, ni excluida", () => {
+    const enrollment = { id: "e", status: "active" as const, startDate: "2026-01-01", monthlyFee: 50000 };
+    expect(classifyForPeriod(enrollment, "2026-09", { status: "waived", balance: 0 })).toBe("waived");
+    // Exenta la base pero con un extra pendiente: sigue siendo deudora por el extra.
+    expect(classifyForPeriod(enrollment, "2026-09", { status: "pending", balance: 8000 })).toBe("debtor");
+  });
+
+  it("DUE_STATUS_LABELS: 'Exenta' es distinta de 'Pagada'", () => {
+    expect(DUE_STATUS_LABELS.waived).toBe("Exenta");
+    expect(DUE_STATUS_LABELS.waived).not.toBe(DUE_STATUS_LABELS.paid);
+  });
+});
+
+describe("toWaiverHistory", () => {
+  const raw = (over: Partial<DueWaiverRowRaw>): DueWaiverRowRaw => ({
+    id: "w", waived_amount: 50000, reason: null, waived_at: "2026-09-01T10:00:00Z", reverted_at: null, revert_reason: null,
+    waived_by_profile: { full_name: "Juli" }, reverted_by_profile: null, ...over,
+  });
+
+  it("ordena del ciclo más reciente al más antiguo y conserva quién/cuándo/motivo de eximir y de quitar", () => {
+    const history = toWaiverHistory([
+      raw({ id: "old", waived_at: "2026-08-01T10:00:00Z", reason: "convenio", reverted_at: "2026-08-15T10:00:00Z", revert_reason: "error", reverted_by_profile: { full_name: "Ana" } }),
+      raw({ id: "new", waived_at: "2026-09-01T10:00:00Z", reason: "cortesía" }),
+    ]);
+    expect(history.map((h) => h.id)).toEqual(["new", "old"]);
+    expect(history[0]).toMatchObject({ active: true, reason: "cortesía", waivedByName: "Juli", revertedAt: null });
+    expect(history[1]).toMatchObject({ active: false, waivedByName: "Juli", revertedByName: "Ana", revertReason: "error", reason: "convenio" });
+  });
+
+  it("tolera null/undefined y perfiles sin nombre", () => {
+    expect(toWaiverHistory(null)).toEqual([]);
+    expect(toWaiverHistory(undefined)).toEqual([]);
+    expect(toWaiverHistory([raw({ waived_by_profile: null })])[0].waivedByName).toBeNull();
   });
 });

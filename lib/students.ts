@@ -5,6 +5,8 @@ import {
   computeDueBalance,
   computeDueSummary,
   currentPeriod,
+  DUE_WAIVERS_SELECT,
+  type DueWaiverLike,
   lastPaidPeriod,
   type DueDisplayStatus,
 } from "@/lib/workshop-dues";
@@ -44,7 +46,7 @@ export async function getStudentRoster(period: string = currentPeriod()): Promis
 
   const { data: dueRows } = await supabase
     .from("workshop_dues")
-    .select("enrollment_id,period,amount,status,payments(amount),workshop_due_items(amount,voided_at)")
+    .select(`enrollment_id,period,amount,status,payments(amount),workshop_due_items(amount,voided_at),${DUE_WAIVERS_SELECT}`)
     .in("enrollment_id", enrollmentIds);
 
   const duesByEnrollment = new Map<string, typeof dueRows>();
@@ -68,18 +70,20 @@ export async function getStudentRoster(period: string = currentPeriod()): Promis
       const status = d.status as "pending" | "cancelled";
       const payments = (d.payments ?? []) as { amount: number }[];
       const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
-      const summary = computeDueSummary({ status, amount: d.amount as number }, items, payments);
+      const waivers = (d.workshop_due_waivers ?? []) as DueWaiverLike[];
+      const summary = computeDueSummary({ status, amount: d.amount as number }, items, payments, waivers);
       return {
         period: d.period as string,
         status,
         amount: summary.totalDue,
         paidAmount: summary.paidTotal,
+        baseWaived: summary.baseWaived,
       };
     });
 
     const currentDue = dues.find((d) => d.period === period);
     const currentPeriodStatus: DueDisplayStatus | "no_due" = currentDue
-      ? computeDueDisplayStatus(currentDue.status, currentDue.amount, currentDue.paidAmount)
+      ? computeDueDisplayStatus(currentDue.status, currentDue.amount, currentDue.paidAmount, currentDue.baseWaived)
       : "no_due";
     const currentPeriodBalance = currentDue ? computeDueBalance(currentDue.amount, currentDue.paidAmount) : null;
 

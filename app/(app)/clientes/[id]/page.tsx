@@ -13,7 +13,10 @@ import {
   formatPeriodLabel,
   lastPaidPeriod,
   DUE_STATUS_LABELS,
+  DUE_WAIVERS_SELECT,
+  type DueWaiverLike,
 } from "@/lib/workshop-dues";
+import { WAIVED_BADGE_CLASS } from "@/lib/due-waiver-style";
 import { ORDER_STATUS_LABELS } from "@/schemas/orders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -75,7 +78,7 @@ export default async function CustomerDetailPage({
   const { data: dueRows } = enrollmentIds.length
     ? await supabase
         .from("workshop_dues")
-        .select("enrollment_id,period,amount,status,payments(amount,paid_at),workshop_due_items(amount,voided_at)")
+        .select(`enrollment_id,period,amount,status,payments(amount,paid_at),workshop_due_items(amount,voided_at),${DUE_WAIVERS_SELECT}`)
         .in("enrollment_id", enrollmentIds)
     : { data: [] as never[] };
 
@@ -85,12 +88,13 @@ export default async function CustomerDetailPage({
   // es el total con extras incluidos (totalDue), no sólo la cuota base.
   const duesByEnrollment = new Map<
     string,
-    { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number; latestPaymentDate: string | null }[]
+    { period: string; status: "pending" | "cancelled"; amount: number; paidAmount: number; baseWaived: boolean; latestPaymentDate: string | null }[]
   >();
   for (const d of dueRows ?? []) {
     const payments = (d.payments ?? []) as { amount: number; paid_at: string }[];
     const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
-    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
+    const waivers = (d.workshop_due_waivers ?? []) as DueWaiverLike[];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments, waivers);
     const latestPaymentDate = payments.length > 0 ? payments.map((p) => p.paid_at).sort().at(-1)! : null;
     const list = duesByEnrollment.get(d.enrollment_id) ?? [];
     list.push({
@@ -98,6 +102,7 @@ export default async function CustomerDetailPage({
       status: d.status as "pending" | "cancelled",
       amount: summary.totalDue,
       paidAmount: summary.paidTotal,
+      baseWaived: summary.baseWaived,
       latestPaymentDate,
     });
     duesByEnrollment.set(d.enrollment_id, list);
@@ -222,7 +227,7 @@ export default async function CustomerDetailPage({
                 const dues = duesByEnrollment.get(e.id) ?? [];
                 const currentDue = dues.find((d) => d.period === period);
                 const currentStatus = currentDue
-                  ? computeDueDisplayStatus(currentDue.status, currentDue.amount, currentDue.paidAmount)
+                  ? computeDueDisplayStatus(currentDue.status, currentDue.amount, currentDue.paidAmount, currentDue.baseWaived)
                   : null;
                 const monthlyFee = e.monthly_fee ?? group?.monthly_fee ?? null;
                 const lastPaid = lastPaidPeriod(dues);
@@ -241,9 +246,12 @@ export default async function CustomerDetailPage({
                         <span className="flex items-center gap-1">
                           {formatPeriodLabel(period)}:
                           {currentStatus ? (
-                            <Badge variant={currentStatus === "paid" ? "secondary" : "outline"} className="h-4 px-1.5 text-[10px]">
+                            <Badge
+                              variant={currentStatus === "paid" ? "secondary" : "outline"}
+                              className={`h-4 px-1.5 text-[10px] ${currentStatus === "waived" ? WAIVED_BADGE_CLASS : ""}`}
+                            >
                               {DUE_STATUS_LABELS[currentStatus]}
-                              {currentDue && currentStatus !== "paid" && currentStatus !== "cancelled"
+                              {currentDue && currentStatus !== "paid" && currentStatus !== "cancelled" && currentStatus !== "waived"
                                 ? ` · saldo ${formatCurrency(computeDueBalance(currentDue.amount, currentDue.paidAmount))}`
                                 : ""}
                             </Badge>
