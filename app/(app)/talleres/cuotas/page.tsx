@@ -11,7 +11,10 @@ import {
   nextPeriod,
   formatPeriodLabel,
   DUE_STATUS_LABELS,
+  DUE_WAIVERS_DETAIL_SELECT,
+  toWaiverHistory,
   type DueDisplayStatus,
+  type DueWaiverRowRaw,
 } from "@/lib/workshop-dues";
 import {
   Table,
@@ -24,12 +27,15 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { GenerateDuesForm } from "./generate-dues-form";
 import { RegisterPaymentDialog } from "../[groupId]/dues-panel";
+import { DueWaiverControls, DueWaiverHistory } from "../[groupId]/due-waiver-controls";
+import { WAIVED_BADGE_CLASS } from "@/lib/due-waiver-style";
 
 const STATUS_BADGE_VARIANT: Record<DueDisplayStatus, "secondary" | "outline" | "destructive"> = {
   paid: "secondary",
   partial: "outline",
   pending: "outline",
   cancelled: "destructive",
+  waived: "outline",
 };
 
 export default async function CuotasPage({
@@ -61,7 +67,7 @@ export default async function CuotasPage({
     supabase
       .from("workshop_dues")
       .select(
-        "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes,fee_amount),workshop_due_items(amount,voided_at),workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))"
+        `id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes,fee_amount),workshop_due_items(amount,voided_at),${DUE_WAIVERS_DETAIL_SELECT},workshop_enrollments(group_id,customers(first_name,last_name),workshop_groups(name))`
       )
       .eq("period", period)
       .order("created_at"),
@@ -84,7 +90,8 @@ export default async function CuotasPage({
       fee_amount: number;
     }[];
     const items = (d.workshop_due_items ?? []) as { amount: number; voided_at: string | null }[];
-    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
+    const waivers = (d.workshop_due_waivers ?? []) as unknown as DueWaiverRowRaw[];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments, waivers);
     const enrollment = d.workshop_enrollments as unknown as {
       group_id: string;
       customers: { first_name: string; last_name: string | null } | null;
@@ -100,6 +107,10 @@ export default async function CuotasPage({
       paidAmount: summary.paidTotal,
       balance: summary.balance,
       displayStatus: summary.status,
+      baseWaived: summary.baseWaived,
+      baseAmount: summary.baseAmount,
+      waivers: toWaiverHistory(waivers),
+      period: d.period,
       payments,
     };
   });
@@ -179,22 +190,51 @@ export default async function CuotasPage({
                 </TableCell>
                 <TableCell>
                   {formatCurrency(due.amount)}
-                  {due.extrasTotal > 0 && (
+                  {due.baseWaived ? (
                     <span className="block text-xs text-muted-foreground">
-                      incl. {formatCurrency(due.extrasTotal)} en extras
+                      cuota base exenta ({formatCurrency(due.baseAmount)})
+                      {due.extrasTotal > 0 ? ` · ${formatCurrency(due.extrasTotal)} en extras` : ""}
                     </span>
+                  ) : (
+                    due.extrasTotal > 0 && (
+                      <span className="block text-xs text-muted-foreground">
+                        incl. {formatCurrency(due.extrasTotal)} en extras
+                      </span>
+                    )
                   )}
                 </TableCell>
                 <TableCell>{formatCurrency(due.paidAmount)}</TableCell>
                 <TableCell>{formatCurrency(due.balance)}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_BADGE_VARIANT[due.displayStatus]}>
-                    {DUE_STATUS_LABELS[due.displayStatus]}
-                  </Badge>
+                  <div className="flex flex-col items-start gap-1">
+                    <Badge
+                      variant={STATUS_BADGE_VARIANT[due.displayStatus]}
+                      className={due.displayStatus === "waived" ? WAIVED_BADGE_CLASS : undefined}
+                    >
+                      {DUE_STATUS_LABELS[due.displayStatus]}
+                    </Badge>
+                    {due.baseWaived && due.displayStatus !== "waived" && (
+                      <Badge variant="outline" className={WAIVED_BADGE_CLASS}>
+                        Cuota base: EXENTA
+                      </Badge>
+                    )}
+                    <DueWaiverHistory history={due.waivers} periodLabel={formatPeriodLabel(due.period)} />
+                  </div>
                 </TableCell>
                 <TableCell className="text-right">
+                  {isOwner(user) && (
+                    <DueWaiverControls
+                      groupId={due.groupId}
+                      dueId={due.id}
+                      customerName={due.customerName}
+                      periodLabel={formatPeriodLabel(due.period)}
+                      baseWaived={due.baseWaived}
+                      hasPayments={due.payments.length > 0}
+                      cancelled={due.displayStatus === "cancelled"}
+                    />
+                  )}
                   {(due.payments.length > 0 ||
-                    (due.displayStatus !== "paid" && due.displayStatus !== "cancelled")) && (
+                    (due.displayStatus !== "paid" && due.displayStatus !== "cancelled" && due.displayStatus !== "waived")) && (
                     <RegisterPaymentDialog
                       groupId={due.groupId}
                       dueId={due.id}
@@ -203,7 +243,7 @@ export default async function CuotasPage({
                       paymentMethods={paymentMethods ?? []}
                       paymentAccounts={paymentAccounts ?? []}
                       payments={due.payments}
-                      allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
+                      allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled" && due.displayStatus !== "waived"}
                       canEdit={canEdit}
                     />
                   )}

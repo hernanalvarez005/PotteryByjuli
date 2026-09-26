@@ -669,6 +669,49 @@ base — así que agregar un extra a una cuota que hoy figura "Pagada" la
 vuelve "Parcial" automáticamente, sin ningún caso especial: el estado
 nunca se guarda, siempre se calcula.
 
+### Exención excepcional de la cuota base (2026-09-26)
+
+Una alumna puede tener la cuota mensual **exenta** de forma excepcional
+(convenio, ausencia prolongada, excepción comercial, compensación, cortesía).
+**No es un pago de $0 ni un pago falso**: eximir no inserta nada en `payments`,
+no suma ingreso, `paid_total` sigue siendo la suma de pagos reales, y la cuota
+exenta **no es "Pagada"** (chip "Exenta", de otro color) **ni es deuda**.
+
+- **Modelo: `workshop_due_waivers`, una fila por ciclo** (mismo patrón que
+  `workshop_due_items.voided_at`). El estado "exenta" se DERIVA (hay una fila
+  con `reverted_at is null`); no hay `status='waived'` ni columnas nuevas en
+  `workshop_dues`. Cada ciclo guarda quién eximió, cuándo, motivo (opcional,
+  ≤300), el importe base eximido (congelado), y al quitarla quién, cuándo y
+  motivo. **Quitar cierra el ciclo, no lo borra**; eximir otra vez crea otra
+  fila (ciclos ilimitados). Índice único parcial: a lo sumo UNA exención
+  activa por cuota. Historial **inmutable** por la API (sin políticas de
+  insert/update/delete; sólo escriben las RPC); lo lee cualquier rol
+  autenticado, motivo incluido. En pantalla, "quién" se muestra como nombre →
+  email → "Usuario" (nunca un guion), y el historial marca cada ciclo como
+  **Vigente** o **Cerrada** (esta última con quién, cuándo y por qué se quitó).
+- **Sólo owner** puede eximir (`waive_due`) y quitar (`unwaive_due`).
+- **Sólo la cuota base:** los extras (`workshop_due_items`) siguen cobrables.
+  `totalDue = (exenta ? 0 : base) + extras`; sin extras cobrables el balance es 0
+  y el estado es "Exenta"; con extras se muestra "Cuota base: EXENTA" y el
+  estado/saldo de los extras aparte.
+- **Cualquier pago existente bloquea eximir** (los pagos se registran contra el
+  total, no se sabe si cubrieron la base o un extra): se muestra el conflicto y
+  hay que resolverlo antes. No se exime una cuota cancelada ni de importe 0.
+  Quitar la exención siempre es posible: el estado es derivado.
+- **`computeDueSummary` sigue siendo la única fuente de verdad** (recibe los ciclos
+  como 4º argumento); `workshop_due_balances` replica exactamente la misma regla
+  en SQL (`total_due`, `balance`, y `base_waived`). Todos los consumidores piden
+  el embed de exenciones (`DUE_WAIVERS_SELECT`); un test estático lo exige.
+  "Necesita atención"/"Cuotas pendientes" excluyen las exentas sin extras por
+  construcción (balance 0); `classifyForPeriod` las clasifica aparte
+  (`waived`) y `lastPaidPeriod` no las cuenta como mes pago.
+- **Pagos sobre una cuota exenta sin saldo:** un trigger `BEFORE INSERT` sobre
+  `payments` los rechaza. Está acotado EXCLUSIVAMENTE a pagos de cuota:
+  `payments_exactly_one_target` garantiza que `workshop_due_id is not null` ⇔
+  pago de cuota, y la cláusula `WHEN` evita que se dispare para pedidos, ventas
+  rápidas u otros flujos; corregir un pago existente (UPDATE) tampoco lo
+  dispara. Toma un lock compartido de la cuota para serializarse con `waive_due`.
+
 ## Dashboard con filtros genuinamente server-side (2026-09-10, tanda de mejoras operativas)
 
 Primera instancia real del patrón "filtros que de verdad empujan

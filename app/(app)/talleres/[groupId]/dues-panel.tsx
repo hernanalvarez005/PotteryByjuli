@@ -33,7 +33,9 @@ import { ConfirmAction } from "@/components/confirm-action";
 import { PaymentEditRow } from "@/components/payment-edit-row";
 import { Plus, Receipt } from "lucide-react";
 import { formatCurrency, formatDate, todayInArgentina } from "@/lib/format";
-import { DUE_STATUS_LABELS, type DueDisplayStatus } from "@/lib/workshop-dues";
+import { DUE_STATUS_LABELS, formatPeriodLabel, type DueDisplayStatus, type DueWaiverHistoryItem } from "@/lib/workshop-dues";
+import { DueWaiverControls, DueWaiverHistory } from "./due-waiver-controls";
+import { WAIVED_BADGE_CLASS } from "@/lib/due-waiver-style";
 import { createDue, registerDuePayment, updateDuePayment, cancelDue, addDueExtra, voidDueExtra } from "./actions";
 
 export type DueExtraRow = {
@@ -70,6 +72,10 @@ export type DueRow = {
   paidAmount: number;
   balance: number;
   displayStatus: DueDisplayStatus;
+  /** La cuota base tiene una exención activa (los extras siguen cobrables). */
+  baseWaived: boolean;
+  /** Historial de ciclos de exención, del más reciente al más antiguo. */
+  waivers: DueWaiverHistoryItem[];
   extras: DueExtraRow[];
   payments: DuePaymentRow[];
 };
@@ -79,6 +85,7 @@ const STATUS_BADGE_VARIANT: Record<DueDisplayStatus, "secondary" | "outline" | "
   partial: "outline",
   pending: "outline",
   cancelled: "destructive",
+  waived: "outline",
 };
 
 export function DuesPanel({
@@ -89,6 +96,7 @@ export function DuesPanel({
   paymentAccounts,
   concepts,
   canEdit,
+  isOwner = false,
 }: {
   groupId: string;
   dues: DueRow[];
@@ -97,6 +105,8 @@ export function DuesPanel({
   paymentAccounts: { id: string; name: string }[];
   concepts: { id: string; name: string }[];
   canEdit: boolean;
+  /** Sólo la owner puede eximir / quitar exenciones. */
+  isOwner?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -131,10 +141,17 @@ export function DuesPanel({
                 <TableCell>{due.period}</TableCell>
                 <TableCell>
                   {formatCurrency(due.amount)}
-                  {due.extrasTotal > 0 && (
+                  {due.baseWaived ? (
                     <span className="block text-xs text-muted-foreground">
-                      incl. {formatCurrency(due.extrasTotal)} en extras
+                      cuota base exenta ({formatCurrency(due.baseAmount)})
+                      {due.extrasTotal > 0 ? ` · ${formatCurrency(due.extrasTotal)} en extras` : ""}
                     </span>
+                  ) : (
+                    due.extrasTotal > 0 && (
+                      <span className="block text-xs text-muted-foreground">
+                        incl. {formatCurrency(due.extrasTotal)} en extras
+                      </span>
+                    )
                   )}
                 </TableCell>
                 <TableCell>{formatCurrency(due.paidAmount)}</TableCell>
@@ -143,9 +160,20 @@ export function DuesPanel({
                   {due.due_date ? formatDate(due.due_date) : "—"}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_BADGE_VARIANT[due.displayStatus]}>
-                    {DUE_STATUS_LABELS[due.displayStatus]}
-                  </Badge>
+                  <div className="flex flex-col items-start gap-1">
+                    <Badge
+                      variant={STATUS_BADGE_VARIANT[due.displayStatus]}
+                      className={due.displayStatus === "waived" ? WAIVED_BADGE_CLASS : undefined}
+                    >
+                      {DUE_STATUS_LABELS[due.displayStatus]}
+                    </Badge>
+                    {due.baseWaived && due.displayStatus !== "waived" && (
+                      <Badge variant="outline" className={WAIVED_BADGE_CLASS}>
+                        Cuota base: EXENTA
+                      </Badge>
+                    )}
+                    <DueWaiverHistory history={due.waivers} periodLabel={formatPeriodLabel(due.period)} />
+                  </div>
                 </TableCell>
                 {canEdit && (
                   <TableCell className="text-right">
@@ -159,8 +187,19 @@ export function DuesPanel({
                           concepts={concepts}
                         />
                       )}
+                      {isOwner && (
+                        <DueWaiverControls
+                          groupId={groupId}
+                          dueId={due.id}
+                          customerName={due.customerName}
+                          periodLabel={formatPeriodLabel(due.period)}
+                          baseWaived={due.baseWaived}
+                          hasPayments={due.payments.length > 0}
+                          cancelled={due.displayStatus === "cancelled"}
+                        />
+                      )}
                       {(due.payments.length > 0 ||
-                        (due.displayStatus !== "paid" && due.displayStatus !== "cancelled")) && (
+                        (due.displayStatus !== "paid" && due.displayStatus !== "cancelled" && due.displayStatus !== "waived")) && (
                         <RegisterPaymentDialog
                           groupId={groupId}
                           dueId={due.id}
@@ -169,7 +208,7 @@ export function DuesPanel({
                           paymentMethods={paymentMethods}
                           paymentAccounts={paymentAccounts}
                           payments={due.payments}
-                          allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled"}
+                          allowNewPayment={due.displayStatus !== "paid" && due.displayStatus !== "cancelled" && due.displayStatus !== "waived"}
                           canEdit={canEdit}
                         />
                       )}

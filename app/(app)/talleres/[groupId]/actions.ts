@@ -155,7 +155,11 @@ export async function registerDuePayment(
     reference: parsed.data.reference,
     created_by: user.id,
   });
-  if (error) return { error: "No se pudo registrar el pago." };
+  if (error) {
+    // P0001 = un `raise exception` en español escrito a propósito (p. ej. el
+    // trigger que rechaza pagos sobre una cuota exenta sin saldo).
+    return { error: error.code === "P0001" ? error.message : "No se pudo registrar el pago." };
+  }
 
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
@@ -379,4 +383,52 @@ export async function deleteGroup(groupId: string) {
 
   revalidatePath("/talleres");
   redirect("/talleres");
+}
+
+export type DueWaiverResult = { error?: string };
+
+function revalidateDues(groupId: string) {
+  revalidatePath(`/talleres/${groupId}`);
+  revalidatePath("/talleres/cuotas");
+  revalidatePath("/dashboard");
+  revalidatePath("/clientes");
+}
+
+/**
+ * Eximir la cuota BASE de una alumna (convenio, ausencia prolongada,
+ * excepción comercial, compensación, cortesía). NO es un pago: no inserta
+ * nada en `payments`, no suma ingreso y `paid_total` sigue siendo la suma de
+ * pagos reales. Los extras siguen cobrables. Sólo owner (además de la RPC).
+ * Toda la regla (cuota cancelada, ya exenta, pagos existentes…) vive en
+ * `waive_due`, que emite mensajes en español (P0001).
+ */
+export async function waiveDue(groupId: string, dueId: string, reason?: string): Promise<DueWaiverResult> {
+  const user = await requireUser();
+  if (!isOwner(user)) return { error: "Sólo la administradora puede eximir cuotas." };
+
+  const cleanReason = reason?.trim() || null;
+  if (cleanReason && cleanReason.length > 300) return { error: "El motivo no puede superar los 300 caracteres." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("waive_due", { p_due_id: dueId, p_reason: cleanReason });
+  if (error) return { error: error.code === "P0001" ? error.message : "No se pudo eximir la cuota." };
+
+  revalidateDues(groupId);
+  return {};
+}
+
+/** Quita la exención: CIERRA el ciclo (queda en el historial), nunca lo borra. Sólo owner. */
+export async function unwaiveDue(groupId: string, dueId: string, reason?: string): Promise<DueWaiverResult> {
+  const user = await requireUser();
+  if (!isOwner(user)) return { error: "Sólo la administradora puede quitar una exención." };
+
+  const cleanReason = reason?.trim() || null;
+  if (cleanReason && cleanReason.length > 300) return { error: "El motivo no puede superar los 300 caracteres." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("unwaive_due", { p_due_id: dueId, p_reason: cleanReason });
+  if (error) return { error: error.code === "P0001" ? error.message : "No se pudo quitar la exención." };
+
+  revalidateDues(groupId);
+  return {};
 }

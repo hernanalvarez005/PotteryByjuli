@@ -28,3 +28,38 @@ describe("every workshop-due-total consumer calls computeDueSummary", () => {
     });
   }
 });
+
+// EXENCIÓN de la cuota base (workshop_due_waivers): si un consumidor olvida
+// pedir los ciclos de exención, mostraría una cuota exenta como deuda. Cada
+// consumidor de computeDueSummary tiene que (1) pedir el embed de exenciones
+// en su select y (2) pasarle los ciclos a computeDueSummary como 4º argumento.
+describe("every workshop-due consumer takes the base-fee waiver into account", () => {
+  for (const relativePath of CONSUMERS) {
+    it(`${relativePath} pide las exenciones y se las pasa a computeDueSummary`, () => {
+      const source = readFileSync(path.resolve(__dirname, "..", relativePath), "utf-8");
+      expect(source).toMatch(/DUE_WAIVERS_(DETAIL_)?SELECT/);
+      // computeDueSummary(due, items, payments, waivers): el 4º argumento existe.
+      expect(source).toMatch(/computeDueSummary\([^)]*,\s*(waivers|waiverRows|\w*[wW]aiver\w*)\s*\)/);
+    });
+  }
+
+  it("el dashboard (vista workshop_due_balances) trae base_waived y se lo pasa a computeDueDisplayStatus", () => {
+    const source = readFileSync(path.resolve(__dirname, "..", "lib/reports.ts"), "utf-8");
+    expect(source).toMatch(/select\("due_id,[^"]*base_waived"\)/);
+    expect(source).toMatch(/computeDueDisplayStatus\([\s\S]*?base_waived as boolean/);
+  });
+
+  it("classifyForPeriod, lastPaidPeriod y los consumidores de estado reciben baseWaived", () => {
+    for (const relativePath of ["lib/students.ts", "app/(app)/clientes/[id]/page.tsx"]) {
+      const source = readFileSync(path.resolve(__dirname, "..", relativePath), "utf-8");
+      expect(source).toMatch(/computeDueDisplayStatus\([^)]*baseWaived\)/);
+    }
+  });
+
+  it("registrar un pago en una cuota exenta sin saldo muestra el mensaje de la base, no un error genérico", () => {
+    const source = readFileSync(path.resolve(__dirname, "..", "app/(app)/talleres/[groupId]/actions.ts"), "utf-8");
+    const fn = source.slice(source.indexOf("export async function registerDuePayment"), source.indexOf("export async function updateDuePayment"));
+    expect(fn).toMatch(/P0001/);
+  });
+});
+

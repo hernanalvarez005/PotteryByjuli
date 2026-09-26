@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser, isOwner, hasRole } from "@/lib/auth";
 import { customerDisplayName } from "@/lib/customers";
 import { formatCurrency } from "@/lib/format";
-import { computeDueSummary } from "@/lib/workshop-dues";
+import { computeDueSummary, DUE_WAIVERS_DETAIL_SELECT, toWaiverHistory, type DueWaiverRowRaw } from "@/lib/workshop-dues";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -55,7 +55,7 @@ export default async function GroupDetailPage({
       ? supabase
           .from("workshop_dues")
           .select(
-            "id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes,fee_amount),workshop_enrollments(customers(first_name,last_name))"
+            `id,enrollment_id,period,amount,due_date,status,payments(id,amount,paid_at,method_id,account_id,reference,notes,fee_amount),${DUE_WAIVERS_DETAIL_SELECT},workshop_enrollments(customers(first_name,last_name))`
           )
           .in("enrollment_id", enrollmentIds)
           .order("period", { ascending: false })
@@ -133,7 +133,8 @@ export default async function GroupDetailPage({
       fee_amount: number;
     }[];
     const items = itemsByDue.get(d.id) ?? [];
-    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments);
+    const waivers = (d.workshop_due_waivers ?? []) as unknown as DueWaiverRowRaw[];
+    const summary = computeDueSummary({ status: d.status as "pending" | "cancelled", amount: d.amount }, items, payments, waivers);
     const enrollment = d.workshop_enrollments as unknown as {
       customers: { first_name: string; last_name: string | null } | null;
     } | null;
@@ -149,6 +150,8 @@ export default async function GroupDetailPage({
       paidAmount: summary.paidTotal,
       balance: summary.balance,
       displayStatus: summary.status,
+      baseWaived: summary.baseWaived,
+      waivers: toWaiverHistory(waivers),
       extras: extrasByDue.get(d.id) ?? [],
       payments,
     };
@@ -291,6 +294,7 @@ export default async function GroupDetailPage({
             paymentAccounts={paymentAccounts ?? []}
             concepts={concepts ?? []}
             canEdit={canEditDues}
+            isOwner={isOwner(user)}
           />
         </TabsContent>
       </Tabs>
