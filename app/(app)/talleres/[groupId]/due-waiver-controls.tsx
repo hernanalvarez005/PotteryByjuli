@@ -128,22 +128,30 @@ export function DueWaiverHistory({ history, periodLabel }: { history: DueWaiverH
         </DialogHeader>
         <ol className="flex flex-col gap-3 text-sm">
           {history.map((w) => (
-            <li key={w.id} className="flex flex-col gap-1 rounded-md border p-3">
+            <li
+              key={w.id}
+              data-cycle-state={w.active ? "active" : "closed"}
+              className={`flex flex-col gap-2 rounded-md border p-3 ${w.active ? "" : "border-dashed bg-muted/40"}`}
+            >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium">Exenta {formatCurrency(w.waivedAmount)}</span>
-                <Badge variant="outline" className={w.active ? WAIVED_BADGE_CLASS : "text-muted-foreground"}>
-                  {w.active ? "Activa" : "Quitada"}
+                <span className={`font-medium ${w.active ? "" : "text-muted-foreground"}`}>Exenta {formatCurrency(w.waivedAmount)}</span>
+                <Badge variant="outline" className={w.active ? WAIVED_BADGE_CLASS : "border-dashed text-muted-foreground"}>
+                  {w.active ? "Vigente" : "Cerrada"}
                 </Badge>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Eximida por {w.waivedByName ?? "—"} · {formatDateTime(w.waivedAt)}
-              </p>
-              {w.reason && <p>Motivo: {w.reason}</p>}
-              {w.revertedAt && (
+              <div className="flex flex-col gap-0.5">
                 <p className="text-xs text-muted-foreground">
-                  Quitada por {w.revertedByName ?? "—"} · {formatDateTime(w.revertedAt)}
-                  {w.revertReason ? ` — ${w.revertReason}` : ""}
+                  <span className="font-medium">Eximida</span> por {w.waivedByName} · {formatDateTime(w.waivedAt)}
                 </p>
+                {w.reason && <p className="text-sm">Motivo: {w.reason}</p>}
+              </div>
+              {w.revertedAt && (
+                <div className="flex flex-col gap-0.5 border-t border-dashed pt-2">
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium">Exención quitada</span> por {w.revertedByName ?? "Usuario"} · {formatDateTime(w.revertedAt)}
+                  </p>
+                  {w.revertReason && <p className="text-sm">Motivo: {w.revertReason}</p>}
+                </div>
               )}
             </li>
           ))}

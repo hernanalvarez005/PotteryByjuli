@@ -686,7 +686,9 @@ exenta **no es "Pagada"** (chip "Exenta", de otro color) **ni es deuda**.
   fila (ciclos ilimitados). Índice único parcial: a lo sumo UNA exención
   activa por cuota. Historial **inmutable** por la API (sin políticas de
   insert/update/delete; sólo escriben las RPC); lo lee cualquier rol
-  autenticado, motivo incluido.
+  autenticado, motivo incluido. En pantalla, "quién" se muestra como nombre →
+  email → "Usuario" (nunca un guion), y el historial marca cada ciclo como
+  **Vigente** o **Cerrada** (esta última con quién, cuándo y por qué se quitó).
 - **Sólo owner** puede eximir (`waive_due`) y quitar (`unwaive_due`).
 - **Sólo la cuota base:** los extras (`workshop_due_items`) siguen cobrables.
   `totalDue = (exenta ? 0 : base) + extras`; sin extras cobrables el balance es 0

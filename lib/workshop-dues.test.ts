@@ -12,6 +12,7 @@ import {
   classifyForPeriod,
   hasActiveWaiver,
   toWaiverHistory,
+  profileDisplayName,
   DUE_STATUS_LABELS,
   type EnrollmentForPeriod,
   type DueWaiverRowRaw,
@@ -381,9 +382,50 @@ describe("toWaiverHistory", () => {
     expect(history[1]).toMatchObject({ active: false, waivedByName: "Juli", revertedByName: "Ana", revertReason: "error", reason: "convenio" });
   });
 
-  it("tolera null/undefined y perfiles sin nombre", () => {
+  it("ante un empate exacto de fecha, el ciclo vigente va antes que el cerrado", () => {
+    const same = "2026-09-01T10:00:00Z";
+    const history = toWaiverHistory([
+      raw({ id: "closed", waived_at: same, reverted_at: same }),
+      raw({ id: "active", waived_at: same }),
+    ]);
+    expect(history.map((h) => h.id)).toEqual(["active", "closed"]);
+  });
+
+  it("tolera null/undefined; sin perfil el nombre es 'Usuario', nunca vacío ni un guion", () => {
     expect(toWaiverHistory(null)).toEqual([]);
     expect(toWaiverHistory(undefined)).toEqual([]);
-    expect(toWaiverHistory([raw({ waived_by_profile: null })])[0].waivedByName).toBeNull();
+    expect(toWaiverHistory([raw({ waived_by_profile: null })])[0].waivedByName).toBe("Usuario");
+  });
+
+  it("quién eximió y quién quitó usan el mismo fallback: nombre → email → 'Usuario'", () => {
+    const [h] = toWaiverHistory([
+      raw({
+        waived_by_profile: { full_name: null, email: "juli@pottery.test" },
+        reverted_at: "2026-09-10T10:00:00Z",
+        reverted_by_profile: { full_name: "  ", email: null },
+      }),
+    ]);
+    expect(h.waivedByName).toBe("juli@pottery.test");
+    expect(h.revertedByName).toBe("Usuario");
+  });
+
+  it("un ciclo vigente no expone 'quién quitó'; uno cerrado sí (con cuándo y por qué)", () => {
+    const [active] = toWaiverHistory([raw({})]);
+    expect(active).toMatchObject({ active: true, revertedAt: null, revertedByName: null });
+    const [closed] = toWaiverHistory([
+      raw({ reverted_at: "2026-09-10T10:00:00Z", revert_reason: "error de carga", reverted_by_profile: { full_name: "Ana" } }),
+    ]);
+    expect(closed).toMatchObject({ active: false, revertedAt: "2026-09-10T10:00:00Z", revertedByName: "Ana", revertReason: "error de carga" });
+  });
+});
+
+describe("profileDisplayName", () => {
+  it("full_name primero, luego email, finalmente 'Usuario'", () => {
+    expect(profileDisplayName({ full_name: "Juli", email: "j@x.com" })).toBe("Juli");
+    expect(profileDisplayName({ full_name: "", email: "j@x.com" })).toBe("j@x.com");
+    expect(profileDisplayName({ full_name: null, email: null })).toBe("Usuario");
+    expect(profileDisplayName({ full_name: "   ", email: "  " })).toBe("Usuario");
+    expect(profileDisplayName(null)).toBe("Usuario");
+    expect(profileDisplayName(undefined)).toBe("Usuario");
   });
 });

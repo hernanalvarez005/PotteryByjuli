@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { computeDueSummary, DUE_WAIVERS_SELECT, type DueWaiverLike } from "./workshop-dues";
+import { computeDueSummary, DUE_WAIVERS_SELECT, DUE_WAIVERS_DETAIL_SELECT, toWaiverHistory, type DueWaiverLike, type DueWaiverRowRaw } from "./workshop-dues";
 
 // Exención de la cuota base (workshop_due_waivers, waive_due / unwaive_due, vista
 // workshop_due_balances y trigger de pagos) contra Supabase LOCAL real, con la
@@ -217,6 +217,29 @@ describe("exención de la cuota base (local)", { timeout: 30000 }, () => {
       await waive(due);
       const { error } = await admin.from("workshop_due_waivers").insert({ due_id: due, waived_amount: 1, waived_by: ids.owner });
       expect(error?.code).toBe("23505");
+    });
+  });
+
+  describe("historial para mostrar (embed real con perfiles)", () => {
+    it("trae quién eximió y quién quitó con fallback nombre → email → 'Usuario', y marca el ciclo cerrado", async () => {
+      const due = await newDue();
+      await waive(due, "primera");
+      await unwaive(due, "error de carga");
+      await waive(due, "segunda");
+
+      // Misma consulta que la pantalla, con la sesión de un rol NO owner (todos leen el historial).
+      const { data, error } = await clients.viewer.from("workshop_dues").select(`id,${DUE_WAIVERS_DETAIL_SELECT}`).eq("id", due).single();
+      expect(error).toBeNull();
+      const history = toWaiverHistory(data!.workshop_due_waivers as unknown as DueWaiverRowRaw[]);
+
+      expect(history.map((h) => [h.reason, h.active])).toEqual([["segunda", true], ["primera", false]]);
+      // El perfil del owner de pruebas puede no tener full_name: nunca queda en blanco ni "—".
+      for (const h of history) expect(h.waivedByName).toMatch(/\S/);
+      expect(history[0].waivedByName).not.toBe("—");
+      expect(history[1]).toMatchObject({ revertReason: "error de carga" });
+      expect(history[1].revertedByName).toMatch(/\S/);
+      expect(history[1].revertedAt).not.toBeNull();
+      expect(history[0].revertedByName).toBeNull(); // el ciclo vigente no tiene "quién quitó"
     });
   });
 

@@ -60,8 +60,20 @@ export const DUE_WAIVERS_SELECT = "workshop_due_waivers(reverted_at)";
  */
 export const DUE_WAIVERS_DETAIL_SELECT =
   "workshop_due_waivers(id,waived_amount,reason,waived_at,reverted_at,revert_reason," +
-  "waived_by_profile:profiles!workshop_due_waivers_waived_by_fkey(full_name)," +
-  "reverted_by_profile:profiles!workshop_due_waivers_reverted_by_fkey(full_name))";
+  "waived_by_profile:profiles!workshop_due_waivers_waived_by_fkey(full_name,email)," +
+  "reverted_by_profile:profiles!workshop_due_waivers_reverted_by_fkey(full_name,email))";
+
+/** Perfil mínimo para mostrar quién hizo algo (`profiles.select authenticated`). */
+export type ProfileNameLike = { full_name: string | null; email?: string | null } | null | undefined;
+
+/**
+ * Nombre a mostrar de quien eximió/quitó una exención: `full_name`, si está vacío
+ * su email (ya viene en el mismo embed, sin otra consulta) y, si tampoco hay perfil,
+ * "Usuario". Nunca queda en blanco ni un guion.
+ */
+export function profileDisplayName(profile: ProfileNameLike): string {
+  return profile?.full_name?.trim() || profile?.email?.trim() || "Usuario";
+}
 
 /** Un ciclo de exención tal como lo devuelve DUE_WAIVERS_DETAIL_SELECT. */
 export type DueWaiverRowRaw = {
@@ -71,8 +83,8 @@ export type DueWaiverRowRaw = {
   waived_at: string;
   reverted_at: string | null;
   revert_reason: string | null;
-  waived_by_profile: { full_name: string | null } | null;
-  reverted_by_profile: { full_name: string | null } | null;
+  waived_by_profile: { full_name: string | null; email?: string | null } | null;
+  reverted_by_profile: { full_name: string | null; email?: string | null } | null;
 };
 
 /** Ciclo listo para mostrar en el historial. */
@@ -81,9 +93,12 @@ export type DueWaiverHistoryItem = {
   waivedAmount: number;
   reason: string | null;
   waivedAt: string;
-  waivedByName: string | null;
+  /** Siempre un texto legible (nombre → email → "Usuario"). */
+  waivedByName: string;
+  /** `true` = exención vigente; `false` = ciclo CERRADO (se quitó). */
   active: boolean;
   revertedAt: string | null;
+  /** Sólo hay nombre si el ciclo está cerrado. */
   revertedByName: string | null;
   revertReason: string | null;
 };
@@ -91,16 +106,17 @@ export type DueWaiverHistoryItem = {
 /** Historial de exenciones de una cuota, del ciclo más reciente al más antiguo. */
 export function toWaiverHistory(rows: DueWaiverRowRaw[] | null | undefined): DueWaiverHistoryItem[] {
   return [...(rows ?? [])]
-    .sort((a, b) => b.waived_at.localeCompare(a.waived_at))
+    // Más reciente primero; ante un empate exacto de fecha, el ciclo vigente antes que el cerrado.
+    .sort((a, b) => b.waived_at.localeCompare(a.waived_at) || Number(b.reverted_at == null) - Number(a.reverted_at == null))
     .map((w) => ({
       id: w.id,
       waivedAmount: w.waived_amount,
       reason: w.reason,
       waivedAt: w.waived_at,
-      waivedByName: w.waived_by_profile?.full_name ?? null,
+      waivedByName: profileDisplayName(w.waived_by_profile),
       active: w.reverted_at == null,
       revertedAt: w.reverted_at,
-      revertedByName: w.reverted_by_profile?.full_name ?? null,
+      revertedByName: w.reverted_at == null ? null : profileDisplayName(w.reverted_by_profile),
       revertReason: w.revert_reason,
     }));
 }
