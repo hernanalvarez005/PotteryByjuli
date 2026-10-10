@@ -10,9 +10,14 @@
 -- `order_items` era `FOR ALL` para operations/owner: la API permitía editar en
 -- silencio. Esta migración cierra eso:
 --
---   1. `order_items`: sólo INSERT directo (create_order / checkout insertan con la
---      sesión del usuario). UPDATE y DELETE quedan SÓLO vía `modify_order`
---      (security definer) — igual que se hizo con DELETE de `orders` (#48).
+--   1. REGLA FINAL: toda escritura de líneas de pedido pasa por una función
+--      `security definer` — la creación inicial por `create_order` /
+--      `create_quick_retail_sale` / `submit_wholesale_request` y cualquier
+--      modificación posterior SÓLO por `modify_order`. `order_items` queda sin
+--      políticas de INSERT, UPDATE ni DELETE y sin esos privilegios para
+--      `anon`/`authenticated`: ni siquiera un INSERT directo sobre un pedido
+--      existente (que se saltearía el motivo, `order_adjustments`, reservas,
+--      producción y la advertencia de pedido entregado) es posible por la API.
 --   2. `order_adjustments`: una fila INMUTABLE por modificación (quién, cuándo,
 --      motivo, estado del pedido, subtotal/total antes y después, y las líneas
 --      como jsonb, sin FK a `order_items` para que quitar un ítem no borre el rastro).
@@ -23,6 +28,14 @@
 --   4. `order_attachments.generated_at`: cuándo se generó el PDF. Permite DERIVAR
 --      "PDF desactualizado" (hay una modificación posterior); nunca se regenera solo.
 --
+-- Cómo se encapsula la creación inicial SIN reescribir `create_order` ni
+-- `create_quick_retail_sale` (que insertaban los ítems con la sesión del usuario y
+-- por eso necesitaban el INSERT directo): cada una se RENOMBRA a `*_impl` (cuerpo
+-- intacto, sin EXECUTE para nadie) y se crea, con el MISMO nombre y firma, un
+-- wrapper `security definer` que verifica `is_operations_or_owner()` y delega. Los
+-- llamadores (la app) no cambian. La creación inicial ya NO depende de RLS sobre
+-- `order_items`: queda cerrada a cualquier escritura directa.
+--
 -- Stock de un ítem agregado:
 --   * pending                     → nada (todavía no hay reservas).
 --   * confirmed/in_production/ready → reserva min(cantidad, disponible) y orden de
@@ -32,12 +45,94 @@
 --                                     movimiento `sale` en la ubicación del pedido, validando
 --                                     disponibilidad; si no, no mueve stock.
 
--- 1) order_items: sin UPDATE/DELETE directo --------------------------------------
+-- 1) order_items: sin escritura directa (ni INSERT, ni UPDATE, ni DELETE) ----------
 drop policy if exists "order_items_write_operations" on public.order_items;
+-- (sin políticas de escritura: RLS deniega) + defensa en profundidad: sin privilegios.
+revoke insert, update, delete on public.order_items from anon, authenticated;
 
-create policy "order_items_insert_operations" on public.order_items
-  for insert to authenticated
-  with check (public.is_operations_or_owner());
+-- 1b) Creación inicial encapsulada: create_order ----------------------------------------
+alter function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
+  rename to create_order_impl;
+revoke execute on function public.create_order_impl(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
+  from public, anon, authenticated;
+
+create function public.create_order(
+  p_business_unit_id uuid,
+  p_customer_id uuid,
+  p_location_id uuid,
+  p_origin_channel_id uuid,
+  p_closing_channel_id uuid,
+  p_delivery_method text,
+  p_delivery_address text,
+  p_estimated_date date,
+  p_notes text,
+  p_items jsonb,
+  p_sale_date date default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Mismo permiso que exigían las políticas RLS de orders/order_items (que esta
+  -- función ya no usa, porque corre como su dueño). La `service_role` (clave de
+  -- servidor, nunca expuesta al navegador) siempre se saltó la RLS: se conserva esa
+  -- paridad para scripts e importaciones.
+  if not (public.is_operations_or_owner() or auth.role() = 'service_role') then
+    raise exception 'No tenés permiso para crear pedidos.';
+  end if;
+  return public.create_order_impl(
+    p_business_unit_id, p_customer_id, p_location_id, p_origin_channel_id, p_closing_channel_id,
+    p_delivery_method, p_delivery_address, p_estimated_date, p_notes, p_items, p_sale_date
+  );
+end;
+$$;
+
+revoke execute on function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date) from public, anon;
+grant execute on function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date) to authenticated;
+
+-- 1c) Creación inicial encapsulada: create_quick_retail_sale -------------------------------
+alter function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
+  rename to create_quick_retail_sale_impl;
+revoke execute on function public.create_quick_retail_sale_impl(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
+  from public, anon, authenticated;
+
+create function public.create_quick_retail_sale(
+  p_location_id uuid,
+  p_items jsonb,
+  p_payment_method_id uuid,
+  p_paid_at timestamptz,
+  p_customer_id uuid default null,
+  p_channel_id uuid default null,
+  p_payment_account_id uuid default null,
+  p_discount_total numeric default 0,
+  p_client_request_id uuid default null,
+  p_price_condition_id uuid default null,
+  p_sale_date date default null,
+  p_fee_amount numeric default 0
+)
+returns table (order_id uuid, human_code text, total numeric)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not (public.is_operations_or_owner() or auth.role() = 'service_role') then
+    raise exception 'No tenés permiso para registrar ventas.';
+  end if;
+  return query
+    select r.order_id, r.human_code, r.total
+    from public.create_quick_retail_sale_impl(
+      p_location_id, p_items, p_payment_method_id, p_paid_at, p_customer_id, p_channel_id,
+      p_payment_account_id, p_discount_total, p_client_request_id, p_price_condition_id,
+      p_sale_date, p_fee_amount
+    ) r;
+end;
+$$;
+
+revoke execute on function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric) from public, anon;
+grant execute on function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric) to authenticated;
 
 -- 2) Historial de modificaciones (append-only) ------------------------------------
 create table public.order_adjustments (

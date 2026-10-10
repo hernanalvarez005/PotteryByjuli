@@ -366,9 +366,13 @@ borrar, y sólo `owner` puede invocarlas.
 
 Cuando un pedido cambia después de creado (caso real: una pieza pedida tras la
 primera entrega, cobrada pero nunca incorporada), se usa la operación explícita
-**"Modificar pedido"** — nunca una edición silenciosa. `order_items` ya **no admite
-UPDATE/DELETE directo** por la API (sólo INSERT, que usan `create_order` y el
-checkout): toda modificación pasa por el RPC transaccional `modify_order`, que
+**"Modificar pedido"** — nunca una edición silenciosa. **Regla: toda escritura de líneas
+de pedido pasa por una función `security definer`** — la creación inicial por
+`create_order`, `create_quick_retail_sale` o el checkout, y **toda modificación
+posterior sólo por `modify_order`**. `order_items` no tiene políticas ni privilegios de
+INSERT, UPDATE ni DELETE para la API (un INSERT directo sobre un pedido existente se
+saltearía el motivo, el historial, las reservas y la advertencia de entregado). El RPC
+transaccional `modify_order`
 bloquea el pedido `FOR UPDATE` y deja una fila inmutable en `order_adjustments`
 (quién, cuándo, **motivo obligatorio**, estado del pedido, subtotal/total antes y
 después, y las líneas como jsonb — sin FK a `order_items`, así quitar un ítem no

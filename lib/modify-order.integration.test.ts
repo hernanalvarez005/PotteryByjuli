@@ -35,6 +35,7 @@ describe("modify_order (local)", { timeout: 60000 }, () => {
   let paymentMethodId: string;
   const orderIds: string[] = [];
   const productIds: string[] = [];
+  const customerIds: string[] = [];
   const paths: string[] = [];
 
   async function signIn(role: Role) {
@@ -121,7 +122,7 @@ describe("modify_order (local)", { timeout: 60000 }, () => {
     await cleanupFixtures(
       admin,
       "modify-order",
-      { orderIds, productIds, customerIds: [customerId] },
+      { orderIds, productIds, customerIds: [customerId, ...customerIds] },
       async (step) => {
         for (const orderId of orderIds) await step("production_orders", () => admin.from("production_orders").delete().eq("order_id", orderId));
       }
@@ -441,25 +442,163 @@ describe("modify_order (local)", { timeout: 60000 }, () => {
     });
   });
 
-  describe("order_items ya no se edita en silencio por la API", () => {
-    it("UPDATE y DELETE directos (owner, operations, viewer) no cambian nada; INSERT directo (create_order) sigue funcionando", async () => {
-      const a = await makeVariant(0);
-      const id = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 4, unit_price: 100 }] });
-      const item = (await itemsOf(id))[0];
-      for (const role of ["owner", "operations", "viewer"] as Role[]) {
-        await clients[role].from("order_items").update({ quantity: 99, unit_price: 1 }).eq("id", item.id);
-        await clients[role].from("order_items").delete().eq("id", item.id);
-      }
-      expect(await itemsOf(id)).toEqual([item]);
-      expect(Number((await order(id)).total)).toBe(400);
+  describe("toda escritura de líneas pasa por una función: ni INSERT, ni UPDATE, ni DELETE directos", () => {
+    const stateOf = async (id: string) => ({ items: await itemsOf(id), total: Number((await order(id)).total), adjustments: (await adjustments(id)).length });
 
-      // Los INSERT directos que usa create_order / el checkout siguen permitidos a operations.
-      const ins = await clients.operations.from("order_items").insert({ order_id: id, custom_name: "directo", quantity: 1, unit_price: 5 });
-      expect(ins.error).toBeNull();
-      const viewerIns = await clients.viewer.from("order_items").insert({ order_id: id, custom_name: "nope", quantity: 1, unit_price: 5 });
-      expect(viewerIns.error).not.toBeNull();
+    it("INSERT directo de un order_item sobre un pedido EXISTENTE falla para owner, operations y viewer, en cualquier estado — y no deja ni ítem ni rastro", async () => {
+      const a = await makeVariant(5);
+      const pending = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 2, unit_price: 100 }] });
+      const confirmed = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }], status: "confirmed" });
+      const delivered = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }], status: "delivered" });
+
+      for (const id of [pending, confirmed, delivered]) {
+        const before = await stateOf(id);
+        const reservedBefore = await activeReservedOf(id);
+        for (const role of ["owner", "operations", "viewer"] as Role[]) {
+          const direct = await clients[role].from("order_items").insert({ order_id: id, custom_name: "colado", quantity: 1, unit_price: 9999 });
+          expect(direct.error).not.toBeNull();
+          const catalog = await clients[role].from("order_items").insert({ order_id: id, product_variant_id: a.variantId, quantity: 1, unit_price: 9999 });
+          expect(catalog.error).not.toBeNull();
+        }
+        // Ni el ítem, ni el total, ni la modificación registrada, ni las reservas cambiaron.
+        expect(await stateOf(id)).toEqual(before);
+        expect(await activeReservedOf(id)).toBe(reservedBefore);
+      }
     });
 
+    it("anon tampoco puede escribir order_items", async () => {
+      const a = await makeVariant(0);
+      const id = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }] });
+      const anon = createClient(SUPABASE_URL, ANON_KEY);
+      expect((await anon.from("order_items").insert({ order_id: id, custom_name: "anon", quantity: 1, unit_price: 1 })).error).not.toBeNull();
+      expect(await itemsOf(id)).toHaveLength(1);
+    });
+
+    it("UPDATE y DELETE directos (owner, operations, viewer) siguen bloqueados y no cambian nada", async () => {
+      const a = await makeVariant(0);
+      const id = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 4, unit_price: 100 }] });
+      const before = await stateOf(id);
+      for (const role of ["owner", "operations", "viewer"] as Role[]) {
+        const upd = await clients[role].from("order_items").update({ quantity: 99, unit_price: 1 }).eq("id", before.items[0].id);
+        const del = await clients[role].from("order_items").delete().eq("id", before.items[0].id);
+        expect(upd.error).not.toBeNull();
+        expect(del.error).not.toBeNull();
+      }
+      expect(await stateOf(id)).toEqual(before);
+    });
+
+    it("la LECTURA de order_items sigue abierta a todos los roles autenticados", async () => {
+      const a = await makeVariant(0);
+      const id = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }] });
+      for (const role of ["owner", "operations", "viewer"] as Role[]) {
+        const read = await clients[role].from("order_items").select("id").eq("order_id", id);
+        expect(read.error).toBeNull();
+        expect(read.data).toHaveLength(1);
+      }
+    });
+
+    it("la creación inicial NORMAL sigue funcionando: create_order (owner y operations), con ítems de catálogo y personalizados", async () => {
+      const a = await makeVariant(0);
+      for (const role of ["owner", "operations"] as Role[]) {
+        const { data: orderId, error } = await clients[role].rpc("create_order", {
+          p_business_unit_id: retailUnitId, p_customer_id: customerId, p_location_id: locationId,
+          p_origin_channel_id: null, p_closing_channel_id: null, p_delivery_method: null, p_delivery_address: null,
+          p_estimated_date: null, p_notes: null,
+          p_items: [{ product_variant_id: a.variantId, quantity: 3, unit_price: 100 }, { custom_name: "A medida", quantity: 1, unit_price: 50 }],
+        });
+        expect(error).toBeNull();
+        orderIds.push(orderId as string);
+        const created = await order(orderId as string);
+        expect(Number(created.total)).toBe(350);
+        expect(created.created_by).toBe(ids[role]); // auth.uid() sigue siendo quien llama
+        expect(await itemsOf(orderId as string)).toHaveLength(2);
+        // La creación inicial NO es una "modificación": no genera order_adjustments.
+        expect(await adjustments(orderId as string)).toHaveLength(0);
+      }
+    });
+
+    it("la service_role (scripts/importaciones) conserva la paridad con la RLS que siempre salteó: puede crear", async () => {
+      const a = await makeVariant(0);
+      const { data: orderId, error } = await admin.rpc("create_order", {
+        p_business_unit_id: retailUnitId, p_customer_id: customerId, p_location_id: locationId,
+        p_origin_channel_id: null, p_closing_channel_id: null, p_delivery_method: null, p_delivery_address: null,
+        p_estimated_date: null, p_notes: null, p_items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 10 }],
+      });
+      expect(error).toBeNull();
+      orderIds.push(orderId as string);
+      expect(await itemsOf(orderId as string)).toHaveLength(1);
+    });
+
+    it("create_order: un viewer o anon se rechazan con un mensaje claro y no crean nada", async () => {
+      const a = await makeVariant(0);
+      const args = {
+        p_business_unit_id: retailUnitId, p_customer_id: customerId, p_location_id: locationId,
+        p_origin_channel_id: null, p_closing_channel_id: null, p_delivery_method: null, p_delivery_address: null,
+        p_estimated_date: null, p_notes: `ZZ-${RUN}-sin-permiso`,
+        p_items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }],
+      };
+      const viewer = await clients.viewer.rpc("create_order", args);
+      expect(viewer.error?.message).toMatch(/No tenés permiso para crear pedidos/);
+      const anon = await createClient(SUPABASE_URL, ANON_KEY).rpc("create_order", args);
+      expect(anon.error).not.toBeNull();
+      expect((await admin.from("orders").select("id").eq("notes", `ZZ-${RUN}-sin-permiso`)).data).toHaveLength(0);
+    });
+
+    it("las funciones *_impl NO son invocables por la API (no se puede esquivar el chequeo de rol del wrapper)", async () => {
+      const a = await makeVariant(0);
+      const r = await clients.operations.rpc("create_order_impl", {
+        p_business_unit_id: retailUnitId, p_customer_id: customerId, p_location_id: locationId,
+        p_origin_channel_id: null, p_closing_channel_id: null, p_delivery_method: null, p_delivery_address: null,
+        p_estimated_date: null, p_notes: null, p_items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 1 }], p_sale_date: null,
+      });
+      expect(r.error).not.toBeNull();
+      const q = await clients.owner.rpc("create_quick_retail_sale_impl", { p_location_id: locationId, p_items: [], p_payment_method_id: paymentMethodId, p_paid_at: new Date().toISOString() });
+      expect(q.error).not.toBeNull();
+    });
+
+    it("modify_order SÍ puede agregar, y deja su fila en order_adjustments: es la única vía de modificar líneas", async () => {
+      const a = await makeVariant(0);
+      const id = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }] });
+      const direct = await clients.operations.from("order_items").insert({ order_id: id, custom_name: "directo", quantity: 1, unit_price: 5 });
+      expect(direct.error).not.toBeNull();
+      expect(await itemsOf(id)).toHaveLength(1);
+      expect(await adjustments(id)).toHaveLength(0);
+
+      expect((await modify(id, [{ op: "add", custom_name: "por modify_order", quantity: 1, unit_price: 5 }], "vía correcta")).error).toBeNull();
+      expect(await itemsOf(id)).toHaveLength(2);
+      const adj = await adjustments(id);
+      expect(adj).toHaveLength(1);
+      expect(adj[0].reason).toBe("vía correcta");
+      // Cada línea agregada tiene su registro: no hay forma de sumar ítems sin rastro.
+      expect(await itemsOf(id)).toHaveLength(1 + adj.flatMap((x) => x.changes as Change[]).filter((l) => l.op === "add").length);
+    });
+
+    it("el checkout público (submit_wholesale_request, anon) sigue creando pedidos con sus ítems", async () => {
+      const a = await makeVariant(0);
+      const productId = productIds[productIds.length - 1];
+      const wholesaleListId = (await admin.from("price_lists").select("id").eq("code", "wholesale").single()).data!.id;
+      await admin.from("price_list_items").insert({ price_list_id: wholesaleListId, product_variant_id: a.variantId, unit_price: 5000 });
+      await admin.from("wholesale_product_rules").upsert({ product_id: productId, is_public: true, min_quantity: 1, multiple_of: 1 });
+
+      const anon = createClient(SUPABASE_URL, ANON_KEY);
+      const { data: humanCode, error } = await anon.rpc("submit_wholesale_request", {
+        p_first_name: "ZZ", p_last_name: RUN, p_company_name: `${RUN} Checkout`, p_cuit: null, p_instagram: null, p_website: null,
+        p_city: "Rosario", p_province: "Santa Fe", p_address: null, p_postal_code: null,
+        p_whatsapp: `54911${Date.now().toString().slice(-8)}`, p_email: `zz-${RUN}-${Date.now()}@example.com`, p_notes: null,
+        // 5 × $5.000 = $25.000: supera los mínimos mayoristas de la base local ($10.000 / 5 piezas).
+        p_items: [{ product_variant_id: a.variantId, quantity: 5 }], p_client_request_id: crypto.randomUUID(),
+      });
+      expect(error).toBeNull();
+
+      const { data: created } = await admin.from("orders").select("id,customer_id,total").eq("human_code", humanCode).single();
+      orderIds.push(created!.id);
+      if (created!.customer_id) customerIds.push(created!.customer_id);
+      expect(await itemsOf(created!.id)).toHaveLength(1);
+      expect(Number(created!.total)).toBe(25000);
+    });
+  });
+
+  describe("order_adjustments e historial", () => {
     it("order_adjustments es inmutable por la API y legible por todos los roles", async () => {
       const a = await makeVariant(0);
       const id = await makeOrder({ items: [{ product_variant_id: a.variantId, quantity: 1, unit_price: 100 }] });
