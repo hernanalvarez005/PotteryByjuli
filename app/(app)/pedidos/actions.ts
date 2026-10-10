@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { createOrderSchema, paymentSchema, modifyOrderSchema, ORDER_STATUSES } from "@/schemas/orders";
 import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
+import { correctPaymentRow } from "@/lib/payment-corrections";
 
 export type OrderActionState = { error?: string };
 
@@ -216,20 +217,9 @@ export async function updatePayment(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("payments")
-    .update({
-      amount: parsed.data.amount,
-      paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
-      method_id: parsed.data.method_id,
-      account_id: parsed.data.account_id,
-      reference: parsed.data.reference,
-      notes: parsed.data.notes,
-      fee_amount: parsed.data.fee_amount,
-    })
-    .eq("id", paymentId)
-    .eq("order_id", orderId);
-  if (error) return { error: "No se pudo actualizar el pago." };
+  const { reason, ...values } = parsed.data;
+  const result = await correctPaymentRow(supabase, paymentId, { column: "order_id", id: orderId }, values, reason);
+  if (result.error) return { error: result.error };
 
   revalidatePath(`/pedidos/${orderId}`);
   revalidatePath("/pedidos");

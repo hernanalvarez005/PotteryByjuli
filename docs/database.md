@@ -179,6 +179,18 @@ Migration `20261010090000_modify_order.sql`. Regla de negocio en
 - `order_attachments.generated_at` (backfill desde `created_at`, `default now()`,
   `not null`): `storeWholesaleOrderPdf` la actualiza al regenerar.
 
+- **Corrección de pagos** (migration `20261010100000_payment_corrections_reason.sql`):
+  `payment_corrections.reason` (texto ≤300, opcional); `log_payment_correction()` (trigger
+  `security definer`, `search_path` fijo) lo llena desde la variable de transacción
+  `pottery.payment_correction_reason`. `correct_payment(p_payment_id, p_changes jsonb,
+  p_reason)`: **`security invoker`** (RLS de `payments` aplica), `FOR UPDATE` del pago, valida
+  importe > 0 / comisión ≤ importe / largos / claves permitidas, rechaza "sin cambios", y
+  recién ahí hace el `UPDATE` (el trigger audita). `EXECUTE` sólo `authenticated`
+  (`revoke all … from public, anon, authenticated, service_role`). **`payments`**: la política
+  `FOR ALL` se reemplaza por `INSERT` y `UPDATE` (operations/owner) y se hace
+  `revoke delete … from anon, authenticated` — sin DELETE por la API (la cascada de
+  `delete_order_safe`/`delete_*_safe` corre con los privilegios de su dueño y no se afecta).
+
 ## Eliminación segura de pedidos (2026-09-26)
 
 Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en

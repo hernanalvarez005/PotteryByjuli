@@ -85,6 +85,10 @@ export const paymentSchema = z
     account_id: optionalUuid(),
     reference: optionalString(120),
     notes: optionalString(500),
+    // Motivo de una CORRECCIÓN (sólo lo usa updatePayment/correctPayment; el
+    // alta lo ignora). Recomendado, no obligatorio: queda en
+    // payment_corrections.reason junto a quién y cuándo.
+    reason: optionalString(300),
     // Comisión del método/cuenta que cobró el pago — nunca un descuento
     // comercial (eso vive en price_conditions/orders.discount_total), un
     // costo de procesar el cobro. Siempre un número real (nunca null:

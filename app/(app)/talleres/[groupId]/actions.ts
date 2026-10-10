@@ -13,6 +13,7 @@ import {
   dueExtraSchema,
 } from "@/schemas/workshops";
 import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
+import { correctPaymentRow } from "@/lib/payment-corrections";
 
 export type WorkshopDetailState = { error?: string };
 
@@ -191,20 +192,9 @@ export async function updateDuePayment(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("payments")
-    .update({
-      amount: parsed.data.amount,
-      paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
-      method_id: parsed.data.method_id,
-      account_id: parsed.data.account_id,
-      reference: parsed.data.reference,
-      notes: parsed.data.notes,
-      fee_amount: parsed.data.fee_amount,
-    })
-    .eq("id", paymentId)
-    .eq("workshop_due_id", dueId);
-  if (error) return { error: "No se pudo actualizar el pago." };
+  const { reason, ...values } = parsed.data;
+  const result = await correctPaymentRow(supabase, paymentId, { column: "workshop_due_id", id: dueId }, values, reason);
+  if (result.error) return { error: result.error };
 
   revalidatePath(`/talleres/${groupId}`);
   revalidatePath("/talleres/cuotas");
