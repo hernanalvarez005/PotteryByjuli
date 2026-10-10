@@ -49,6 +49,32 @@ describe("buildSnapshotDocumentData (checkout)", () => {
   });
 });
 
+describe("buildSnapshotDocumentData — pedido del checkout MODIFICADO", () => {
+  const buyerSnapshot = { ...fullCustomer, first_name: "Snapshot" };
+  const termsSnapshot = { min_order_amount: 200000, min_total_units: 20, lead_time_min_days: 15, lead_time_max_days: 25, payment_terms: "x", shipping_terms: "y" };
+  const build = (modified?: boolean) =>
+    buildSnapshotDocumentData({ orderId: ID, humanCode: "MAY-1", createdAt: "2026-09-10T12:00:00Z", buyerSnapshot, termsSnapshot, items, modified });
+
+  it("pasa a 'Pedido mayorista' (kind order) conservando los snapshots del comprador y de las condiciones", () => {
+    const doc = build(true);
+    expect(doc).toMatchObject({ kind: "order", source: "checkout_snapshot" });
+    expect(doc.buyer).toBe(buyerSnapshot);
+    expect(doc.terms).toMatchObject({ payment_terms: "x", shipping_terms: "y", lead_time_min_days: 15 });
+  });
+
+  it("sin los mínimos del checkout (sólo aplican a SOLICITAR)", () => {
+    expect(build(true).terms).toMatchObject({ min_order_amount: null, min_total_units: null });
+  });
+
+  it("sin modificar sigue siendo la solicitud original, idéntica", () => {
+    for (const m of [undefined, false]) {
+      const doc = build(m);
+      expect(doc.kind).toBe("request");
+      expect(doc.terms).toBe(termsSnapshot);
+    }
+  });
+});
+
 describe("buildLiveDocumentData (pedido cargado a mano)", () => {
   const build = (customer: DocumentCustomerRow, s: typeof settings | null = settings) =>
     buildLiveDocumentData({ orderId: ID, humanCode: "MAY-2", createdAt: "2026-09-25T12:00:00Z", customer, settings: s, items });

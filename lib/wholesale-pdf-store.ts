@@ -119,7 +119,7 @@ export type LoadWholesaleDocumentResult =
     };
 
 const DOCUMENT_ORDER_SELECT =
-  "id, human_code, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, business_units(code), " +
+  "id, human_code, created_at, wholesale_buyer_snapshot, wholesale_terms_snapshot, business_units(code), order_adjustments(id), " +
   "customers(first_name, last_name, company_name, cuit, instagram, website, city, province, address, postal_code, whatsapp, email), " +
   "order_items(quantity, unit_price, custom_name, product_variants(name, products(name)))";
 
@@ -149,6 +149,7 @@ export async function loadWholesaleDocumentData(
   const row = data as unknown as OrderRowForDocument & {
     business_units: { code: string } | null;
     customers: DocumentCustomerRow | null;
+    order_adjustments?: { id: string }[] | null;
   };
   const ref = { orderId: row.id, humanCode: row.human_code };
 
@@ -164,6 +165,8 @@ export async function loadWholesaleDocumentData(
         buyerSnapshot: row.wholesale_buyer_snapshot!,
         termsSnapshot: row.wholesale_terms_snapshot!,
         items: row.order_items,
+        // Una solicitud del checkout que se modificó después ya es un pedido real.
+        modified: (row.order_adjustments ?? []).length > 0,
       }),
     };
   }
@@ -231,7 +234,7 @@ export async function storeWholesaleOrderPdf(
   const reuseExisting = async () => {
     const { data, error } = await supabase
       .from("order_attachments")
-      .update({ storage_path: storagePath })
+      .update({ storage_path: storagePath, generated_at: new Date().toISOString() })
       .eq("order_id", orderId)
       .eq("kind", WHOLESALE_PDF_KIND)
       .select("id");

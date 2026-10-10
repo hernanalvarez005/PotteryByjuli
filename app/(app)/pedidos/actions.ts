@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, hasRole, isOwner } from "@/lib/auth";
-import { createOrderSchema, paymentSchema, ORDER_STATUSES } from "@/schemas/orders";
+import { createOrderSchema, paymentSchema, modifyOrderSchema, ORDER_STATUSES } from "@/schemas/orders";
 import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
 
 export type OrderActionState = { error?: string };
@@ -295,4 +295,43 @@ export async function deleteOrder(orderId: string, reason?: string): Promise<Del
   revalidatePath("/pedidos");
   revalidatePath(`/pedidos/${orderId}`);
   return {};
+}
+
+export type ModifyOrderResult = { error?: string; adjustmentId?: string };
+
+/**
+ * "Modificar pedido": agregar ítems / ajustar cantidades de un pedido ya
+ * creado, vía la RPC transaccional `modify_order` (la única vía — `order_items`
+ * ya no admite UPDATE/DELETE directo). La regla (estados, stock, pedido
+ * entregado, mínimo un ítem…) la decide y re-verifica Postgres; los mensajes
+ * en español de la RPC (P0001) se muestran tal cual. NO toca pagos, `sold_at`
+ * ni `sale_date`, y deja una fila en `order_adjustments`. El PDF existente NO
+ * se regenera solo: queda "desactualizado" hasta que se regenere a mano.
+ */
+export async function modifyOrder(orderId: string, input: unknown): Promise<ModifyOrderResult> {
+  await assertCanManageOrders();
+  if (!z.string().uuid().safeParse(orderId).success) return { error: "Pedido inválido." };
+
+  const parsed = modifyOrderSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Datos inválidos." };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("modify_order", {
+    p_order_id: orderId,
+    p_changes: parsed.data.changes,
+    p_reason: parsed.data.reason,
+    p_consume_stock: parsed.data.consume_stock,
+  });
+
+  if (error) {
+    if (error.code === "P0001") return { error: error.message };
+    console.error(JSON.stringify({ event: "order_modify_failed", orderId, errorCode: error.code, errorMessage: error.message }));
+    return { error: "No se pudo modificar el pedido." };
+  }
+
+  revalidatePath(`/pedidos/${orderId}`);
+  revalidatePath("/pedidos");
+  revalidatePath("/stock");
+  revalidatePath("/dashboard");
+  return { adjustmentId: data as string };
 }

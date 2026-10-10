@@ -13,7 +13,7 @@ import { prepareWholesaleShare, type WholesaleShareData } from "./document-actio
  * Share). Los links se piden al abrir el panel (un gesto de la usuaria) y
  * nunca antes: no se firma nada en cada vista de la ficha.
  */
-export function ShareWholesalePanel({ orderId }: { orderId: string }) {
+export function ShareWholesalePanel({ orderId, stale = false }: { orderId: string; stale?: boolean }) {
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<WholesaleShareData | null>(null);
@@ -81,6 +81,11 @@ export function ShareWholesalePanel({ orderId }: { orderId: string }) {
 
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3 text-sm">
+      {stale && (
+        <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+          El PDF está desactualizado (el pedido se modificó después de generarlo). Regeneralo antes de compartirlo.
+        </p>
+      )}
       {isPending && !data && <p className="text-muted-foreground">Preparando…</p>}
       {error && <p className="text-destructive">{error}</p>}
       {data && (

@@ -20,6 +20,9 @@ import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
 import { ShareWholesalePanel } from "./share-wholesale-panel";
 import { DeleteOrderMenu } from "./delete-order-menu";
+import { ModifyOrderDialog } from "./modify-order-dialog";
+import { OrderAdjustmentsCard, type AdjustmentRow } from "./order-adjustments-card";
+import { canModifyOrder, pdfStaleness } from "@/lib/order-modification";
 import {
   getWholesaleDocumentState,
   getWholesalePdfStates,
@@ -42,7 +45,7 @@ export default async function OrderDetailPage({
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id,human_code,status,subtotal,discount_total,total,notes,delivery_method,delivery_address,estimated_date,created_at,wholesale_terms_snapshot,customers(id,first_name,last_name,whatsapp,email,company_name,cuit,instagram,website,city,province,address,postal_code),business_units(code,name),locations(name),origin:origin_channel_id(name),closing:closing_channel_id(name)"
+      "id,human_code,status,operation_type,subtotal,discount_total,total,notes,delivery_method,delivery_address,estimated_date,created_at,wholesale_terms_snapshot,customers(id,first_name,last_name,whatsapp,email,company_name,cuit,instagram,website,city,province,address,postal_code),business_units(code,name),locations(name),origin:origin_channel_id(name),closing:closing_channel_id(name)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -99,11 +102,22 @@ export default async function OrderDetailPage({
   // Sólo relevante para pedidos mayoristas: documento generado en el
   // checkout, y un posible conflicto de identidad sin resolver del cliente
   // asociado (ver docs/business-rules.md § Checkout mayorista — dedup).
+  // Historial de modificaciones (order_adjustments, inmutable) — de más reciente a más antigua.
+  const { data: adjustmentRows } = await supabase
+    .from("order_adjustments")
+    .select(
+      "id,reason,after_delivery,total_before,total_after,created_at,changes,profiles:created_by(full_name,email)"
+    )
+    .eq("order_id", id)
+    .order("created_at", { ascending: false });
+  const adjustments = (adjustmentRows ?? []) as unknown as AdjustmentRow[];
+  const lastAdjustmentAt = adjustments[0]?.created_at ?? null;
+
   const [{ data: attachment }, { data: summaryAttachment }, { data: identityConflict }] = await Promise.all([
     isWholesaleOrder
       ? supabase
           .from("order_attachments")
-          .select("storage_path")
+          .select("storage_path,generated_at")
           .eq("order_id", id)
           .eq("kind", "wholesale_request_pdf")
           .order("created_at", { ascending: false })
@@ -115,7 +129,7 @@ export default async function OrderDetailPage({
     !isWholesaleOrder
       ? supabase
           .from("order_attachments")
-          .select("storage_path")
+          .select("storage_path,generated_at")
           .eq("order_id", id)
           .eq("kind", "order_summary_pdf")
           .order("created_at", { ascending: false })
@@ -209,8 +223,33 @@ export default async function OrderDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="text-base">Productos</CardTitle>
+            {canEdit && canModifyOrder({ status: order.status, operationType: order.operation_type }) && (
+              <ModifyOrderDialog
+                orderId={order.id}
+                humanCode={order.human_code}
+                status={order.status}
+                businessUnitCode={businessUnit?.code ?? null}
+                discountTotal={order.discount_total}
+                currentTotal={order.total}
+                paid={paid}
+                items={(items ?? []).map((item) => {
+                  const variant = item.product_variants as unknown as { name: string; products: { name: string } | null } | null;
+                  return {
+                    id: item.id,
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    isCustom: !variant,
+                    label: variant
+                      ? variant.name === "Único"
+                        ? (variant.products?.name ?? "—")
+                        : `${variant.products?.name} — ${variant.name}`
+                      : (item.custom_name ?? "—"),
+                  };
+                })}
+              />
+            )}
           </CardHeader>
           <CardContent>
             <Table>
@@ -282,6 +321,8 @@ export default async function OrderDetailPage({
             </div>
           </CardContent>
         </Card>
+
+        <OrderAdjustmentsCard adjustments={adjustments} />
 
         <PaymentsPanel
           orderId={order.id}
@@ -415,10 +456,14 @@ export default async function OrderDetailPage({
                     ? undefined
                     : "Al regenerar se usan los datos actuales del cliente y de la configuración mayorista."
                 }
+                stale={pdfStaleness({ pdfGeneratedAt: attachment?.generated_at ?? null, lastAdjustmentAt }) === "stale"}
               />
               {canEdit && attachment?.storage_path && (
                 <div className="mt-3">
-                  <ShareWholesalePanel orderId={order.id} />
+                  <ShareWholesalePanel
+                    orderId={order.id}
+                    stale={pdfStaleness({ pdfGeneratedAt: attachment?.generated_at ?? null, lastAdjustmentAt }) === "stale"}
+                  />
                 </div>
               )}
             </CardContent>
@@ -439,6 +484,7 @@ export default async function OrderDetailPage({
                 missingLabel="Todavía no se generó el resumen PDF de este pedido."
                 generateLabel="Generar resumen PDF"
                 allowRegenerate
+                stale={pdfStaleness({ pdfGeneratedAt: summaryAttachment?.generated_at ?? null, lastAdjustmentAt }) === "stale"}
               />
             </CardContent>
           </Card>

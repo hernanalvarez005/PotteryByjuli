@@ -24,6 +24,7 @@ export function DocumentPanel({
   regenerateLabel = "Regenerar",
   allowRegenerate = false,
   regenerateHint,
+  stale = false,
 }: {
   orderId: string;
   storagePath: string | null;
@@ -40,6 +41,9 @@ export function DocumentPanel({
   allowRegenerate?: boolean;
   /** Aclaración bajo "Regenerar" (p. ej. de dónde salen los datos). */
   regenerateHint?: string;
+  /** El pedido se modificó DESPUÉS de generar este PDF: el archivo viejo
+   * representa el estado anterior. Nunca se regenera solo. */
+  stale?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +87,12 @@ export function DocumentPanel({
           >
             {isPending ? "Regenerando..." : regenerateLabel}
           </Button>
+        )}
+        {stale && (
+          <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" data-testid="pdf-stale">
+            PDF desactualizado: el pedido se modificó después de generarlo. Este archivo muestra el estado anterior.
+            {canEdit && allowRegenerate ? " Usá “Regenerar” para actualizarlo." : ""}
+          </p>
         )}
         {canEdit && allowRegenerate && regenerateHint && <p className="text-xs text-muted-foreground">{regenerateHint}</p>}
         {notice && <p className="text-xs text-muted-foreground">{notice}</p>}

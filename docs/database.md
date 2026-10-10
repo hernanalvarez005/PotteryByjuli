@@ -148,6 +148,37 @@ Migration `20260926100000_orders_receivable.sql`. Regla de negocio en
 - Medido en local (23.100 pedidos, 23.200 pagos): ~14 ms, un solo hash
   aggregate sobre `payments` + un seq scan de `orders`.
 
+## Modificar pedido (2026-10-10)
+
+Migration `20261010090000_modify_order.sql`. Regla de negocio en
+`docs/business-rules.md` § "Modificar un pedido existente".
+
+- **Antes:** el trigger `order_items_recalculate_totals` recalculaba `subtotal`/`total`
+  ante cualquier cambio de ítems, pero no pasaba nada con stock, reservas ni producción
+  (se crean una sola vez al confirmar), no quedaba rastro, y la política RLS de
+  `order_items` era `FOR ALL` para operations/owner.
+- **`order_items` sin escritura directa:** se elimina la política `FOR ALL` y **no queda
+  ninguna de INSERT/UPDATE/DELETE**, además de `revoke insert, update, delete` para
+  `anon`/`authenticated` (la lectura sigue). El borrado en cascada desde
+  `delete_order_safe` no se ve afectado.
+- **Creación inicial encapsulada:** `create_order` y `create_quick_retail_sale` insertaban
+  los ítems con la sesión del usuario (por eso necesitaban el INSERT). Se **renombran** a
+  `create_order_impl` / `create_quick_retail_sale_impl` (cuerpo intacto, sin `EXECUTE` para
+  nadie) y se crean, con el mismo nombre y firma, wrappers `security definer` que
+  verifican `is_operations_or_owner()` y delegan — la app no cambia. `anon` pierde
+  `EXECUTE` sobre los wrappers (antes la RLS ya le impedía crear). El checkout
+  (`submit_wholesale_request`) y `modify_order` ya eran `security definer`.
+- `order_adjustments`: append-only (sin políticas de escritura + `revoke`), lectura para
+  authenticated, `ON DELETE CASCADE` desde `orders` (un pedido pendiente con
+  modificaciones se puede eliminar; entregado no).
+- `modify_order(p_order_id, p_changes jsonb, p_reason, p_consume_stock default true)`:
+  `security definer`, permiso `is_operations_or_owner()` adentro, sin `EXECUTE` para `anon`.
+  `p_changes`: `add` (catálogo o personalizado), `set_quantity`, `remove`.
+- `modify_order_stock_effect(...)`: interna, sin `EXECUTE` para nadie salvo su dueño
+  (la invoca `modify_order`). Mismo `pg_advisory_xact_lock` que la venta rápida.
+- `order_attachments.generated_at` (backfill desde `created_at`, `default now()`,
+  `not null`): `storeWholesaleOrderPdf` la actualiza al regenerar.
+
 ## Eliminación segura de pedidos (2026-09-26)
 
 Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en
