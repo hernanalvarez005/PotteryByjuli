@@ -220,6 +220,21 @@ describe("loadWholesaleDocumentData — un camino, dos orígenes", () => {
     expect(client.from).not.toHaveBeenCalledWith("wholesale_settings");
   });
 
+  it("solicitud del checkout MODIFICADA (hay order_adjustments) → 'order' con los snapshots, sin mínimos", async () => {
+    const snapshotBuyer = { ...CUSTOMER, first_name: "Congelado" };
+    const snapshotTerms = { min_order_amount: 1, min_total_units: 2, lead_time_min_days: 3, lead_time_max_days: 4, payment_terms: "orig", shipping_terms: "orig" };
+    const client = documentClient({
+      data: orderRow({ wholesale_buyer_snapshot: snapshotBuyer, wholesale_terms_snapshot: snapshotTerms, order_adjustments: [{ id: "adj-1" }] }),
+    });
+    const r = await loadWholesaleDocumentData(client, { orderId: ORDER });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.order).toMatchObject({ kind: "order", source: "checkout_snapshot" });
+      expect(r.order.buyer.first_name).toBe("Congelado");
+      expect(r.order.terms).toMatchObject({ payment_terms: "orig", min_order_amount: null, min_total_units: null });
+    }
+  });
+
   it("pedido MANUAL mayorista → 'order' armado con cliente + configuración vigentes", async () => {
     const r = await loadWholesaleDocumentData(documentClient({ data: orderRow() }, { data: SETTINGS }), { orderId: ORDER });
     expect(r.ok).toBe(true);

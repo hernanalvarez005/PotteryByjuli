@@ -93,15 +93,26 @@ export function buildSnapshotDocumentData(input: {
   buyerSnapshot: WholesaleDocumentBuyer;
   termsSnapshot: WholesaleDocumentTerms;
   items: DocumentOrderItemRow[];
+  /**
+   * El pedido se MODIFICÓ después de crearse (`order_adjustments`): ya no es la
+   * "solicitud pendiente de confirmación" original sino un pedido real. Se
+   * conservan los datos congelados del comprador y las condiciones, pero el
+   * documento pasa a `kind: "order"` ("Pedido mayorista", sin banner) y sin los
+   * mínimos del checkout (que sólo aplican a SOLICITAR) — igual que un pedido
+   * cargado a mano.
+   */
+  modified?: boolean;
 }): WholesaleDocumentData {
   return {
-    kind: "request",
+    kind: input.modified ? "order" : "request",
     source: "checkout_snapshot",
     orderId: input.orderId,
     humanCode: input.humanCode,
     createdAt: input.createdAt,
     buyer: input.buyerSnapshot,
-    terms: input.termsSnapshot,
+    terms: input.modified
+      ? { ...input.termsSnapshot, min_order_amount: null, min_total_units: null }
+      : input.termsSnapshot,
     items: documentItemsFromRows(input.items),
   };
 }

@@ -362,6 +362,48 @@ borrar, y sólo `owner` puede invocarlas.
 | `orders` | Sí, **sólo owner** (`delete_order_safe`) | Cancelar (`set_order_status`) | 0 pagos, 0 movimientos de stock del pedido, 0 órdenes de producción, no entregado y no proviene del checkout mayorista (ver abajo) |
 | `production_orders`, etc. (fases anteriores) | No | `is_active` / estado | Siempre — tienen historial por diseño desde que existen |
 
+### Modificar un pedido existente (`modify_order`)
+
+Cuando un pedido cambia después de creado (caso real: una pieza pedida tras la
+primera entrega, cobrada pero nunca incorporada), se usa la operación explícita
+**"Modificar pedido"** — nunca una edición silenciosa. `order_items` ya **no admite
+UPDATE/DELETE directo** por la API (sólo INSERT, que usan `create_order` y el
+checkout): toda modificación pasa por el RPC transaccional `modify_order`, que
+bloquea el pedido `FOR UPDATE` y deja una fila inmutable en `order_adjustments`
+(quién, cuándo, **motivo obligatorio**, estado del pedido, subtotal/total antes y
+después, y las líneas como jsonb — sin FK a `order_items`, así quitar un ítem no
+borra el rastro). Sólo `operation_type = 'order'` y no cancelado (una venta rápida
+no se modifica).
+
+| Estado | Agregar ítem / subir cantidad | Bajar cantidad / quitar |
+|---|---|---|
+| `pending` | sí | sí |
+| `confirmed` / `in_production` / `ready` | sí (reserva lo disponible y manda a producir lo faltante, como al confirmar) | sólo ítems **personalizados**; los de catálogo tienen stock reservado/producción y se bloquean |
+| `delivered` | **sí, explícito** ("Este pedido ya fue entregado. Estás agregando un ítem posterior a la entrega.") | **no** (es historia) |
+
+- **Pagos intactos:** nunca se tocan; el saldo es **nuevo total − pagos válidos**
+  (derivado: `order_balances`, KPI de pendiente y reportes se actualizan solos). Un
+  pedido pagado que crece pasa a tener saldo.
+- **Fechas:** no se reescriben `sold_at` ni `sale_date`. Consecuencia aceptada en
+  v1: una modificación posterior **cambia la facturación del período original**
+  (los reportes suman `orders.total` por `sale_date`); `order_adjustments` guarda el
+  delta por si algún día se quiere imputar a la fecha de la modificación.
+- **Stock de lo agregado:** `pending` nada; `confirmed`…`ready` reserva/produce (la
+  lógica de `set_order_status` **no se tocó**: `modify_order_stock_effect` repite la
+  reserva por ítem); `delivered` descuenta con un movimiento `sale` en la ubicación del
+  pedido **si "Descontar del stock" está encendido (default)**, validando
+  disponibilidad (si no alcanza, error claro y nada cambia); apagado, no mueve stock y
+  queda registrado.
+- **PDF:** el PDF existente representa el estado anterior. `order_attachments.generated_at`
+  (cuándo se generó) permite DERIVAR "PDF desactualizado" (hay una modificación
+  posterior); **nunca se regenera solo**, se usa "Regenerar PDF". Una solicitud del
+  checkout **modificada** se emite como **"Pedido mayorista"** (sin el banner de
+  solicitud pendiente ni los mínimos del checkout), conservando los snapshots del
+  comprador y de las condiciones.
+- **Rechazos (mensaje claro, todo o nada):** motivo vacío, sin cambios, pedido
+  cancelado o venta rápida, ítem de otro pedido, dejar el pedido sin ítems, un descuento
+  mayor al nuevo subtotal, reducir/quitar fuera de lo permitido.
+
 ### Eliminar un pedido cargado por error
 
 Existe para corregir una carga equivocada, **no** para borrar historial

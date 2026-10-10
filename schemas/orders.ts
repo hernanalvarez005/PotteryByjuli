@@ -112,3 +112,37 @@ export const ORDER_STATUS_LABELS: Record<string, string> = {
 };
 
 export const ORDER_STATUSES = Object.keys(ORDER_STATUS_LABELS) as (keyof typeof ORDER_STATUS_LABELS)[];
+
+
+// "Modificar pedido" (RPC modify_order): cada cambio es agregar un ítem de
+// catálogo/personalizado, cambiar su cantidad o quitarlo. La regla de fondo
+// (estados, stock, entregado) vive en Postgres; esto sólo valida la forma.
+const modifyChangeSchema = z.union([
+  z.object({
+    op: z.literal("add"),
+    product_variant_id: z.string().trim().uuid(),
+    quantity: z.number().int().positive(),
+    unit_price: z.number().nonnegative(),
+  }),
+  z.object({
+    op: z.literal("add"),
+    custom_name: z.string().trim().min(1, "Falta el nombre del ítem.").max(200),
+    custom_description: z.string().trim().max(1000).optional(),
+    quantity: z.number().int().positive(),
+    unit_price: z.number().nonnegative(),
+  }),
+  z.object({
+    op: z.literal("set_quantity"),
+    order_item_id: z.string().trim().uuid(),
+    quantity: z.number().int().positive(),
+  }),
+  z.object({ op: z.literal("remove"), order_item_id: z.string().trim().uuid() }),
+]);
+
+export const modifyOrderSchema = z.object({
+  changes: z.array(modifyChangeSchema).min(1, "No hay cambios para aplicar.").max(50),
+  reason: z.string().trim().min(1, "El motivo de la modificación es obligatorio.").max(300, "El motivo no puede superar los 300 caracteres."),
+  consume_stock: z.boolean(),
+});
+
+export type ModifyOrderInput = z.infer<typeof modifyOrderSchema>;
