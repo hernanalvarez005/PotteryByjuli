@@ -97,6 +97,8 @@ export const duePaymentSchema = z
     // de `reference` (que es una referencia de la transacción, no una nota
     // de por qué se corrigió el pago).
     notes: optionalString(500),
+    // Motivo de la corrección — ver schemas/orders.ts paymentSchema.
+    reason: optionalString(300),
     // Mismo campo/misma semántica que schemas/orders.ts paymentSchema —
     // siempre un número real (payments.fee_amount es NOT NULL default 0).
     fee_amount: z.preprocess(

@@ -408,6 +408,42 @@ no se modifica).
   cancelado o venta rápida, ítem de otro pedido, dejar el pedido sin ítems, un descuento
   mayor al nuevo subtotal, reducir/quitar fuera de lo permitido.
 
+### Corregir un pago existente (`correct_payment`)
+
+Un pago mal cargado (importe, fecha, medio) **se corrige en el lugar** — nunca se
+borra y recrea, y **nunca se borra un pago por la API** (el `DELETE` directo sobre
+`payments` está cerrado: antes borrarlo se llevaba también su historial por la cascada).
+La fila original se actualiza y el trigger `payments_log_correction` deja una fila
+inmutable en `payment_corrections`: valores **anteriores y nuevos** de importe,
+`paid_at`, medio, cuenta, referencia, notas y comisión, **quién, cuándo y el motivo**.
+
+- **Una sola vía** para pedidos/ventas y cuotas de taller: el RPC `correct_payment`
+  (SECURITY INVOKER — la RLS de `payments` sigue aplicando; sólo owner/operations).
+  Lo usan el detalle del pedido, el detalle de la cuota, **`/pagos`** y la **ficha del
+  cliente** (nunca un mecanismo paralelo por pantalla).
+- **Patch, no reemplazo:** sólo viajan los campos que cambiaron (clave ausente = sin
+  cambio; presente con `null` = vaciar). En particular **`paid_at` no se toca si la fecha
+  elegida es el mismo día (hora Argentina)** que ya tenía el pago: corregir un importe no
+  mueve la hora real del cobro ni deja un "cambio de fecha" que no existió. Si cambia el
+  día, se guarda al mediodía de Argentina (misma regla que el alta).
+- **Motivo:** recomendado, no obligatorio (≤300 caracteres). Se pasa al trigger por una
+  variable local a la transacción (`pottery.payment_correction_reason`), que sólo fija
+  `correct_payment` y limpia al terminar. Un `UPDATE` directo sigue auditado, pero sin motivo.
+- **Sin cambios no hay corrección:** un envío idéntico se rechaza ("No hay cambios para
+  guardar") y no deja fila de auditoría. Dos correcciones simultáneas se serializan
+  (`FOR UPDATE`): ambas aplican y la segunda ve el estado de la primera.
+- **Todo se deriva:** saldo (`order_balances`), "pendiente", cobrado, dashboard y
+  reportes salen de `SUM(payments)`; no hay nada almacenado que re-sincronizar. Nota: el
+  saldo nunca es negativo — un **sobrepago** se ve en `paid_total` > `total` (es lo que infla
+  "cobrado"), por eso corregirlo baja el cobrado aunque el saldo ya estuviera en 0.
+- **Visibilidad:** `/pagos` muestra el **origen** (pedido o "taller · cuota mes") y el
+  **cliente / alumna**, con "Corregir"; la ficha del cliente tiene una tarjeta **Pagos**
+  (pedidos + cuotas). El historial se carga al abrirlo, con nombres de medio/cuenta y de
+  usuario, mostrando sólo lo que cambió (antes → después) y el motivo.
+- **Los datos de producción no se corrigen desde el código:** la corrección real (p. ej. un
+  importe con un cero de más) la hace una persona desde la UI después del deploy, y queda
+  auditada como cualquier otra.
+
 ### Eliminar un pedido cargado por error
 
 Existe para corregir una carga equivocada, **no** para borrar historial

@@ -24,6 +24,7 @@ import { CustomerInfoForm } from "./customer-info-form";
 import { TagsPanel } from "./tags-panel";
 import { NotesPanel, type Note } from "./notes-panel";
 import { CustomerDangerActions } from "./customer-danger-actions";
+import { CustomerPaymentsCard } from "./customer-payments-card";
 
 export default async function CustomerDetailPage({
   params,
@@ -210,6 +211,8 @@ export default async function CustomerDetailPage({
             )}
           </CardContent>
         </Card>
+
+        <CustomerPaymentsCard customerId={customer.id} canEdit={canEdit} />
 
         {((enrollments ?? []).length > 0 || (registrations ?? []).length > 0) && (
           <Card>
