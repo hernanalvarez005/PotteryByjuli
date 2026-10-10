@@ -598,6 +598,71 @@ describe("modify_order (local)", { timeout: 60000 }, () => {
     });
   });
 
+  describe("hardening de EXECUTE de las funciones SECURITY DEFINER (sin depender de los defaults)", () => {
+    const deniedByAcl = (r: { error: { code?: string; message: string } | null }) => {
+      // 42501 = "permission denied for function": la ACL la frena ANTES de ejecutar nada
+      // (distinto del mensaje en español P0001 que da el chequeo de rol DENTRO del wrapper).
+      expect(r.error?.code).toBe("42501");
+      // "for function": la denegación es de la ACL de la FUNCIÓN, no de un privilegio de tabla más adentro
+      // (los *_impl tendrían además una segunda capa: sin privilegio de INSERT sobre order_items).
+      expect(r.error?.message).toMatch(/permission denied for function/i);
+    };
+    const orderArgs = (variantId: string) => ({
+      p_business_unit_id: retailUnitId, p_customer_id: customerId, p_location_id: locationId,
+      p_origin_channel_id: null, p_closing_channel_id: null, p_delivery_method: null, p_delivery_address: null,
+      p_estimated_date: null, p_notes: null, p_items: [{ product_variant_id: variantId, quantity: 1, unit_price: 1 }], p_sale_date: null,
+    });
+    const quickArgs = { p_location_id: "00000000-0000-4000-8000-000000000000", p_items: [], p_payment_method_id: "00000000-0000-4000-8000-000000000000", p_paid_at: new Date().toISOString() };
+    const modifyArgs = { p_order_id: "00000000-0000-4000-8000-000000000000", p_changes: [], p_reason: "x", p_consume_stock: true };
+    const effectArgs = { p_order: null, p_variant_id: "00000000-0000-4000-8000-000000000000", p_quantity: 1, p_consume_stock: true };
+
+    it("anon (y PUBLIC implícito) NO puede ejecutar los wrappers ni modify_order", async () => {
+      const a = await makeVariant(0);
+      const anon = createClient(SUPABASE_URL, ANON_KEY);
+      deniedByAcl(await anon.rpc("create_order", orderArgs(a.variantId)));
+      deniedByAcl(await anon.rpc("create_quick_retail_sale", quickArgs));
+      deniedByAcl(await anon.rpc("modify_order", modifyArgs));
+    });
+
+    it("authenticated autorizado SÍ llega a los wrappers (owner y operations crean; la ACL no los frena)", async () => {
+      const a = await makeVariant(0);
+      for (const role of ["owner", "operations"] as Role[]) {
+        const created = await clients[role].rpc("create_order", orderArgs(a.variantId));
+        expect(created.error).toBeNull();
+        orderIds.push(created.data as string);
+      }
+      // quick sale: llega a la función (no es 42501) aunque los datos inválidos la rechacen después.
+      const quick = await clients.operations.rpc("create_quick_retail_sale", quickArgs);
+      expect(quick.error?.code).not.toBe("42501");
+      expect((await clients.operations.rpc("modify_order", modifyArgs)).error?.code).not.toBe("42501");
+    });
+
+    it("authenticated NO puede ejecutar los *_impl ni modify_order_stock_effect", async () => {
+      const a = await makeVariant(0);
+      for (const role of ["owner", "operations", "viewer"] as Role[]) {
+        deniedByAcl(await clients[role].rpc("create_order_impl", orderArgs(a.variantId)));
+        deniedByAcl(await clients[role].rpc("create_quick_retail_sale_impl", quickArgs));
+        deniedByAcl(await clients[role].rpc("modify_order_stock_effect", effectArgs));
+      }
+    });
+
+    it("anon NO puede ejecutar los *_impl ni modify_order_stock_effect", async () => {
+      const a = await makeVariant(0);
+      const anon = createClient(SUPABASE_URL, ANON_KEY);
+      deniedByAcl(await anon.rpc("create_order_impl", orderArgs(a.variantId)));
+      deniedByAcl(await anon.rpc("create_quick_retail_sale_impl", quickArgs));
+      deniedByAcl(await anon.rpc("modify_order_stock_effect", effectArgs));
+    });
+
+    it("ni siquiera la service_role (clave de servidor) puede ejecutar los *_impl, modify_order_stock_effect ni modify_order", async () => {
+      const a = await makeVariant(0);
+      deniedByAcl(await admin.rpc("create_order_impl", orderArgs(a.variantId)));
+      deniedByAcl(await admin.rpc("create_quick_retail_sale_impl", quickArgs));
+      deniedByAcl(await admin.rpc("modify_order_stock_effect", effectArgs));
+      deniedByAcl(await admin.rpc("modify_order", modifyArgs));
+    });
+  });
+
   describe("order_adjustments e historial", () => {
     it("order_adjustments es inmutable por la API y legible por todos los roles", async () => {
       const a = await makeVariant(0);

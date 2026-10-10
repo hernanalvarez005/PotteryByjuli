@@ -36,6 +36,16 @@
 -- llamadores (la app) no cambian. La creación inicial ya NO depende de RLS sobre
 -- `order_items`: queda cerrada a cualquier escritura directa.
 --
+-- Hardening de las funciones SECURITY DEFINER nuevas (create_order, create_quick_retail_sale,
+-- modify_order, modify_order_stock_effect):
+--   * `set search_path = public, pg_temp` FIJO (pg_temp al final: un objeto temporal del caller no
+--     puede tapar un nombre) y TODA relación/función propia calificada por esquema (`public.`,
+--     `auth.`); lo demás son funciones de pg_catalog, que siempre se resuelven primero.
+--   * ACL explícita con `revoke all ... from public, anon, authenticated, service_role` y un `grant`
+--     exacto: no se depende del privilegio por defecto de PostgreSQL (EXECUTE a PUBLIC) ni de los
+--     default privileges de Supabase (EXECUTE a anon/authenticated/service_role). Los `*_impl` y
+--     `modify_order_stock_effect` no quedan ejecutables por NINGÚN rol de la API.
+--
 -- Stock de un ítem agregado:
 --   * pending                     → nada (todavía no hay reservas).
 --   * confirmed/in_production/ready → reserva min(cantidad, disponible) y orden de
@@ -53,8 +63,10 @@ revoke insert, update, delete on public.order_items from anon, authenticated;
 -- 1b) Creación inicial encapsulada: create_order ----------------------------------------
 alter function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
   rename to create_order_impl;
-revoke execute on function public.create_order_impl(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
-  from public, anon, authenticated;
+-- ACL explícita (sin depender de los privilegios por defecto de PostgreSQL ni de Supabase):
+-- nadie salvo el dueño de la función (que es quien la invoca desde el wrapper).
+revoke all on function public.create_order_impl(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
+  from public, anon, authenticated, service_role;
 
 create function public.create_order(
   p_business_unit_id uuid,
@@ -72,7 +84,7 @@ create function public.create_order(
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 begin
   -- Mismo permiso que exigían las políticas RLS de orders/order_items (que esta
@@ -89,14 +101,18 @@ begin
 end;
 $$;
 
-revoke execute on function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date) from public, anon;
-grant execute on function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date) to authenticated;
+-- Se parte de cero (revoke all) y se concede EXACTAMENTE a quienes deben invocarla: usuarias
+-- autenticadas (el wrapper verifica el rol) y la clave de servidor. NO a PUBLIC ni a anon.
+revoke all on function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
+  from public, anon, authenticated, service_role;
+grant execute on function public.create_order(uuid, uuid, uuid, uuid, uuid, text, text, date, text, jsonb, date)
+  to authenticated, service_role;
 
 -- 1c) Creación inicial encapsulada: create_quick_retail_sale -------------------------------
 alter function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
   rename to create_quick_retail_sale_impl;
-revoke execute on function public.create_quick_retail_sale_impl(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
-  from public, anon, authenticated;
+revoke all on function public.create_quick_retail_sale_impl(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
+  from public, anon, authenticated, service_role;
 
 create function public.create_quick_retail_sale(
   p_location_id uuid,
@@ -115,7 +131,7 @@ create function public.create_quick_retail_sale(
 returns table (order_id uuid, human_code text, total numeric)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 begin
   if not (public.is_operations_or_owner() or auth.role() = 'service_role') then
@@ -131,8 +147,10 @@ begin
 end;
 $$;
 
-revoke execute on function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric) from public, anon;
-grant execute on function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric) to authenticated;
+revoke all on function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
+  from public, anon, authenticated, service_role;
+grant execute on function public.create_quick_retail_sale(uuid, jsonb, uuid, timestamptz, uuid, uuid, uuid, numeric, uuid, uuid, date, numeric)
+  to authenticated, service_role;
 
 -- 2) Historial de modificaciones (append-only) ------------------------------------
 create table public.order_adjustments (
@@ -184,7 +202,7 @@ create or replace function public.modify_order_stock_effect(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_item_id uuid;
@@ -269,8 +287,9 @@ begin
 end;
 $$;
 
--- Función interna: sólo la invoca modify_order (que corre como su dueño).
-revoke execute on function public.modify_order_stock_effect(public.orders, uuid, integer, boolean) from public, anon, authenticated;
+-- Función interna: sólo la invoca modify_order (que corre como su dueño). Sin EXECUTE para nadie más.
+revoke all on function public.modify_order_stock_effect(public.orders, uuid, integer, boolean)
+  from public, anon, authenticated, service_role;
 
 -- 5) Modificar pedido --------------------------------------------------------------------
 -- p_changes: arreglo de
@@ -287,7 +306,7 @@ create or replace function public.modify_order(
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_order public.orders%rowtype;
@@ -489,5 +508,8 @@ begin
 end;
 $$;
 
-revoke execute on function public.modify_order(uuid, jsonb, text, boolean) from public, anon;
+-- Sólo usuarias autenticadas (la función exige operations/owner y atribuye `created_by` a
+-- auth.uid(): una service_role no tiene identidad, por eso tampoco se le concede).
+revoke all on function public.modify_order(uuid, jsonb, text, boolean)
+  from public, anon, authenticated, service_role;
 grant execute on function public.modify_order(uuid, jsonb, text, boolean) to authenticated;
