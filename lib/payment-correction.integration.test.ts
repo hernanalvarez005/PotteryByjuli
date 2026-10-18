@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cleanupFixtures } from "../tests/support/fixture-cleanup";
 import { correctPaymentRow, loadPaymentHistory } from "./payment-corrections";
+import { buildOrderPaymentInsert } from "./payment-insert";
+import { paymentSchema } from "../schemas/orders";
 
 // Corrección de pagos (correct_payment / payment_corrections.reason / cierre del
 // DELETE directo sobre payments) contra Supabase LOCAL real, con la sesión de cada rol.
@@ -425,6 +427,29 @@ describe("corrección de pagos (local)", { timeout: 60000 }, () => {
       const res = await clients.owner.rpc("delete_order_safe", { p_order_id: second.orderId });
       // Cualquiera sea la regla de negocio de delete_order_safe, no puede fallar por el REVOKE DELETE.
       expect(res.error?.message ?? "").not.toMatch(/permission denied for table payments/);
+    });
+  });
+  describe("alta de pago (addPayment)", () => {
+    const form = { amount: "1500", paid_at: "2026-10-18", method_id: "", account_id: "", reference: "", notes: "", fee_amount: "", reason: "" };
+
+    it("el payload real del alta se inserta (owner y operations) — regresión: `reason` rompió 'Registrar pago' en todos los pedidos", async () => {
+      for (const role of ["owner", "operations"] as Role[]) {
+        const { orderId } = await makeOrder(5000);
+        const row = buildOrderPaymentInsert(paymentSchema.parse({ ...form, method_id: methodA }), orderId, ids[role]);
+        const { data, error } = await clients[role].from("payments").insert(row).select("id,amount,created_by,method_id").single();
+        expect(error, role).toBeNull();
+        expect(Number(data!.amount)).toBe(1500);
+        expect(data!.created_by).toBe(ids[role]);
+        expect((await balance(orderId)).paid_total).toBe(1500);
+      }
+    });
+
+    it("el payload viejo (`...parsed.data` con `reason`) FALLA contra la base: el test detecta la regresión", async () => {
+      const { orderId } = await makeOrder(5000);
+      const parsed = paymentSchema.parse(form);
+      const { error } = await clients.operations.from("payments").insert({ ...parsed, order_id: orderId, paid_at: "2026-10-18T12:00:00-03:00" });
+      expect(error).not.toBeNull();
+      expect((await balance(orderId)).paid_total).toBe(0);
     });
   });
 });
