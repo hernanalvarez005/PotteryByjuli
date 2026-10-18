@@ -228,20 +228,26 @@ export type DeleteOrderResult = { error?: string };
 
 const ORDER_ATTACHMENTS_BUCKET = "order-attachments";
 
+export type DeleteOrderConfirmation = { confirmCode?: string; confirmed?: boolean };
+
 /**
- * Eliminación DEFINITIVA de un pedido cargado por error — sólo owner y sólo
- * si el pedido no tiene consecuencias operativas ni financieras (0 pagos, 0
- * movimientos de stock, 0 órdenes de producción, no entregado, no del
- * checkout). La regla y el borrado viven en Postgres (`delete_order_safe`,
- * una transacción que re-verifica con el pedido bloqueado); nunca se borra
- * en pasos desde acá. Cualquier otro pedido se cancela, no se borra.
+ * Eliminación DEFINITIVA de un pedido — sólo owner. Qué se puede borrar lo decide Postgres
+ * (`classify_order_for_delete`, nivel por nivel — ver docs/business-rules.md § "Eliminar un
+ * pedido"): una carga equivocada sin consecuencias, un cancelado con producción sin tocar, un
+ * checkout cancelado de prueba y una venta rápida (que repone el stock y deja los pagos en la
+ * auditoría). El borrado vive en `delete_order_safe`, una transacción que re-verifica con el
+ * pedido bloqueado; nunca se borra en pasos desde acá. Cualquier otro pedido se cancela.
  *
  * Storage no forma parte de esa transacción: los adjuntos (PDF) se borran
  * DESPUÉS del commit. Si eso falla el pedido igual ya no existe (un archivo
  * huérfano es inocuo: bucket privado, ruta con el uuid del pedido), así que
  * no se reporta como error al usuario pero SÍ queda un log estructurado.
  */
-export async function deleteOrder(orderId: string, reason?: string): Promise<DeleteOrderResult> {
+export async function deleteOrder(
+  orderId: string,
+  reason?: string,
+  confirmation: DeleteOrderConfirmation = {}
+): Promise<DeleteOrderResult> {
   const user = await requireUser();
   if (!isOwner(user)) return { error: "Sólo la administradora puede eliminar pedidos." };
   if (!z.string().uuid().safeParse(orderId).success) return { error: "Pedido inválido." };
@@ -250,7 +256,14 @@ export async function deleteOrder(orderId: string, reason?: string): Promise<Del
   if (cleanReason && cleanReason.length > 300) return { error: "El motivo no puede superar los 300 caracteres." };
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("delete_order_safe", { p_id: orderId, p_reason: cleanReason });
+  // El nivel de la eliminación (y por lo tanto si exige motivo, confirmación y código tipeado) lo
+  // decide `classify_order_for_delete`; `delete_order_safe` lo vuelve a exigir acá, no sólo la UI.
+  const { data, error } = await supabase.rpc("delete_order_safe", {
+    p_id: orderId,
+    p_reason: cleanReason,
+    p_confirm_code: confirmation.confirmCode?.trim() || null,
+    p_confirmed: confirmation.confirmed === true,
+  });
 
   if (error) {
     // P0001 = un `raise exception` en español escrito a propósito en la RPC.
@@ -261,7 +274,7 @@ export async function deleteOrder(orderId: string, reason?: string): Promise<Del
 
   const row = (data as { human_code: string; storage_paths: string[] | null }[] | null)?.[0];
   const paths = row?.storage_paths ?? [];
-  console.info(JSON.stringify({ event: "order_deleted", orderId, humanCode: row?.human_code, attachments: paths.length }));
+  console.info(JSON.stringify({ event: "order_deleted", orderId, humanCode: row?.human_code, attachments: paths.length, confirmed: confirmation.confirmed === true }));
 
   if (paths.length > 0) {
     const { error: storageError } = await supabase.storage.from(ORDER_ATTACHMENTS_BUCKET).remove(paths);
@@ -280,6 +293,11 @@ export async function deleteOrder(orderId: string, reason?: string): Promise<Del
 
   revalidatePath("/pedidos");
   revalidatePath(`/pedidos/${orderId}`);
+  // Una venta rápida borrada sale de ventas/dashboard/reportes y repone stock.
+  revalidatePath("/ventas");
+  revalidatePath("/dashboard");
+  revalidatePath("/reportes");
+  revalidatePath("/stock");
   return {};
 }
 

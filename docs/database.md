@@ -216,6 +216,23 @@ Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en
 - `order_deletions`: append-only (sin políticas de escritura; la escribe sólo
   la función), lectura sólo para owner, sin FK a `orders`/`customers`.
 
+
+### Ampliación (migration `20261018100000_extended_order_delete.sql`)
+
+- `order_deletions` suma `deletion_level` (`simple` | `untouched_production` | `test_checkout` |
+  `quick_sale`, default `simple`), `declared_test boolean` y `details jsonb` (snapshot completo).
+  Sigue sin políticas de escritura (append-only), lectura sólo owner.
+- `classify_order_for_delete(p_id)` (invoker, `stable`) cambia su retorno: agrega `operation_type`,
+  `level`, `payments_total`, `requires_confirmation`, `requires_reason` y `stock_units_to_return`.
+  Se recrea (cambio de tipo de retorno). `search_path = public, pg_temp`.
+- `delete_order_safe(p_id, p_reason, p_confirm_code, p_confirmed)` (definer, sólo owner): valida
+  motivo/confirmación/código EN LA BASE para los niveles 3, compensa stock de la venta rápida con
+  `return`, borra la producción sin tocar y escribe el snapshot. La firma vieja `(uuid, text)` se elimina.
+- Ambas con ACL explícita (`revoke all … from public, anon, authenticated, service_role`; `EXECUTE`
+  sólo `authenticated`) — antes tenían el `EXECUTE` por defecto para PUBLIC/anon.
+- Mapa de FKs: `production_orders.order_id` es `ON DELETE SET NULL` y `production_stage_events`
+  cascadea desde `production_orders`, por eso la producción sin tocar se borra explícitamente.
+
 ## Exención de cuota base de talleres (2026-09-26)
 
 Migration `20260926110000_workshop_due_waivers.sql`. Regla de negocio en

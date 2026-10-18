@@ -424,9 +424,10 @@ describe("corrección de pagos (local)", { timeout: 60000 }, () => {
       orderIds.splice(orderIds.indexOf(orderId), 1);
 
       const second = await makeOrder(1000, { amount: 500 });
-      const res = await clients.owner.rpc("delete_order_safe", { p_order_id: second.orderId });
-      // Cualquiera sea la regla de negocio de delete_order_safe, no puede fallar por el REVOKE DELETE.
-      expect(res.error?.message ?? "").not.toMatch(/permission denied for table payments/);
+      // Pedido común con pago: delete_order_safe lo RECHAZA por regla de negocio (no por el REVOKE DELETE).
+      const res = await clients.owner.rpc("delete_order_safe", { p_id: second.orderId });
+      expect(res.error?.message ?? "").toMatch(/movimientos asociados/);
+      expect(res.error?.message ?? "").not.toMatch(/permission denied/);
     });
   });
   describe("alta de pago (addPayment)", () => {
