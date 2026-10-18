@@ -8,6 +8,7 @@ import { requireUser, hasRole, isOwner } from "@/lib/auth";
 import { createOrderSchema, paymentSchema, modifyOrderSchema, ORDER_STATUSES } from "@/schemas/orders";
 import { dateOnlyToArgentinaNoonISO } from "@/lib/format";
 import { correctPaymentRow } from "@/lib/payment-corrections";
+import { buildOrderPaymentInsert } from "@/lib/payment-insert";
 
 export type OrderActionState = { error?: string };
 
@@ -178,12 +179,7 @@ export async function addPayment(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("payments").insert({
-    ...parsed.data,
-    paid_at: dateOnlyToArgentinaNoonISO(parsed.data.paid_at),
-    order_id: orderId,
-    created_by: user.id,
-  });
+  const { error } = await supabase.from("payments").insert(buildOrderPaymentInsert(parsed.data, orderId, user.id));
   if (error) return { error: "No se pudo registrar el pago." };
 
   revalidatePath(`/pedidos/${orderId}`);
