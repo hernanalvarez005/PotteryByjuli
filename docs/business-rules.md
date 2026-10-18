@@ -476,8 +476,42 @@ mensaje; `delete_order_safe` la re-verifica con el pedido bloqueado
   privado, ruta con el uuid).
 - El código humano viene de una secuencia: un pedido borrado **deja un hueco**
   en la numeración, nunca se reutiliza.
-- Fuera de alcance: `payments` y `order_items` siguen permitiendo `DELETE`
-  directo a operations por RLS (deuda de la política, no de esta función).
+- `payments` ya no admite `DELETE` directo por la API (se cerró en "Corregir un pago
+  existente") y `order_items` tampoco (se cerró en "Modificar un pedido existente").
+
+#### Eliminación ampliada: niveles (2026-10-18)
+
+La regla de arriba es el **nivel 1**. Tres casos reales que quedaban sin salida se
+resuelven con niveles explícitos; `classify_order_for_delete` devuelve el `level` y qué
+exige, y `delete_order_safe` lo vuelve a exigir en la base (la UI sólo refleja el resultado):
+
+| Nivel | Qué es | Condición | Qué exige |
+|---|---|---|---|
+| `simple` | Carga equivocada (regla de arriba) | No entregado, no checkout, 0 pagos, 0 movimientos, 0 producción | Motivo opcional |
+| `untouched_production` | Cancelado con producción sin tocar | Cancelado, 0 pagos, 0 movimientos; producción **sin tocar** | Motivo opcional. La producción se borra con el pedido |
+| `test_checkout` | Checkout cancelado de prueba | Cancelado, del checkout, 0 pagos, 0 movimientos, producción sin tocar | "Era una prueba / un error", **motivo obligatorio** y **tipear el código** |
+| `quick_sale` | Venta rápida cargada por error | `operation_type = 'retail_sale'` (con sus pagos) | Confirmación reforzada (se listan pagos y unidades que vuelven), **motivo obligatorio** y **tipear el código** |
+
+- **"Producción sin tocar"** = `status` en `pending`/`cancelled` con 0 producidas y 0
+  rechazadas. Cualquier otra cosa es producción efectiva y **bloquea** (una sola orden
+  avanzada alcanza). Un pedido **no cancelado** con producción sigue bloqueado: se cancela primero.
+- **Nunca** se borra un pedido común entregado, ni un pedido común con pagos, movimientos
+  o producción efectiva (los pagos de un pedido normal bloquean en cualquier nivel: se
+  cancela, o se corrige el pago). Un checkout **no cancelado** sigue siendo una solicitud real.
+  Caso real: MAY-000039 no se puede borrar mientras tenga pagos.
+- **Venta rápida y stock:** el stock vuelve por **compensación** — por cada ítem/ubicación se
+  agrega un movimiento `return` (con el mismo `pg_advisory_xact_lock` de la venta, en orden
+  determinístico) y el `sale` original **no se borra**: el libro de stock queda íntegro. Si la
+  venta tiene un movimiento que no es `sale`/`return` (p. ej. un ajuste que la referencia),
+  o producción, se bloquea. Sin límite de antigüedad (queda auditada).
+- Los pagos de la venta rápida se eliminan por cascada, pero **antes** quedan completos en la
+  auditoría; la venta deja de contar en ventas, dashboard y reportes.
+- **Auditoría** (`order_deletions`, append-only): `deletion_level`, `declared_test` y `details`
+  (jsonb): ítems, pagos, movimientos, producción borrada, comprador y condiciones del checkout,
+  unidades repuestas. El cliente **nunca** se borra. El código humano no se reutiliza. Storage
+  se limpia después del commit, como siempre.
+- Dos eliminaciones simultáneas de la misma venta: una sola procede (el pedido se bloquea
+  `FOR UPDATE`) y el stock se repone una vez.
 
 En todos los casos: eliminar una inscripción/enrollment **nunca** borra al
 `customer` — María puede dejar el taller y seguir existiendo en el CRM con

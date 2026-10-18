@@ -20,6 +20,7 @@ import { PaymentsPanel, type Payment } from "./payments-panel";
 import { DocumentPanel } from "./document-panel";
 import { ShareWholesalePanel } from "./share-wholesale-panel";
 import { DeleteOrderMenu } from "./delete-order-menu";
+import type { DeleteInfo, DeleteInfoRow } from "@/lib/order-delete";
 import { ModifyOrderDialog } from "./modify-order-dialog";
 import { OrderAdjustmentsCard, type AdjustmentRow } from "./order-adjustments-card";
 import { canModifyOrder, pdfStaleness } from "@/lib/order-modification";
@@ -150,16 +151,28 @@ export default async function OrderDetailPage({
   // (classify_order_for_delete); acá sólo se muestra el resultado. Si la
   // consulta falla NO se ofrece la acción (nunca se adivina) y queda log.
   let deleteBlockMessage: string | null = null;
+  let deleteInfo: DeleteInfo | null = null;
   let canOfferDelete = false;
   if (isOwner(user)) {
     const { data: check, error: checkError } = await supabase.rpc("classify_order_for_delete", { p_id: id });
     if (checkError) {
       console.error(JSON.stringify({ event: "order_delete_classify_failed", orderId: id, errorCode: checkError.code, errorMessage: checkError.message }));
     } else {
-      const row = (check as { deletable: boolean; block_message: string | null }[] | null)?.[0];
+      const row = (check as (DeleteInfoRow & { deletable: boolean; block_message: string | null })[] | null)?.[0];
       if (row) {
         canOfferDelete = true;
         deleteBlockMessage = row.deletable ? null : (row.block_message ?? "Este pedido no puede eliminarse.");
+        deleteInfo = row.deletable
+          ? {
+              level: row.level,
+              requiresConfirmation: row.requires_confirmation,
+              requiresReason: row.requires_reason,
+              paymentsCount: row.payments_count,
+              paymentsTotal: Number(row.payments_total),
+              productionOrdersCount: row.production_orders_count,
+              stockUnitsToReturn: row.stock_units_to_return,
+            }
+          : null;
       }
     }
   }
@@ -182,7 +195,7 @@ export default async function OrderDetailPage({
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{order.human_code}</h1>
           <StatusSelect orderId={order.id} status={order.status} canEdit={canEdit} />
-          {canOfferDelete && <DeleteOrderMenu orderId={order.id} humanCode={order.human_code} blockMessage={deleteBlockMessage} />}
+          {canOfferDelete && <DeleteOrderMenu orderId={order.id} humanCode={order.human_code} blockMessage={deleteBlockMessage} info={deleteInfo} />}
         </div>
         {customer ? (
           <p className="mt-1 text-sm text-muted-foreground">
