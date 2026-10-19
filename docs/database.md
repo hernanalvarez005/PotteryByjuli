@@ -191,6 +191,24 @@ Migration `20261010090000_modify_order.sql`. Regla de negocio en
   `revoke delete … from anon, authenticated` — sin DELETE por la API (la cascada de
   `delete_order_safe`/`delete_*_safe` corre con los privilegios de su dueño y no se afecta).
 
+
+## Funciones de reportes (2026-10-18)
+
+Migration `20261018110000_report_functions.sql`. Definiciones y motivos en `docs/business-rules.md` §
+"Reportes: definiciones oficiales". Todas son SQL, `STABLE` (sólo lectura), `SECURITY INVOKER` (la RLS de
+lectura de `orders`/`payments`/… sigue aplicando), `search_path = public, pg_temp` y `EXECUTE` sólo
+`authenticated` (`revoke all … from public, anon, authenticated, service_role`).
+
+- **Alcance compartido:** `report_orders_in_scope(from, to, unit_ids, location, channel)` (la única definición
+  de "facturado": no cancelados por `sale_date`) y `report_collections_in_scope(...)` (la única definición de
+  "cobrado": pedidos/talleres/otros por `paid_at` en hora Argentina, con sus reglas de inclusión).
+- **Reportes:** `report_kpis` (facturación, pedidos, ticket, cobrado desglosado, cobros en cancelados,
+  cohorte paid/pending/overpaid, pendiente total), `report_time_series` (diaria ≤62 días / mensual, sin
+  huecos), `report_by_business_unit`, `report_by_channel` (por `closing_channel_id`), `report_top_products`
+  (con fila "Ítems a medida"), `report_units_sold_selection` (selección libre de modelos),
+  `report_production_counts`, `report_wholesale_conversion`.
+- Sin índice nuevo: `payments(paid_at)` se midió con 160.000 pagos y no mejora el plan.
+
 ## Eliminación segura de pedidos (2026-09-26)
 
 Migration `20260926090000_delete_order_safe.sql`. Regla y motivos en

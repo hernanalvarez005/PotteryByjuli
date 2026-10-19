@@ -26,17 +26,23 @@ describe("getTopProducts/getSalesByBusinessUnit on /reportes never silently narr
   });
 });
 
-describe("getMixByChannel never re-introduces the ambiguous sales_channels embed", () => {
-  it("names the exact FK — orders has two FKs to sales_channels (origin_channel_id, closing_channel_id)", () => {
-    // Un embed `sales_channels(name)` sin nombrar la FK exacta falla con
-    // PGRST201 ("more than one relationship was found") porque orders
-    // tiene dos columnas que apuntan a sales_channels — Supabase no lo
-    // reporta como excepción no controlada acá (el código sólo
-    // desestructura `data`), así que el bug se manifestaba como "Sin
-    // ventas en este período" en el donut de Canal, nunca como un error
-    // visible. Reproducido y confirmado en vivo contra Supabase local
-    // antes de este fix.
+describe("el mix por canal agrupa SIEMPRE por el canal de CIERRE (orders tiene dos FKs a sales_channels)", () => {
+  it("report_by_channel une sales_channels por closing_channel_id — nunca origin_channel_id", () => {
+    // `orders` tiene origin_channel_id y closing_channel_id. Antes un embed `sales_channels(name)` sin
+    // nombrar la FK fallaba con PGRST201 y el donut decía "Sin ventas" sin ningún error visible. Ahora el
+    // mix lo calcula Postgres (migración 20261018110000): la ambigüedad desaparece, pero el canal que
+    // cuenta sigue siendo el de cierre, y el filtro de canal del dashboard también.
+    const sql = readFileSync(path.resolve(__dirname, "..", "supabase/migrations/20261018110000_report_functions.sql"), "utf-8");
+    const start = sql.indexOf("create function public.report_by_channel(");
+    const def = sql.slice(start, sql.indexOf("$$;", sql.indexOf("as $$", start)));
+    expect(def).toMatch(/left join public\.sales_channels sc on sc\.id = s\.closing_channel_id/);
+    expect(def).not.toMatch(/origin_channel_id/);
+  });
+
+  it("lib/reports.ts ya no arma embeds de PostgREST ni suma filas de orders/payments/order_items en JS", () => {
     const source = readFileSync(path.resolve(__dirname, "..", "lib/reports.ts"), "utf-8");
-    expect(source).toMatch(/sales_channels!orders_closing_channel_id_fkey\(name\)/);
+    expect(source).not.toMatch(/sales_channels\(/);
+    expect(source).not.toMatch(/\.from\("order_items"\)/);
+    expect(source).not.toMatch(/\.from\("payments"\)\s*\.select\("amount/);
   });
 });
