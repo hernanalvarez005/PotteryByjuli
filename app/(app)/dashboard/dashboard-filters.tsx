@@ -76,6 +76,9 @@ export function DashboardFilters({
       newFrom = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
     } else if (preset === "this_year") {
       newFrom = `${year}-01-01`;
+    } else if (preset === "all_time") {
+      // /reportes arranca la serie en la primera actividad real, no en 2000.
+      newFrom = "2000-01-01";
     }
     pushParams({ from: newFrom, to: today });
   }
@@ -90,6 +93,7 @@ export function DashboardFilters({
             last_month: "Mes pasado",
             last_30_days: "Últimos 30 días",
             this_year: "Este año",
+            all_time: "Todo el histórico",
           }}
           value=""
           onValueChange={(v) => v && applyPreset(v)}
@@ -102,6 +106,7 @@ export function DashboardFilters({
             <SelectItem value="last_month">Mes pasado</SelectItem>
             <SelectItem value="last_30_days">Últimos 30 días</SelectItem>
             <SelectItem value="this_year">Este año</SelectItem>
+            <SelectItem value="all_time">Todo el histórico</SelectItem>
           </SelectContent>
         </Select>
       </div>

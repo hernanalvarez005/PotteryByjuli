@@ -9,20 +9,21 @@ import path from "node:path";
 // de lógica pura no hubiera detectado, y un test en vivo ya las
 // reprodujo una vez en el navegador local.
 
-describe("getTopProducts/getSalesByBusinessUnit on /reportes never silently narrow to 'this month'", () => {
-  it("reportes/page.tsx passes allTimeDashboardFilters explicitly — never calls them bare", () => {
-    // getTopProducts()/getSalesByBusinessUnit() sin argumentos ahora
-    // caen en defaultDashboardFilters() (el mes actual, para el
-    // dashboard) — /reportes dice explícitamente "todo el histórico, no
-    // sólo el mes actual" y se rompería en silencio si volviera a
-    // llamarlas sin filtro.
-    const source = readFileSync(
-      path.resolve(__dirname, "..", "app/(app)/reportes/page.tsx"),
-      "utf-8"
-    );
-    expect(source).toMatch(/getTopProducts\(allTime\)/);
-    expect(source).toMatch(/getSalesByBusinessUnit\(allTime\)/);
-    expect(source).toMatch(/allTimeDashboardFilters/);
+describe("/reportes nunca llama a un reporte 'pelado' (sin filtros explícitos)", () => {
+  it("reportes/page.tsx pasa los filtros de la URL a TODOS los reportes — jamás los llama sin argumentos", () => {
+    // Llamadas sin argumentos caen en defaultDashboardFilters() (el MES ACTUAL): /reportes muestra el período
+    // que la persona eligió (por defecto lo que va del año) y se rompería en silencio si volviera a llamar a
+    // alguna sin filtro. Antes /reportes era "todo el histórico" con allTimeDashboardFilters(); ahora el
+    // período sale de la URL (el preset "Todo el histórico" pide desde 2000).
+    const source = readFileSync(path.resolve(__dirname, "..", "app/(app)/reportes/page.tsx"), "utf-8");
+    for (const fn of ["getReportKpis", "getSalesByBusinessUnit", "getMixByChannel", "getIncomeEntriesSummary"]) {
+      expect(source, fn).toMatch(new RegExp(`${fn}\\(filters\\)`));
+      expect(source, fn).not.toMatch(new RegExp(`${fn}\\(\\)`));
+    }
+    expect(source).toMatch(/getTopProducts\(filters, \d+\)/);
+    expect(source).toMatch(/getSalesOverTime\(seriesFilters\)/);
+    expect(source).toMatch(/getUnitsSoldForSelection\(filters,/);
+    expect(source).toMatch(/parseReportFilters\(params, defaultReportFilters\(\)\)/);
   });
 });
 

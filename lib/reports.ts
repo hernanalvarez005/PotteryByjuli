@@ -2,6 +2,7 @@ import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { computeDueDisplayStatus } from "@/lib/workshop-dues";
 import { customerDisplayName } from "@/lib/customers-shared";
+import { MODEL_SEARCH_LIMIT, MODEL_SEARCH_MIN_CHARS } from "@/lib/report-view";
 import {
   dateOnlyToArgentinaStartOfDayISO,
   dateOnlyToArgentinaEndOfDayISO,
@@ -428,7 +429,7 @@ export async function getIncomeEntriesSummary(
   };
 }
 
-export type TopProductRow = { label: string; unitsSold: number; revenue: number; isCustom: boolean };
+export type TopProductRow = { key: string; label: string; unitsSold: number; revenue: number; isCustom: boolean };
 
 /**
  * Productos más vendidos: unidades y facturación por ítem (cantidad × precio, ANTES del descuento
@@ -436,11 +437,12 @@ export type TopProductRow = { label: string; unitsSold: number; revenue: number;
  * van agrupados en "Ítems a medida" — no se descartan, para que la suma cierre con la facturación.
  */
 export async function getTopProducts(filters: DashboardFilters = defaultDashboardFilters(), limit = 10): Promise<TopProductRow[]> {
-  const rows = await reportRpc<{ label: string; units: string; revenue: string; is_custom: boolean }>("report_top_products", {
+  const rows = await reportRpc<{ variant_id: string | null; label: string; units: string; revenue: string; is_custom: boolean }>("report_top_products", {
     ...scopeArgs(filters),
     p_limit: limit,
   });
-  return rows.map((r) => ({ label: r.label, unitsSold: num(r.units), revenue: num(r.revenue), isCustom: r.is_custom }));
+  // `key` es único por fila (dos productos distintos pueden llamarse igual): la variante, o "custom".
+  return rows.map((r) => ({ key: r.variant_id ?? "custom", label: r.label, unitsSold: num(r.units), revenue: num(r.revenue), isCustom: r.is_custom }));
 }
 
 /** Una variante elegida en una selección libre, con lo vendido en el período (0 si no vendió). */
@@ -526,4 +528,69 @@ export async function getWholesaleConversion() {
 export async function getProductionCounts() {
   const rows = await reportRpc<{ status: string; orders_count: string }>("report_production_counts");
   return new Map(rows.map((r) => [r.status, num(r.orders_count)]));
+}
+
+/**
+ * Primera fecha con actividad real (pedido por `sale_date`, pago o otro ingreso por su día en hora
+ * Argentina), o null si no hay nada. Sirve para que la serie de "todo el histórico" no arranque en 2000.
+ */
+export async function getFirstActivityDate(): Promise<string | null> {
+  const supabase = await createClient();
+  const [orders, payments, income] = await Promise.all([
+    supabase.from("orders").select("sale_date").neq("status", "cancelled").order("sale_date", { ascending: true }).limit(1),
+    supabase.from("payments").select("paid_at").order("paid_at", { ascending: true }).limit(1),
+    supabase.from("income_entries").select("occurred_at").order("occurred_at", { ascending: true }).limit(1),
+  ]);
+  const day = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date(iso));
+  const candidates = [
+    orders.data?.[0]?.sale_date as string | undefined,
+    payments.data?.[0]?.paid_at ? day(payments.data[0].paid_at as string) : undefined,
+    income.data?.[0]?.occurred_at ? day(income.data[0].occurred_at as string) : undefined,
+  ].filter((v): v is string => Boolean(v));
+  return candidates.length > 0 ? candidates.sort()[0] : null;
+}
+
+/** Un modelo (producto) elegible en la selección libre. */
+export type ReportModel = { id: string; name: string; category: string | null };
+
+/** Escapa los comodines de LIKE para que "50%" o "a_b" se busquen literalmente. */
+function escapeLike(q: string): string {
+  return q.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * Busca modelos (productos) por nombre para armar un grupo. Incluye inactivos: sirve para mirar
+ * historia. Un fallo se propaga (nunca "sin resultados" por un error).
+ */
+export async function searchModels(query: string): Promise<ReportModel[]> {
+  const q = query.trim();
+  if (q.length < MODEL_SEARCH_MIN_CHARS) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("products")
+    .select("id,name,product_categories(name)")
+    .ilike("name", `%${escapeLike(q)}%`)
+    .order("name")
+    .limit(MODEL_SEARCH_LIMIT);
+  if (error) throw new Error(`Búsqueda de modelos: ${error.message}`);
+  return (data ?? []).map((p) => ({
+    id: p.id as string,
+    name: p.name as string,
+    category: (p.product_categories as unknown as { name: string } | null)?.name ?? null,
+  }));
+}
+
+/** Resuelve los modelos de una selección (para mostrarlos como chips), en el orden pedido. */
+export async function getModelsByIds(ids: string[]): Promise<ReportModel[]> {
+  if (ids.length === 0) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("products").select("id,name,product_categories(name)").in("id", ids);
+  if (error) throw new Error(`Modelos: ${error.message}`);
+  const byId = new Map(
+    (data ?? []).map((p) => [
+      p.id as string,
+      { id: p.id as string, name: p.name as string, category: (p.product_categories as unknown as { name: string } | null)?.name ?? null },
+    ])
+  );
+  return ids.map((id) => byId.get(id)).filter((m): m is ReportModel => Boolean(m));
 }
