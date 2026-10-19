@@ -32,6 +32,7 @@ describe("exención de la cuota base (local)", { timeout: 30000 }, () => {
   let customerId: string;
   let programId: string;
   let groupId: string;
+  let locationId: string;
   let enrollmentId: string;
   let conceptId: string;
   let paymentMethodId: string;
@@ -89,7 +90,10 @@ describe("exención de la cuota base (local)", { timeout: 30000 }, () => {
     for (const role of ["owner", "operations", "viewer"] as Role[]) await signIn(role);
     customerId = (await admin.from("customers").insert({ first_name: `ZZExencion ${RUN}` }).select("id").single()).data!.id;
     programId = (await admin.from("workshop_programs").insert({ name: `ZZ programa exención ${RUN}` }).select("id").single()).data!.id;
-    groupId = (await admin.from("workshop_groups").insert({ program_id: programId, name: `ZZ grupo exención ${RUN}`, capacity: 10 }).select("id").single()).data!.id;
+    // Ubicación PROPIA: el test del dashboard mide el cobrado filtrando por ella, así ningún pago que
+    // otras suites inserten/borren en paralelo puede moverle el total (antes medía TODO el histórico).
+    locationId = (await admin.from("locations").insert({ code: `zz-waiver-${RUN}`, name: `ZZ ubicación exención ${RUN}` }).select("id").single()).data!.id;
+    groupId = (await admin.from("workshop_groups").insert({ program_id: programId, name: `ZZ grupo exención ${RUN}`, capacity: 10, location_id: locationId }).select("id").single()).data!.id;
     enrollmentId = (await admin.from("workshop_enrollments").insert({ group_id: groupId, customer_id: customerId, status: "active" }).select("id").single()).data!.id;
     conceptId = (await admin.from("workshop_due_concepts").insert({ code: `zz-waiver-${RUN}`, name: "Arcilla fixture" }).select("id").single()).data!.id;
     paymentMethodId = (await admin.from("payment_methods").select("id").limit(1).single()).data!.id;
@@ -105,6 +109,7 @@ describe("exención de la cuota base (local)", { timeout: 30000 }, () => {
     await admin.from("workshop_groups").delete().eq("id", groupId);
     await admin.from("workshop_programs").delete().eq("id", programId);
     await admin.from("customers").delete().eq("id", customerId);
+    await admin.from("locations").delete().eq("id", locationId);
   });
 
   describe("eximir", () => {
@@ -432,7 +437,7 @@ describe("exención de la cuota base (local)", { timeout: 30000 }, () => {
       const plain = await newDue(30000);
 
       currentClient = clients.owner;
-      const summary = await getDashboardSummary(allTimeDashboardFilters());
+      const summary = await getDashboardSummary({ ...allTimeDashboardFilters(), locationId });
       const detail = new Map(summary.pendingDuesDetail.map((d) => [d.id, d]));
 
       expect(detail.has(exemptOnly)).toBe(false);
@@ -443,11 +448,11 @@ describe("exención de la cuota base (local)", { timeout: 30000 }, () => {
     it("la exención NO suma ingreso: 'cobrado' del dashboard no cambia al eximir ni al quitar", async () => {
       const due = await newDue(50000);
       currentClient = clients.owner;
-      const before = await getDashboardSummary(allTimeDashboardFilters());
+      const before = await getDashboardSummary({ ...allTimeDashboardFilters(), locationId });
       await waive(due, "sin ingreso");
-      const during = await getDashboardSummary(allTimeDashboardFilters());
+      const during = await getDashboardSummary({ ...allTimeDashboardFilters(), locationId });
       await unwaive(due);
-      const after = await getDashboardSummary(allTimeDashboardFilters());
+      const after = await getDashboardSummary({ ...allTimeDashboardFilters(), locationId });
       // Sólo pagos reales suman: ninguno de los tres cambia por un ciclo de exención.
       expect(during.collectedFiltered).toBe(before.collectedFiltered);
       expect(after.collectedFiltered).toBe(before.collectedFiltered);

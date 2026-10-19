@@ -6,6 +6,7 @@ import {
   getWholesaleConversion,
   getProductionCounts,
   getIncomeEntriesSummary,
+  getReportKpis,
   allTimeDashboardFilters,
 } from "@/lib/reports";
 import { formatCurrency } from "@/lib/format";
@@ -36,13 +37,14 @@ export default async function ReportesPage() {
   // dashboard (que sí filtra por período por default), /reportes sigue
   // mostrando todo lo que hubo alguna vez.
   const allTime = allTimeDashboardFilters();
-  const [topProducts, salesByUnit, wholesale, productionCounts, stockRows, otherIncome] = await Promise.all([
+  const [topProducts, salesByUnit, wholesale, productionCounts, stockRows, otherIncome, kpis] = await Promise.all([
     getTopProducts(allTime),
     getSalesByBusinessUnit(allTime),
     getWholesaleConversion(),
     getProductionCounts(),
     getFinishedGoodsStock(),
     getIncomeEntriesSummary(allTime),
+    getReportKpis(allTime),
   ]);
 
   const criticalStock = stockRows.filter((r) => r.available <= 0 || (r.minQuantity != null && r.available <= r.minQuantity));
@@ -71,6 +73,11 @@ export default async function ReportesPage() {
                   </li>
                 ))}
               </ul>
+            )}
+            {kpis.collectedWorkshops > 0 && (
+              <p className="mt-2 border-t pt-2 text-xs text-muted-foreground">
+                Talleres: {formatCurrency(kpis.collectedWorkshops)} de cuotas cobradas (caja) — no se suman a las ventas.
+              </p>
             )}
           </CardContent>
         </Card>

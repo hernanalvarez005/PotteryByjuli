@@ -10,7 +10,7 @@ import {
   defaultDashboardFilters,
   type DashboardFilters,
 } from "@/lib/reports";
-import { formatDate } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DashboardFilters as DashboardFiltersBar } from "./dashboard-filters";
@@ -149,6 +149,27 @@ export default async function DashboardPage({
           <KpiCurrency label="Cobrado del período" amount={summary.collectedFiltered} />
           <KpiCurrency label="Pendiente de cobro" amount={summary.pendingToCollect} />
           <Kpi label="Pedidos activos" value={String(summary.activeOrdersCount)} />
+        </div>
+      )}
+
+      {summary && canSeeFinance && (
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+          <p>
+            Ventas = pedidos no cancelados del período (por fecha de venta). Cobrado = la plata que entró en el período
+            (por fecha de pago). Pendiente = lo que todavía se debe de lo vendido en el período.
+          </p>
+          {summary.kpis.collectedWorkshops > 0 && (
+            <p>
+              Talleres: {formatCurrency(summary.kpis.collectedWorkshops)} de cuotas cobradas — están en &quot;Cobrado&quot;,
+              no en &quot;Ventas&quot;.
+            </p>
+          )}
+          {summary.kpis.collectedOnCancelled > 0 && (
+            <p>
+              Hay {formatCurrency(summary.kpis.collectedOnCancelled)} cobrados en pedidos cancelados: no están en
+              &quot;Cobrado&quot; — revisalos en Pagos.
+            </p>
+          )}
         </div>
       )}
 

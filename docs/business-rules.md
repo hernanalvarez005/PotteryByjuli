@@ -852,8 +852,8 @@ período" sólo cuando el filtro de unidad es "Todas" o específicamente la
 unidad `classes`; si además hay un filtro de ubicación activo, se sigue
 el join hasta `workshop_groups.location_id` (un join anidado de 3
 niveles vía PostgREST, `payments → workshop_dues → workshop_enrollments →
-workshop_groups`, verificado en
-`lib/dashboard-dues-location-filter.integration.test.ts`); un filtro de
+workshop_groups`, ahora dentro de `report_collections_in_scope`, verificado en
+`lib/reports-definitions.integration.test.ts`); un filtro de
 canal activo las excluye siempre (no tienen canal), con un texto
 explícito en la UI para que nunca parezca un bug silencioso.
 
@@ -868,6 +868,49 @@ este período" en el donut de Canal, nunca un error visible. Corregido
 nombrando la FK exacta: `sales_channels!orders_closing_channel_id_fkey(name)`.
 Cualquier embed nuevo hacia una tabla con más de una FK desde el origen
 necesita este mismo cuidado.
+
+## Reportes: definiciones oficiales (2026-10-18)
+
+Antes, "ventas", "cobrado" y "pendiente" significaban cosas distintas según la pantalla, y los totales
+salían de sumar **filas** en JavaScript (PostgREST corta en 1.000 sin avisar). Ahora hay **una definición
+de cada métrica, calculada en Postgres** (`report_*`, migración `20261018110000`), y las pantallas sólo
+la muestran. Los filtros (rango, unidad —multi—, ubicación, canal de cierre) viajan al RPC; "Todas" es `null`.
+
+| Métrica | Definición |
+|---|---|
+| **Facturación** | Σ `orders.total` de pedidos **no cancelados**, por `sale_date`, con los filtros. Incluye ventas rápidas y todo estado no cancelado (también `pending`). Es lo que suman el KPI, la serie, la unidad, el canal y el mix. |
+| **Ticket promedio** | Facturación ÷ cantidad de pedidos (nulo si no hay). Sólo pedidos: Talleres y otros ingresos no entran. |
+| **Cobrado** | **Caja** del período, por `paid_at` en hora Argentina (día calendario completo, límite superior exclusivo): pagos de pedidos **no cancelados** + cuotas de taller + otros ingresos. Se devuelve desglosado (`collected_orders` / `_workshops` / `_other`). |
+| **Pendiente** | Saldo **vigente** (`order_balances.balance`) de los pedidos **facturados en el período** (la "cohorte"). Además `pending_total_all`: el saldo de **todos** los pedidos (no depende del período), el mismo número que el KPI de `/pedidos` (`get_orders_receivable`) cuando no hay filtros. |
+
+- **Identidad (se testea):** facturación = cobrado de la cohorte − sobrepago + pendiente. El cobrado del
+  período **puede superar** a la facturación (se cobraron deudas de períodos anteriores): son dos
+  preguntas distintas — qué entró vs. cuánto de lo vendido falta cobrar.
+- **Talleres:** las cuotas cobradas son caja, **no** facturación. Se informan aparte (`collected_workshops`)
+  y nunca se mezclan en "ventas por unidad". Reglas de inclusión (iguales que antes): sólo con unidad
+  "todas" o que incluya `classes` y **sin** filtro de canal (no tienen canal); el filtro de ubicación usa
+  la del **grupo**. **Otros ingresos:** sólo con unidad "todas" y sin canal.
+- **El cobro de talleres nunca tapa un pendiente** (regresión real de "Todas"): el pendiente sale sólo de
+  pedidos.
+- **Cobros en pedidos cancelados:** no entran en "cobrado", pero `collected_on_cancelled` los informa (es
+  plata real que antes desaparecía del reporte sin avisar); el dashboard lo muestra como aviso.
+- **Serie en el tiempo:** diaria si el rango es ≤ 62 días, mensual si es más largo; buckets sin datos en 0.
+  Cuenta **todos los no cancelados** (antes sólo `delivered`: no coincidía con el KPI). Σ facturación de la
+  serie == KPI; Σ cobrado == KPI.
+- **Productos:** unidades y facturación por ítem (cantidad × precio, **antes** del descuento global del
+  pedido). Los **ítems a medida** (sin variante) van agrupados en "Ítems a medida" en vez de descartarse.
+- **Selección libre de modelos** (`report_units_sold_selection`): se eligen a mano productos (con todas sus
+  variantes) y/o variantes sueltas y se obtiene **una fila por variante elegida — también las que no vendieron
+  (0)** — más el total del grupo, con el mismo alcance y filtros. Una selección vacía devuelve vacío, nunca
+  "todo". (`getUnitsSoldForSelection`; el selector de la pantalla llega con D2.)
+- **Un error nunca muestra ceros:** `lib/reports.ts` propaga el error del RPC (antes se desestructuraba sólo
+  `data` y un fallo se veía como "sin ventas").
+- **Índice `payments(paid_at)`: medido y descartado.** Con 160.000 pagos y 40.000 pedidos, `report_kpis` de un
+  mes tarda ~100 ms con y sin índice (domina el agregado de `order_balances`, no el filtro de fecha).
+- **Efecto visible respecto de lo anterior:** la serie y "unidades vendidas" ahora incluyen pedidos no entregados
+  y los ítems a medida; "Pendiente" del dashboard pasó de `max(0, facturado − cobrado del período)` a la cohorte;
+  "Cobrado" ya no incluye pagos de pedidos cancelados (antes el KPI mensual sí) ni mezcla Talleres en la
+  facturación por unidad.
 
 ## Stock por ubicación — nunca un número repetido
 

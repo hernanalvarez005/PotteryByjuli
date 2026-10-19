@@ -260,10 +260,14 @@ describe("corrección de pagos (local)", { timeout: 60000 }, () => {
       expect(b.error).toBeNull();
       const log = await corrections(paymentId);
       expect(log).toHaveLength(2);
-      // Cadena consistente: lo "nuevo" de la primera es lo "previo" de la segunda.
-      expect(Number(log[0].previous_values.amount)).toBe(500);
-      expect(Number(log[1].previous_values.amount)).toBe(Number(log[0].new_values.amount));
-      expect(Number((await paymentRow(paymentId)).amount)).toBe(Number(log[1].new_values.amount));
+      // Cadena consistente: lo "nuevo" de la que aplicó primero es lo "previo" de la segunda. Se ordena por la
+      // cadena y NO por changed_at: now() es la hora de INICIO de la transacción, y la que esperó el lock puede
+      // haber empezado antes de la que aplicó primero.
+      const first = log.find((c) => Number(c.previous_values.amount) === 500)!;
+      const second = log.find((c) => c !== first)!;
+      expect(first).toBeDefined();
+      expect(Number(second.previous_values.amount)).toBe(Number(first.new_values.amount));
+      expect(Number((await paymentRow(paymentId)).amount)).toBe(Number(second.new_values.amount));
     });
 
     it("un UPDATE directo posterior NO hereda el motivo de la corrección anterior (la variable no se filtra)", async () => {
