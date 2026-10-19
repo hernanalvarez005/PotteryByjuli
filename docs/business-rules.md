@@ -902,7 +902,7 @@ la muestran. Los filtros (rango, unidad —multi—, ubicación, canal de cierre
 - **Selección libre de modelos** (`report_units_sold_selection`): se eligen a mano productos (con todas sus
   variantes) y/o variantes sueltas y se obtiene **una fila por variante elegida — también las que no vendieron
   (0)** — más el total del grupo, con el mismo alcance y filtros. Una selección vacía devuelve vacío, nunca
-  "todo". (`getUnitsSoldForSelection`; el selector de la pantalla llega con D2.)
+  "todo". (`getUnitsSoldForSelection`; el selector está en `/reportes`, ver "La pantalla" abajo.)
 - **Un error nunca muestra ceros:** `lib/reports.ts` propaga el error del RPC (antes se desestructuraba sólo
   `data` y un fallo se veía como "sin ventas").
 - **Índice `payments(paid_at)`: medido y descartado.** Con 160.000 pagos y 40.000 pedidos, `report_kpis` de un
@@ -911,6 +911,27 @@ la muestran. Los filtros (rango, unidad —multi—, ubicación, canal de cierre
   y los ítems a medida; "Pendiente" del dashboard pasó de `max(0, facturado − cobrado del período)` a la cohorte;
   "Cobrado" ya no incluye pagos de pedidos cancelados (antes el KPI mensual sí) ni mezcla Talleres en la
   facturación por unidad.
+
+### La pantalla `/reportes` (2026-10-18)
+
+- **Filtros** (rango, unidades —multi—, ubicación, canal) en la URL; el parseo es compartido con el dashboard
+  (`lib/report-filters.ts`): un valor inválido cae al default y "Todas" es `null`. Default de `/reportes`: **lo
+  que va del año**; el preset "Todo el histórico" pide desde 2000 pero la **serie arranca en la primera actividad
+  real** (`getFirstActivityDate`: pedido no cancelado, pago u otro ingreso), para no dibujar cientos de meses en 0.
+  Los KPI usan el rango pedido tal cual.
+- **KPI:** Facturación, Cobrado, Pendiente de cobro (cohorte del período) y Ticket promedio, más la cantidad de
+  pedidos y el pendiente total de todos los pedidos; avisos de Talleres (caja), otros ingresos y cobros en cancelados;
+  "Cómo se calcula" resume las definiciones.
+- **Gráficos:** facturación (barras) y cobrado (línea) en el tiempo — Σ barras == KPI de facturación y Σ línea == KPI
+  de cobrado; mix por unidad/canal; **cobrado vs. pendiente** de lo facturado (las dos partes suman exacto la
+  facturación; el sobrepago se avisa aparte); productos más vendidos. Las tablas quedan abajo (detalle de productos,
+  mayoristas, producción, otros ingresos, stock crítico). Mayoristas/producción/stock son del histórico/de hoy, no del período.
+- **Grupos de modelos:** el buscador (mínimo 2 caracteres, hasta 20 resultados, comodines `%`/`_` literales, incluye
+  inactivos) agrega **productos** (con todas sus variantes) a un grupo que vive en la URL (`?models=id,id`, hasta 30).
+  El servidor suma con `report_units_sold_selection`; un modelo sin ventas figura con 0. Sólo owner/operations.
+- **Un componente cliente nunca importa valores de módulos de servidor** (`lib/reports`, `lib/supabase/server`, `lib/auth`):
+  arrastran `next/headers` al navegador y rompen la página; los tipos sí se pueden importar con `import type`
+  (guardia: `tests/no-server-imports-in-client-components.test.ts`).
 
 ## Stock por ubicación — nunca un número repetido
 

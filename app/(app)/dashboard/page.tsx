@@ -19,6 +19,7 @@ import { TopProductsChart } from "./top-products-chart";
 import { MixDonutChart } from "./mix-donut-chart";
 import { PendingDuesAttention } from "./pending-dues-attention";
 import { Kpi, KpiCurrency } from "./kpi";
+import { parseReportFilters } from "@/lib/report-filters";
 
 const ROLE_LABELS: Record<string, string> = {
   owner: "Dueña",
@@ -38,19 +39,9 @@ export default async function DashboardPage({
 
   const params = await searchParams;
   const defaults = defaultDashboardFilters();
-  // Multi-select de unidades de negocio (sección 31-33) — ?business_units=
-  // es una lista separada por comas; ausente o vacía = "Todas" (null),
-  // nunca una lista hardcodeada que pueda quedar vieja.
-  const businessUnitIds = params.business_units
-    ? params.business_units.split(",").filter(Boolean)
-    : null;
-  const filters: DashboardFilters = {
-    from: params.from && /^\d{4}-\d{2}-\d{2}$/.test(params.from) ? params.from : defaults.from,
-    to: params.to && /^\d{4}-\d{2}-\d{2}$/.test(params.to) ? params.to : defaults.to,
-    businessUnitIds: businessUnitIds && businessUnitIds.length > 0 ? businessUnitIds : null,
-    locationId: params.location ?? null,
-    channelId: params.channel ?? null,
-  };
+  // Rango + unidades (multi) + ubicación + canal: parseo compartido con /reportes; un valor inválido
+  // cae al default y "Todas" es null (nunca una lista vieja de ids).
+  const filters: DashboardFilters = parseReportFilters(params, defaults);
 
   const supabase = await createClient();
   const [

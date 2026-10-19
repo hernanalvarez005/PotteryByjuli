@@ -64,8 +64,22 @@ describe("conversión de resultados", () => {
     expect(await getSalesByBusinessUnit(filters)).toEqual([{ name: "Minorista", total: 4300 }]);
     rpc.mockResolvedValueOnce({ data: [{ name: "Sin canal", invoiced: "10" }], error: null });
     expect(await getMixByChannel(filters)).toEqual([{ name: "Sin canal", total: 10 }]);
-    rpc.mockResolvedValueOnce({ data: [{ label: "Ítems a medida", units: "3", revenue: "1500", is_custom: true }], error: null });
-    expect(await getTopProducts(filters)).toEqual([{ label: "Ítems a medida", unitsSold: 3, revenue: 1500, isCustom: true }]);
+    rpc.mockResolvedValueOnce({
+      data: [
+        { variant_id: "v1", label: "Taza", units: "5", revenue: "100", is_custom: false },
+        { variant_id: "v2", label: "Taza", units: "2", revenue: "50", is_custom: false }, // mismo nombre, otra variante
+        { variant_id: null, label: "Ítems a medida", units: "3", revenue: "1500", is_custom: true },
+      ],
+      error: null,
+    });
+    const top = await getTopProducts(filters);
+    expect(top).toEqual([
+      { key: "v1", label: "Taza", unitsSold: 5, revenue: 100, isCustom: false },
+      { key: "v2", label: "Taza", unitsSold: 2, revenue: 50, isCustom: false },
+      { key: "custom", label: "Ítems a medida", unitsSold: 3, revenue: 1500, isCustom: true },
+    ]);
+    // Las keys de React deben ser únicas aunque dos productos compartan nombre.
+    expect(new Set(top.map((r) => r.key)).size).toBe(top.length);
   });
 
   it("conversión mayorista y conteos de producción", async () => {
